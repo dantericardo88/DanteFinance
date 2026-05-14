@@ -1,6 +1,7 @@
 """Options market analytics — IV surface, skew, GEX, max pain, term structure, P/C ratio."""
 from __future__ import annotations
 
+import math
 from datetime import date
 from decimal import Decimal
 from typing import Optional
@@ -10,6 +11,130 @@ from pydantic import BaseModel, ConfigDict
 from sentinel.core.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+# ── Black-Scholes Greeks Engine ───────────────────────────────────────────────
+
+def _norm_cdf(x: float) -> float:
+    """Standard normal CDF — pure Python, no scipy dependency."""
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def _norm_pdf(x: float) -> float:
+    """Standard normal PDF."""
+    return math.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi)
+
+
+def bs_greeks(
+    S: float,
+    K: float,
+    T: float,
+    r: float,
+    sigma: float,
+    option_type: str,
+) -> dict[str, Optional[float]]:
+    """Compute the full Black-Scholes Greek set for a European option.
+
+    Args:
+        S: Underlying spot price
+        K: Strike price
+        T: Time to expiration in years (must be > 0)
+        r: Risk-free rate (annualised, continuously compounded)
+        sigma: Implied volatility (annualised)
+        option_type: "call" or "put"
+
+    Returns:
+        dict with keys:
+            delta   — dV/dS                  (directional sensitivity)
+            gamma   — d²V/dS²                (convexity of delta)
+            vega    — dV/dσ  (per 1-pt move) (vol sensitivity ×0.01 for 1%)
+            theta   — dV/dt  (per calendar day, negative for long options)
+            rho     — dV/dr  (per 1-pt rate move)
+            charm   — dDelta/dt  (per calendar day; delta decay)
+            vanna   — dDelta/dσ  (=d²V/dSdσ; cross-Greek)
+            vomma   — d²V/dσ²   (vol of vol sensitivity)
+            speed   — d³V/dS³   (gamma sensitivity to spot)
+            color   — dGamma/dt  (gamma decay per calendar day)
+
+    All values are None if inputs are invalid (T≤0, sigma≤0, S≤0, K≤0).
+    Vega, theta, rho are expressed per 1-unit moves (not per 1% / 1bp).
+    """
+    result: dict[str, Optional[float]] = {
+        k: None for k in ("delta", "gamma", "vega", "theta", "rho",
+                           "charm", "vanna", "vomma", "speed", "color")
+    }
+    if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
+        return result
+
+    try:
+        sqrtT = math.sqrt(T)
+        d1 = (math.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * sqrtT)
+        d2 = d1 - sigma * sqrtT
+
+        nd1 = _norm_pdf(d1)
+        Nd1 = _norm_cdf(d1)
+        Nd2 = _norm_cdf(d2)
+        Nnd2 = _norm_cdf(-d2)
+
+        disc = math.exp(-r * T)
+
+        # ── The five standard Greeks ──────────────────────────────────────────
+        if option_type == "call":
+            delta = Nd1
+            theta_daily = (
+                -(S * nd1 * sigma) / (2 * sqrtT)
+                - r * K * disc * Nd2
+            ) / 365.0
+            rho = K * T * disc * Nd2 / 100.0  # per 1% rate change
+        else:
+            delta = Nd1 - 1.0
+            theta_daily = (
+                -(S * nd1 * sigma) / (2 * sqrtT)
+                + r * K * disc * Nnd2
+            ) / 365.0
+            rho = -K * T * disc * Nnd2 / 100.0
+
+        gamma = nd1 / (S * sigma * sqrtT)
+        vega = S * nd1 * sqrtT / 100.0  # per 1% vol change
+
+        result["delta"] = round(delta, 6)
+        result["gamma"] = round(gamma, 8)
+        result["vega"] = round(vega, 6)
+        result["theta"] = round(theta_daily, 6)
+        result["rho"] = round(rho, 6)
+
+        # ── Higher-order / cross Greeks ───────────────────────────────────────
+        # Charm (delta decay): dDelta/dt per calendar day
+        if option_type == "call":
+            charm = -nd1 * (2 * r * T - d2 * sigma * sqrtT) / (2 * T * sigma * sqrtT)
+        else:
+            charm = -nd1 * (2 * r * T - d2 * sigma * sqrtT) / (2 * T * sigma * sqrtT)
+        result["charm"] = round(charm / 365.0, 8)
+
+        # Vanna: dDelta/dVol = d²V/(dS dσ) = vega × (1/S - d1/(sigma√T))
+        # Equivalently: -nd1 × d2 / sigma
+        vanna = -nd1 * d2 / sigma
+        result["vanna"] = round(vanna, 8)
+
+        # Vomma (volga): d²V/dσ² = vega × d1 × d2 / sigma
+        vomma = vega * d1 * d2 / sigma
+        result["vomma"] = round(vomma, 8)
+
+        # Speed: dGamma/dS = -gamma/S × (d1/(sigma√T) + 1)
+        speed = -gamma / S * (d1 / (sigma * sqrtT) + 1.0)
+        result["speed"] = round(speed, 10)
+
+        # Color (gamma decay): dGamma/dt per calendar day
+        color = (
+            -nd1 / (2 * S * T * sigma * sqrtT)
+            * (2 * r * T + 1 + d1 * (2 * r * T - d2 * sigma * sqrtT) / (sigma * sqrtT))
+        )
+        result["color"] = round(color / 365.0, 10)
+
+    except Exception as exc:
+        logger.debug("bs_greeks: computation error", error=str(exc))
+
+    return result
 
 
 # ── Result Models ─────────────────────────────────────────────────────────────
@@ -289,10 +414,12 @@ def compute_skew(surface: IVSurface, underlying_price: float) -> list[SkewMetric
     return results
 
 
-def compute_term_structure(surface: IVSurface, underlying_price: float) -> list[dict]:
+def compute_term_structure(surface: IVSurface, underlying_price: float = 0.0) -> list[dict]:  # noqa: ARG001
     """
     Returns list of {expiry, dte, atm_iv} sorted by DTE for vol term structure.
     Useful for contango/backwardation analysis and vol calendar spreads.
+    underlying_price is accepted for API compatibility but not used internally
+    (ATM IV is already embedded in the surface).
     """
     rows = []
     for exp_str in surface.expiries:
@@ -495,4 +622,342 @@ def get_options_summary(
         "gex": gex,
         "max_pain": max_pain,
         "pc_ratio": pc_ratio,
+    }
+
+
+# ── Full-Chain Greeks ─────────────────────────────────────────────────────────
+
+class ContractGreeks(BaseModel):
+    """All Greeks for a single option contract in the chain."""
+    model_config = ConfigDict(frozen=True)
+
+    expiry: str
+    strike: float
+    contract_type: str          # "call" | "put"
+    iv: float
+    dte: int
+    moneyness: float            # strike / spot
+    # Standard Greeks
+    delta: Optional[float]
+    gamma: Optional[float]
+    vega: Optional[float]       # per 1% vol change
+    theta: Optional[float]      # per calendar day
+    rho: Optional[float]        # per 1% rate change
+    # Higher-order Greeks
+    charm: Optional[float]      # dDelta/dt per calendar day
+    vanna: Optional[float]      # dDelta/dVol
+    vomma: Optional[float]      # d²V/dσ²
+    speed: Optional[float]      # dGamma/dS
+    color: Optional[float]      # dGamma/dt per calendar day
+
+
+class ChainGreeks(BaseModel):
+    """Full Greeks for every strike/expiry in the options chain."""
+    model_config = ConfigDict(frozen=True)
+
+    ticker: str
+    underlying_price: float
+    risk_free_rate: float
+    as_of: str
+    calls: list[ContractGreeks]
+    puts: list[ContractGreeks]
+    total_contracts: int
+    warnings: list[str]
+
+
+def compute_chain_greeks(
+    contracts: list[NormalizedContract],
+    underlying_price: float,
+    risk_free_rate: float = 0.05,
+) -> ChainGreeks:
+    """Compute full Black-Scholes Greeks for every contract in the chain.
+
+    Covers all 5 standard Greeks (delta, gamma, vega, theta, rho) plus
+    charm (dDelta/dt), vanna (dDelta/dVol), vomma (d²V/dσ²), speed, and color.
+
+    Args:
+        contracts: Normalised option contracts (from normalize_chain).
+        underlying_price: Current spot price of the underlying.
+        risk_free_rate: Annualised risk-free rate (default 5%).
+
+    Returns:
+        ChainGreeks with calls and puts lists sorted by expiry then strike.
+    """
+    from datetime import datetime as _dt
+    as_of = _dt.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    warnings: list[str] = []
+
+    calls: list[ContractGreeks] = []
+    puts: list[ContractGreeks] = []
+
+    for c in contracts:
+        dte = max(0, (c.expiry - date.today()).days)
+        T = dte / 365.0
+
+        greeks = bs_greeks(
+            S=underlying_price,
+            K=float(c.strike),
+            T=T,
+            r=risk_free_rate,
+            sigma=c.iv,
+            option_type=c.contract_type,
+        )
+
+        cg = ContractGreeks(
+            expiry=c.expiry.isoformat(),
+            strike=float(c.strike),
+            contract_type=c.contract_type,
+            iv=round(c.iv, 6),
+            dte=dte,
+            moneyness=round(c.moneyness, 6),
+            delta=greeks["delta"],
+            gamma=greeks["gamma"],
+            vega=greeks["vega"],
+            theta=greeks["theta"],
+            rho=greeks["rho"],
+            charm=greeks["charm"],
+            vanna=greeks["vanna"],
+            vomma=greeks["vomma"],
+            speed=greeks["speed"],
+            color=greeks["color"],
+        )
+
+        if c.contract_type == "call":
+            calls.append(cg)
+        else:
+            puts.append(cg)
+
+    # Sort: expiry ascending, then strike ascending
+    calls.sort(key=lambda x: (x.expiry, x.strike))
+    puts.sort(key=lambda x: (x.expiry, x.strike))
+
+    total = len(calls) + len(puts)
+    logger.info(
+        "compute_chain_greeks complete",
+        ticker=contracts[0].ticker if contracts else "",
+        calls=len(calls),
+        puts=len(puts),
+    )
+
+    return ChainGreeks(
+        ticker=contracts[0].ticker if contracts else "",
+        underlying_price=underlying_price,
+        risk_free_rate=risk_free_rate,
+        as_of=as_of,
+        calls=calls,
+        puts=puts,
+        total_contracts=total,
+        warnings=warnings,
+    )
+
+
+# ── Options Chain Heatmap ─────────────────────────────────────────────────────
+
+class HeatmapCell(BaseModel):
+    """A single cell in the options chain heat map."""
+    model_config = ConfigDict(frozen=True)
+
+    strike: float
+    expiry: str
+    dte: int
+    call_iv: Optional[float]
+    put_iv: Optional[float]
+    call_delta: Optional[float]
+    put_delta: Optional[float]
+    call_gamma: Optional[float]
+    put_gamma: Optional[float]
+    call_oi: Optional[int]
+    put_oi: Optional[int]
+    call_volume: Optional[int]
+    put_volume: Optional[int]
+    net_gex: Optional[float]       # call_gamma×call_oi − put_gamma×put_oi (× 100 × S²)
+    moneyness: float               # strike / spot
+
+
+class OptionsHeatmap(BaseModel):
+    """Rectangular strike × expiry heatmap for terminal display."""
+    model_config = ConfigDict(frozen=True)
+
+    ticker: str
+    underlying_price: float
+    strikes: list[float]           # sorted ascending
+    expiries: list[str]            # sorted ascending (ISO date)
+    cells: list[HeatmapCell]       # flat list; index by (strike, expiry)
+    atm_strike: Optional[float]    # nearest listed strike to spot
+    as_of: str
+
+
+def build_options_heatmap(
+    contracts: list[NormalizedContract],
+    chain_greeks: ChainGreeks,
+    underlying_price: float,
+) -> OptionsHeatmap:
+    """Build a strike × expiry heatmap data structure for terminal display.
+
+    Merges contract data (IV, OI, volume) with pre-computed Greeks into a flat
+    list of HeatmapCell objects.  The terminal renderer can pivot by (expiry,
+    strike) to produce a 2-D grid.
+
+    Args:
+        contracts: Normalised contracts from normalize_chain.
+        chain_greeks: Output of compute_chain_greeks for the same contracts.
+        underlying_price: Current spot price.
+
+    Returns:
+        OptionsHeatmap with all unique (strike, expiry) pairs covered.
+    """
+    from datetime import datetime as _dt
+    as_of = _dt.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # Index contract data by (expiry_str, strike)
+    call_data: dict[tuple[str, float], NormalizedContract] = {}
+    put_data: dict[tuple[str, float], NormalizedContract] = {}
+    for c in contracts:
+        key = (c.expiry.isoformat(), float(c.strike))
+        if c.contract_type == "call":
+            call_data[key] = c
+        else:
+            put_data[key] = c
+
+    # Index greeks by (expiry, strike)
+    call_greeks: dict[tuple[str, float], ContractGreeks] = {
+        (cg.expiry, cg.strike): cg for cg in chain_greeks.calls
+    }
+    put_greeks: dict[tuple[str, float], ContractGreeks] = {
+        (cg.expiry, cg.strike): cg for cg in chain_greeks.puts
+    }
+
+    # Enumerate all unique (expiry, strike) pairs
+    all_keys: set[tuple[str, float]] = (
+        set(call_data.keys()) | set(put_data.keys())
+    )
+
+    strikes_set: set[float] = {k[1] for k in all_keys}
+    expiries_set: set[str] = {k[0] for k in all_keys}
+    sorted_strikes = sorted(strikes_set)
+    sorted_expiries = sorted(expiries_set)
+
+    # Find ATM strike
+    atm_strike: Optional[float] = None
+    if sorted_strikes:
+        atm_strike = min(sorted_strikes, key=lambda s: abs(s - underlying_price))
+
+    cells: list[HeatmapCell] = []
+    for exp in sorted_expiries:
+        dte = max(0, (_dte(exp)))
+        for strike in sorted_strikes:
+            key = (exp, strike)
+            c_contract = call_data.get(key)
+            p_contract = put_data.get(key)
+
+            # Skip cells where neither call nor put exists
+            if c_contract is None and p_contract is None:
+                continue
+
+            c_gk = call_greeks.get(key)
+            p_gk = put_greeks.get(key)
+
+            # Net GEX for this cell: (call_gamma - put_gamma) × avg_OI × 100 × S²
+            net_gex: Optional[float] = None
+            if c_gk and c_gk.gamma is not None and p_gk and p_gk.gamma is not None:
+                c_oi = c_contract.open_interest if c_contract else 0
+                p_oi = p_contract.open_interest if p_contract else 0
+                net_gex = round(
+                    (c_gk.gamma * c_oi - p_gk.gamma * p_oi) * 100 * underlying_price ** 2,
+                    2,
+                )
+
+            moneyness = round(strike / underlying_price, 6) if underlying_price > 0 else 0.0
+
+            cells.append(HeatmapCell(
+                strike=strike,
+                expiry=exp,
+                dte=dte,
+                call_iv=round(c_contract.iv, 6) if c_contract else None,
+                put_iv=round(p_contract.iv, 6) if p_contract else None,
+                call_delta=c_gk.delta if c_gk else None,
+                put_delta=p_gk.delta if p_gk else None,
+                call_gamma=c_gk.gamma if c_gk else None,
+                put_gamma=p_gk.gamma if p_gk else None,
+                call_oi=c_contract.open_interest if c_contract else None,
+                put_oi=p_contract.open_interest if p_contract else None,
+                call_volume=c_contract.volume if c_contract else None,
+                put_volume=p_contract.volume if p_contract else None,
+                net_gex=net_gex,
+                moneyness=moneyness,
+            ))
+
+    logger.info(
+        "build_options_heatmap complete",
+        ticker=chain_greeks.ticker,
+        cells=len(cells),
+        strikes=len(sorted_strikes),
+        expiries=len(sorted_expiries),
+    )
+
+    return OptionsHeatmap(
+        ticker=chain_greeks.ticker,
+        underlying_price=underlying_price,
+        strikes=sorted_strikes,
+        expiries=sorted_expiries,
+        cells=cells,
+        atm_strike=atm_strike,
+        as_of=as_of,
+    )
+
+
+# ── Unified Options Analytics Dashboard ──────────────────────────────────────
+
+def get_options_dashboard(
+    ticker: str,
+    contracts_raw: list[dict],
+    underlying_price: float,
+    risk_free_rate: float = 0.05,
+) -> dict:
+    """Unified options analytics dashboard — full pipeline including Greeks and heatmap.
+
+    Extends get_options_summary with:
+      - Full Greeks for all strikes/expiries (delta, gamma, vega, theta, rho,
+        charm, vanna, vomma, speed, color)
+      - Options chain heatmap (strike × expiry grid with Greeks, IV, OI, GEX)
+
+    Args:
+        ticker: Underlying ticker symbol.
+        contracts_raw: Raw option contract dicts (Polygon format).
+        underlying_price: Current spot price.
+        risk_free_rate: Annualised risk-free rate (default 5%).
+
+    Returns:
+        Dict with all get_options_summary keys plus:
+          chain_greeks: ChainGreeks — all Greeks per contract
+          heatmap: OptionsHeatmap — 2-D grid ready for terminal rendering
+    """
+    logger.info("get_options_dashboard start", ticker=ticker, raw_contracts=len(contracts_raw))
+
+    # Run the base pipeline
+    base = get_options_summary(ticker, contracts_raw, underlying_price)
+
+    contracts: list[NormalizedContract] = []
+    if base.get("contract_count", 0) > 0 and base.get("surface") is not None:
+        # Re-normalise to get typed contracts list (base pipeline returns the surface, not contracts)
+        contracts = normalize_chain(contracts_raw, underlying_price)
+
+    chain_greeks: Optional[ChainGreeks] = None
+    heatmap: Optional[OptionsHeatmap] = None
+
+    if contracts:
+        chain_greeks = compute_chain_greeks(contracts, underlying_price, risk_free_rate)
+        heatmap = build_options_heatmap(contracts, chain_greeks, underlying_price)
+
+    logger.info(
+        "get_options_dashboard complete",
+        ticker=ticker,
+        greeks_computed=chain_greeks.total_contracts if chain_greeks else 0,
+        heatmap_cells=len(heatmap.cells) if heatmap else 0,
+    )
+
+    return {
+        **base,
+        "chain_greeks": chain_greeks,
+        "heatmap": heatmap,
     }

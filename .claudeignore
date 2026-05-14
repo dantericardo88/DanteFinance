@@ -1,0 +1,15 @@
+# DanteForge agent hygiene start
+.danteforge/oss-repos/
+.danteforge/oss-deep/
+.danteforge-worktrees/
+.claude/worktrees/
+.dantecode/
+.tmp-*/
+node_modules/
+dist/
+coverage/
+*.log
+test_output.*
+test-output.*
+test-run*.log
+# DanteForge agent hygiene end

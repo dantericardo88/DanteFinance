@@ -50,6 +50,11 @@ class VolTermStructure(BaseModel):
     contango: Optional[bool]
     atm_term_structure: list[tuple[int, float]]  # [(dte, atm_iv), ...]
     skew_summary: dict                 # avg_25d_skew, avg_10d_skew, skew_regime
+    # Enhanced analytics
+    front_back_ratio: Optional[float]  # front ATM IV / back ATM IV (backwardation indicator)
+    iv_rank: Optional[float]           # IVR vs 52-week range [0, 100] — requires hist data
+    iv_percentile_exact: Optional[float]  # % of hist days below current IV [0, 100]
+    skew_zscore: Optional[float]       # (current_25d_skew − 30d_mean) / 30d_std
     warnings: list[str]
 
 class VolSurfaceSummary(BaseModel):
@@ -59,8 +64,11 @@ class VolSurfaceSummary(BaseModel):
     atm_iv_front: Optional[float]
     atm_iv_back: Optional[float]
     term_slope: Optional[float]
+    front_back_ratio: Optional[float]  # front/back IV ratio
     skew_regime: str
-    iv_percentile: Optional[float]
+    iv_percentile: Optional[float]     # legacy bucket-based percentile
+    iv_rank: Optional[float]           # IVR [0, 100] when historical data available
+    skew_zscore: Optional[float]       # skew z-score vs 30d baseline
     warnings: list[str]
 
 class VolSurfaceScreen(BaseModel):
@@ -205,6 +213,78 @@ def _iv_percentile(atm_iv_front: float) -> Optional[float]:
     if atm_iv_front < 0.30: return 55.0
     if atm_iv_front < 0.40: return 70.0
     return 85.0
+
+
+def _compute_iv_rank(
+    atm_iv_front: float,
+    historical_ivs: list[float],
+) -> Optional[float]:
+    """Compute IV rank (IVR) = (current − 52w_low) / (52w_high − 52w_low) × 100.
+
+    historical_ivs should be a list of daily ATM IV observations over ~252 trading
+    days.  Returns a value in [0, 100] or None if data is insufficient.
+    """
+    if not historical_ivs or len(historical_ivs) < 5:
+        return None
+    lo = min(historical_ivs)
+    hi = max(historical_ivs)
+    if hi <= lo:
+        return None
+    rank = (atm_iv_front - lo) / (hi - lo) * 100.0
+    return round(float(np.clip(rank, 0.0, 100.0)), 2)
+
+
+def _compute_iv_percentile_exact(
+    atm_iv_front: float,
+    historical_ivs: list[float],
+) -> Optional[float]:
+    """Compute IV percentile = fraction of historical days with IV below current × 100.
+
+    Complements IVR — measures *how often* IV was below today's level.
+    Returns value in [0, 100].
+    """
+    if not historical_ivs or len(historical_ivs) < 5:
+        return None
+    below = sum(1 for v in historical_ivs if v < atm_iv_front)
+    return round(below / len(historical_ivs) * 100.0, 2)
+
+
+def _compute_term_slope_front_back(
+    slices: list[ExpirationSlice],
+) -> Optional[float]:
+    """Term structure slope = front ATM IV / back ATM IV.
+
+    Ratio > 1 → backwardation (inverted); ratio < 1 → contango.
+    Requires at least 2 slices with valid ATM IV.
+    """
+    valid = [(s.dte, s.atm_iv) for s in slices if s.atm_iv is not None]
+    if len(valid) < 2:
+        return None
+    valid.sort(key=lambda x: x[0])
+    front_iv = valid[0][1]
+    back_iv = valid[-1][1]
+    if back_iv is None or back_iv <= 0:
+        return None
+    return round(float(front_iv) / float(back_iv), 6)
+
+
+def _compute_skew_zscore(
+    current_skew: Optional[float],
+    historical_skews: list[float],
+) -> Optional[float]:
+    """Skew z-score = (current_skew − 30d_mean) / 30d_std.
+
+    historical_skews should contain daily avg_25d skew observations for the
+    trailing ~30 calendar days.  Returns None if data is insufficient (< 5 obs).
+    """
+    if current_skew is None or not historical_skews or len(historical_skews) < 5:
+        return None
+    arr = np.array(historical_skews, dtype=float)
+    mu = float(np.mean(arr))
+    std = float(np.std(arr, ddof=1))
+    if std <= 0:
+        return None
+    return round((current_skew - mu) / std, 4)
 
 def _fit_svi(log_moneyness: np.ndarray, total_var: np.ndarray, expiration: str) -> Optional[SVIParams]:
     """Least-squares fit of raw SVI to (log-moneyness, total variance) data."""
@@ -398,18 +478,93 @@ async def get_vol_term_structure(ticker: str) -> VolTermStructure:
         "skew_regime": _skew_regime(slices),
     }
 
+    # ── Enhanced analytics ────────────────────────────────────────────────────
+
+    # Front/back term structure slope ratio
+    front_back_ratio = _compute_term_slope_front_back(slices)
+
+    # IV rank and percentile — require caller to inject historical_ivs;
+    # without historical data we fall back to the bucket-based legacy _iv_percentile.
+    # These fields are populated to None here and enriched by callers that have
+    # access to historical IV time series (e.g. from a DB cache).
+    iv_rank: Optional[float] = None
+    iv_percentile_exact: Optional[float] = None
+
+    # Skew z-score — similarly requires a 30-day baseline; set to None by default,
+    # enriched by callers with access to historical skew series.
+    skew_zscore: Optional[float] = None
+
+    # Provide helper stubs so callers can enrich the struct post-hoc:
+    # e.g. vts = enrich_iv_rank(vts, historical_atm_ivs)
+    # We expose the computation functions publicly for that purpose.
+
     logger.info(
         "get_vol_term_structure complete",
         ticker=ticker, spot=spot, slices=len(slices),
         forward_vols=len(forward_vols), contango=contango,
         regime=skew_summary["skew_regime"],
+        front_back_ratio=front_back_ratio,
     )
     return VolTermStructure(
         ticker=ticker, spot=spot, as_of=as_of, slices=slices,
         forward_vols=forward_vols, svi_fits=svi_fits,
         term_slope=round(slope, 7) if slope is not None else None,
         contango=contango, atm_term_structure=atm_ts,
-        skew_summary=skew_summary, warnings=warnings,
+        skew_summary=skew_summary,
+        front_back_ratio=front_back_ratio,
+        iv_rank=iv_rank,
+        iv_percentile_exact=iv_percentile_exact,
+        skew_zscore=skew_zscore,
+        warnings=warnings,
+    )
+
+
+def enrich_vol_term_structure(
+    vts: VolTermStructure,
+    historical_atm_ivs: list[float],
+    historical_25d_skews: list[float],
+) -> VolTermStructure:
+    """Enrich a VolTermStructure with 52-week IV rank, exact IV percentile, and
+    skew z-score using externally supplied historical data.
+
+    Args:
+        vts: The VolTermStructure to enrich.
+        historical_atm_ivs: Daily ATM IV observations for ~252 trading days
+            (52-week window). Used for IVR and IV percentile.
+        historical_25d_skews: Daily avg_25d downside skew observations for
+            ~30 calendar days. Used for skew z-score.
+
+    Returns:
+        A new VolTermStructure (frozen model) with the computed fields set.
+        All other fields are identical to the input.
+    """
+    atm_iv_front = vts.atm_term_structure[0][1] if vts.atm_term_structure else None
+
+    iv_rank: Optional[float] = None
+    iv_percentile_exact: Optional[float] = None
+    if atm_iv_front is not None:
+        iv_rank = _compute_iv_rank(atm_iv_front, historical_atm_ivs)
+        iv_percentile_exact = _compute_iv_percentile_exact(atm_iv_front, historical_atm_ivs)
+
+    current_25d_skew = vts.skew_summary.get("avg_25d_skew")
+    skew_zscore = _compute_skew_zscore(current_25d_skew, historical_25d_skews)
+
+    return VolTermStructure(
+        ticker=vts.ticker,
+        spot=vts.spot,
+        as_of=vts.as_of,
+        slices=vts.slices,
+        forward_vols=vts.forward_vols,
+        svi_fits=vts.svi_fits,
+        term_slope=vts.term_slope,
+        contango=vts.contango,
+        atm_term_structure=vts.atm_term_structure,
+        skew_summary=vts.skew_summary,
+        front_back_ratio=vts.front_back_ratio,
+        iv_rank=iv_rank,
+        iv_percentile_exact=iv_percentile_exact,
+        skew_zscore=skew_zscore,
+        warnings=vts.warnings,
     )
 
 
@@ -464,6 +619,7 @@ def vol_risk_summary(vts: VolTermStructure) -> dict:
         "atm_iv_back": atm_iv_back,
         "front_fwd_vol": front_fwd_vol,
         "term_slope": vts.term_slope,
+        "front_back_ratio": vts.front_back_ratio,
         "contango": vts.contango,
         "skew_regime": vts.skew_summary.get("skew_regime"),
         "avg_25d_skew": avg_25d,
@@ -474,6 +630,9 @@ def vol_risk_summary(vts: VolTermStructure) -> dict:
         "total_oi_puts": total_oi_puts,
         "svi_fit_count": len(vts.svi_fits),
         "iv_percentile": iv_pct,
+        "iv_rank": vts.iv_rank,
+        "iv_percentile_exact": vts.iv_percentile_exact,
+        "skew_zscore": vts.skew_zscore,
         "risk_flag": risk_flag,
     }
 
@@ -516,8 +675,13 @@ async def screen_vol_surface(tickers: list[str]) -> VolSurfaceScreen:
         summaries[ticker] = VolSurfaceSummary(
             ticker=ticker, spot=vts.spot,
             atm_iv_front=atm_iv_front, atm_iv_back=atm_iv_back,
-            term_slope=vts.term_slope, skew_regime=regime,
-            iv_percentile=iv_pct, warnings=ticker_warns,
+            term_slope=vts.term_slope,
+            front_back_ratio=vts.front_back_ratio,
+            skew_regime=regime,
+            iv_percentile=iv_pct,
+            iv_rank=vts.iv_rank,
+            skew_zscore=vts.skew_zscore,
+            warnings=ticker_warns,
         )
 
     logger.info(

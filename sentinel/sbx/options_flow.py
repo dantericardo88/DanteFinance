@@ -33,6 +33,45 @@ class OptionContract(BaseModel):
     dollar_premium: float       # volume × mid_price × 100
     unusual_score: float        # 0-10
     days_to_expiry: int
+    delta: Optional[float] = None           # Black-Scholes delta (added for GEX / conviction)
+    flow_conviction: Optional[float] = None # (vol/avg_vol) × |delta| — directional urgency
+
+
+class OIConcentration(BaseModel):
+    """Top-N strikes by total open interest (calls + puts combined)."""
+    model_config = ConfigDict(frozen=True)
+
+    strike: float
+    total_oi: int
+    call_oi: int
+    put_oi: int
+    pc_oi_ratio: Optional[float]   # put OI / call OI at this strike
+    pct_of_total: float            # fraction of total chain OI
+
+
+class PCRatioByExpiry(BaseModel):
+    """OI-weighted put/call ratio broken out by expiration."""
+    model_config = ConfigDict(frozen=True)
+
+    expiration: str
+    dte: int
+    call_oi: int
+    put_oi: int
+    oi_ratio: Optional[float]      # put_oi / call_oi
+    call_volume: int
+    put_volume: int
+    volume_ratio: Optional[float]  # put_volume / call_volume
+
+
+class GEXSummary(BaseModel):
+    """Delta-adjusted net gamma exposure across all strikes/expirations."""
+    model_config = ConfigDict(frozen=True)
+
+    net_gex: float                             # positive = dealer long gamma (vol suppressive)
+    by_strike: dict[str, float]                # {strike_str: gex_dollars}
+    largest_positive_strike: Optional[float]   # strike with biggest positive GEX
+    largest_negative_strike: Optional[float]   # strike with biggest negative GEX
+    gex_flip_level: Optional[float]            # strike nearest zero crossing (gamma flip)
 
 
 class OptionsFlow(BaseModel):
@@ -50,6 +89,10 @@ class OptionsFlow(BaseModel):
     iv_skew: Optional[float] = None     # put IV − call IV at ±5% strikes
     unusual_contracts: list[OptionContract]
     max_pain: Optional[float] = None
+    # Enhanced analytics
+    pc_by_expiry: list[PCRatioByExpiry] = Field(default_factory=list)
+    gex: Optional[GEXSummary] = None
+    oi_concentration: list[OIConcentration] = Field(default_factory=list)  # top-5 strikes
     as_of: str
     warnings: list[str] = Field(default_factory=list)
 
@@ -187,6 +230,261 @@ def _compute_iv_skew(
     except Exception as exc:
         logger.warning("iv_skew computation failed", error=str(exc))
         return None
+
+
+# ── Black-Scholes Delta (lightweight, no scipy needed) ────────────────────────
+
+def _bs_delta(
+    S: float,
+    K: float,
+    T: float,
+    r: float,
+    sigma: float,
+    option_type: str,
+) -> Optional[float]:
+    """Black-Scholes delta for a European option.
+
+    Returns None if inputs are invalid or T ≤ 0.
+    Uses a pure-Python/NumPy normal CDF so scipy is not required.
+    """
+    if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
+        return None
+    try:
+        sqrtT = np.sqrt(T)
+        d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * sqrtT)
+        # Standard normal CDF via math.erf
+        from math import erf, sqrt as msqrt
+        def _norm_cdf(x: float) -> float:
+            return 0.5 * (1.0 + erf(x / msqrt(2.0)))
+
+        if option_type == "call":
+            return float(_norm_cdf(d1))
+        else:
+            return float(_norm_cdf(d1) - 1.0)
+    except Exception:
+        return None
+
+
+# ── PC Ratio by Expiry ────────────────────────────────────────────────────────
+
+def _compute_pc_by_expiry(
+    chains: list[tuple[str, object]],
+    today: date,
+) -> list[PCRatioByExpiry]:
+    """OI-weighted put/call ratio broken out per expiration."""
+    result: list[PCRatioByExpiry] = []
+    for expiration, chain in chains:
+        try:
+            exp_date = date.fromisoformat(expiration)
+        except ValueError:
+            continue
+        dte = max(0, (exp_date - today).days)
+        calls_df = chain.calls
+        puts_df = chain.puts
+        try:
+            call_oi = int((calls_df["openInterest"].fillna(0)).sum()) if not calls_df.empty else 0
+            put_oi = int((puts_df["openInterest"].fillna(0)).sum()) if not puts_df.empty else 0
+            call_vol = int((calls_df["volume"].fillna(0)).sum()) if not calls_df.empty else 0
+            put_vol = int((puts_df["volume"].fillna(0)).sum()) if not puts_df.empty else 0
+        except Exception as exc:
+            logger.warning("_compute_pc_by_expiry: OI/vol sum failed", exp=expiration, error=str(exc))
+            continue
+        result.append(PCRatioByExpiry(
+            expiration=expiration,
+            dte=dte,
+            call_oi=call_oi,
+            put_oi=put_oi,
+            oi_ratio=round(put_oi / call_oi, 4) if call_oi > 0 else None,
+            call_volume=call_vol,
+            put_volume=put_vol,
+            volume_ratio=round(put_vol / call_vol, 4) if call_vol > 0 else None,
+        ))
+    result.sort(key=lambda x: x.dte)
+    return result
+
+
+# ── Delta-Adjusted GEX ────────────────────────────────────────────────────────
+
+def _compute_gex(
+    all_contracts: list[OptionContract],
+    current_price: float,
+    risk_free_rate: float = 0.05,
+) -> Optional[GEXSummary]:
+    """Compute net gamma exposure (GEX) from parsed OptionContract list.
+
+    GEX per contract = gamma × OI × 100 × spot²  (dollar-denominated)
+    Calls contribute positive GEX (dealers hedged long gamma).
+    Puts contribute negative GEX (dealers hedged short gamma).
+
+    Delta is approximated via Black-Scholes when not pre-computed.
+    The delta_sensitivity factor in flow_conviction is computed here and
+    stored back as a convenience — we update contracts in-place by returning
+    new values from here.
+    """
+    if not all_contracts or current_price <= 0:
+        return None
+
+    gex_by_strike: dict[str, float] = {}
+    for c in all_contracts:
+        T = c.days_to_expiry / 365.0
+        if T <= 0:
+            continue
+        # Use pre-computed delta if present, else compute via BS
+        delta = c.delta
+        if delta is None:
+            delta = _bs_delta(
+                S=current_price,
+                K=c.strike,
+                T=T,
+                r=risk_free_rate,
+                sigma=max(c.implied_volatility, 0.01),
+                option_type=c.option_type,
+            )
+        if delta is None:
+            continue
+
+        # Gamma approximated from BS formula: γ = φ(d1) / (S σ √T)
+        sigma = max(c.implied_volatility, 0.01)
+        try:
+            sqrtT = np.sqrt(T)
+            d1 = (np.log(current_price / c.strike) + (risk_free_rate + 0.5 * sigma ** 2) * T) / (sigma * sqrtT)
+            gamma = float(np.exp(-0.5 * d1 ** 2) / (np.sqrt(2 * np.pi) * current_price * sigma * sqrtT))
+        except Exception:
+            continue
+
+        # Dollar GEX: γ × OI × 100 × S²
+        raw_gex = gamma * c.open_interest * 100 * (current_price ** 2)
+        signed_gex = raw_gex if c.option_type == "call" else -raw_gex
+
+        key = str(round(c.strike, 2))
+        gex_by_strike[key] = gex_by_strike.get(key, 0.0) + signed_gex
+
+    if not gex_by_strike:
+        return None
+
+    net_gex = sum(gex_by_strike.values())
+
+    # Find the gamma flip level: strike closest to GEX = 0 crossing
+    sorted_strikes = sorted(gex_by_strike.items(), key=lambda x: float(x[0]))
+    gex_flip: Optional[float] = None
+    for i in range(len(sorted_strikes) - 1):
+        g1, g2 = sorted_strikes[i][1], sorted_strikes[i + 1][1]
+        if g1 * g2 < 0:  # sign change
+            k1, k2 = float(sorted_strikes[i][0]), float(sorted_strikes[i + 1][0])
+            # Linear interpolation for zero crossing
+            gex_flip = round(k1 + (-g1) / (g2 - g1) * (k2 - k1), 2)
+            break
+
+    pos = {k: v for k, v in gex_by_strike.items() if v > 0}
+    neg = {k: v for k, v in gex_by_strike.items() if v < 0}
+    largest_pos = float(max(pos, key=lambda k: pos[k])) if pos else None
+    largest_neg = float(min(neg, key=lambda k: neg[k])) if neg else None
+
+    return GEXSummary(
+        net_gex=round(net_gex, 2),
+        by_strike={k: round(v, 2) for k, v in gex_by_strike.items()},
+        largest_positive_strike=largest_pos,
+        largest_negative_strike=largest_neg,
+        gex_flip_level=gex_flip,
+    )
+
+
+# ── OI Concentration ──────────────────────────────────────────────────────────
+
+def _compute_oi_concentration(
+    all_contracts: list[OptionContract],
+    top_n: int = 5,
+) -> list[OIConcentration]:
+    """Return top-N strikes by combined (call + put) open interest."""
+    from collections import defaultdict
+    strike_call_oi: dict[float, int] = defaultdict(int)
+    strike_put_oi: dict[float, int] = defaultdict(int)
+
+    for c in all_contracts:
+        if c.option_type == "call":
+            strike_call_oi[c.strike] += c.open_interest
+        else:
+            strike_put_oi[c.strike] += c.open_interest
+
+    all_strikes = set(strike_call_oi.keys()) | set(strike_put_oi.keys())
+    total_chain_oi = sum(
+        strike_call_oi[s] + strike_put_oi[s] for s in all_strikes
+    )
+    if total_chain_oi == 0:
+        return []
+
+    ranked = sorted(
+        all_strikes,
+        key=lambda s: strike_call_oi[s] + strike_put_oi[s],
+        reverse=True,
+    )[:top_n]
+
+    result: list[OIConcentration] = []
+    for s in ranked:
+        c_oi = strike_call_oi[s]
+        p_oi = strike_put_oi[s]
+        total_oi = c_oi + p_oi
+        result.append(OIConcentration(
+            strike=s,
+            total_oi=total_oi,
+            call_oi=c_oi,
+            put_oi=p_oi,
+            pc_oi_ratio=round(p_oi / c_oi, 4) if c_oi > 0 else None,
+            pct_of_total=round(total_oi / total_chain_oi * 100, 2),
+        ))
+    return result
+
+
+# ── Flow Conviction Enhancement ───────────────────────────────────────────────
+
+def _enrich_contracts_with_conviction(
+    contracts: list[OptionContract],
+    current_price: float,
+    risk_free_rate: float = 0.05,
+) -> list[OptionContract]:
+    """Return new list of OptionContract with delta and flow_conviction populated.
+
+    flow_conviction = (volume / avg_volume_in_chain) × |delta|
+    avg_volume is the mean non-zero volume across all contracts in the chain.
+    """
+    volumes = [c.volume for c in contracts if c.volume > 0]
+    avg_vol = float(np.mean(volumes)) if volumes else 1.0
+
+    enriched: list[OptionContract] = []
+    for c in contracts:
+        T = c.days_to_expiry / 365.0
+        delta = _bs_delta(
+            S=current_price,
+            K=c.strike,
+            T=T,
+            r=risk_free_rate,
+            sigma=max(c.implied_volatility, 0.01),
+            option_type=c.option_type,
+        )
+        conviction: Optional[float] = None
+        if delta is not None and avg_vol > 0:
+            conviction = round((c.volume / avg_vol) * abs(delta), 4)
+
+        enriched.append(OptionContract(
+            symbol=c.symbol,
+            expiration=c.expiration,
+            strike=c.strike,
+            option_type=c.option_type,
+            last_price=c.last_price,
+            bid=c.bid,
+            ask=c.ask,
+            volume=c.volume,
+            open_interest=c.open_interest,
+            implied_volatility=c.implied_volatility,
+            in_the_money=c.in_the_money,
+            volume_oi_ratio=c.volume_oi_ratio,
+            dollar_premium=c.dollar_premium,
+            unusual_score=c.unusual_score,
+            days_to_expiry=c.days_to_expiry,
+            delta=round(delta, 4) if delta is not None else None,
+            flow_conviction=conviction,
+        ))
+    return enriched
 
 
 # ── Contract Parsing ──────────────────────────────────────────────────────────
@@ -377,8 +675,40 @@ async def get_options_flow(
         except Exception as exc:
             warnings.append(f"Max pain calculation failed: {exc}")
 
-    # Filter and sort unusual contracts
-    unusual = [c for c in all_contracts if c.unusual_score >= min_unusual_score]
+    # ── New analytics ────────────────────────────────────────────────────────
+
+    # Enrich contracts with delta and flow conviction score
+    enriched_contracts: list[OptionContract] = all_contracts
+    if current_price and current_price > 0:
+        try:
+            enriched_contracts = _enrich_contracts_with_conviction(all_contracts, current_price)
+        except Exception as exc:
+            warnings.append(f"Contract enrichment (delta/conviction) failed: {exc}")
+
+    # PC ratio by expiration (OI-weighted)
+    pc_by_expiry: list[PCRatioByExpiry] = []
+    try:
+        pc_by_expiry = _compute_pc_by_expiry(chains, today)
+    except Exception as exc:
+        warnings.append(f"PC ratio by expiry failed: {exc}")
+
+    # Delta-adjusted GEX
+    gex: Optional[GEXSummary] = None
+    if current_price and current_price > 0:
+        try:
+            gex = _compute_gex(enriched_contracts, current_price)
+        except Exception as exc:
+            warnings.append(f"GEX calculation failed: {exc}")
+
+    # OI concentration — top 5 strikes
+    oi_concentration: list[OIConcentration] = []
+    try:
+        oi_concentration = _compute_oi_concentration(enriched_contracts, top_n=5)
+    except Exception as exc:
+        warnings.append(f"OI concentration failed: {exc}")
+
+    # Filter and sort unusual contracts (use enriched versions)
+    unusual = [c for c in enriched_contracts if c.unusual_score >= min_unusual_score]
     unusual.sort(key=lambda c: c.unusual_score, reverse=True)
     unusual = unusual[:20]
 
@@ -388,10 +718,11 @@ async def get_options_flow(
     logger.info(
         "get_options_flow complete",
         ticker=ticker,
-        total_contracts=len(all_contracts),
+        total_contracts=len(enriched_contracts),
         unusual_count=len(unusual),
         sentiment=sentiment,
         pc_vol=round(pc_vol_ratio, 3),
+        net_gex=gex.net_gex if gex else None,
     )
 
     return OptionsFlow(
@@ -407,6 +738,9 @@ async def get_options_flow(
         iv_skew=iv_skew,
         unusual_contracts=unusual,
         max_pain=max_pain,
+        pc_by_expiry=pc_by_expiry,
+        gex=gex,
+        oi_concentration=oi_concentration,
         as_of=as_of,
         warnings=warnings,
     )

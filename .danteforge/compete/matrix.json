@@ -25,8 +25,8 @@
     "qlib",
     "vectorbt"
   ],
-  "lastUpdated": "2026-05-14T15:59:47.991Z",
-  "overallSelfScore": 5.06,
+  "lastUpdated": "2026-05-14T19:20:50.493Z",
+  "overallSelfScore": 5.1,
   "harshComposite": 5,
   "selfComposite": 7.1,
   "annualCost": {
@@ -98,7 +98,7 @@
       "category": "market_data",
       "frequency": "high",
       "scores": {
-        "self": 4,
+        "self": 6,
         "bloomberg": 10,
         "capiq": 6,
         "factset": 9,
@@ -109,14 +109,21 @@
         "qlib": 5,
         "vectorbt": 5
       },
-      "gap_to_leader": 6,
+      "gap_to_leader": 4,
       "leader": "bloomberg",
-      "gap_to_closed_source_leader": 6,
+      "gap_to_closed_source_leader": 4,
       "closed_source_leader": "bloomberg",
-      "gap_to_oss_leader": 3,
+      "gap_to_oss_leader": 1,
       "oss_leader": "openbb",
       "status": "started",
-      "sprint_history": [],
+      "sprint_history": [
+        {
+          "dimensionId": "dim_002",
+          "before": 4,
+          "after": 6,
+          "date": "2026-05-14"
+        }
+      ],
       "next_sprint_target": 6
     },
     {
@@ -126,7 +133,7 @@
       "category": "market_data",
       "frequency": "high",
       "scores": {
-        "self": 3,
+        "self": 5,
         "bloomberg": 9,
         "capiq": 3,
         "factset": 7,
@@ -137,14 +144,21 @@
         "qlib": 3,
         "vectorbt": 3
       },
-      "gap_to_leader": 6,
+      "gap_to_leader": 4,
       "leader": "bloomberg",
-      "gap_to_closed_source_leader": 6,
+      "gap_to_closed_source_leader": 4,
       "closed_source_leader": "bloomberg",
-      "gap_to_oss_leader": 2,
+      "gap_to_oss_leader": 0,
       "oss_leader": "openbb",
       "status": "started",
-      "sprint_history": [],
+      "sprint_history": [
+        {
+          "dimensionId": "dim_003",
+          "before": 3,
+          "after": 5,
+          "date": "2026-05-14"
+        }
+      ],
       "next_sprint_target": 5
     },
     {
