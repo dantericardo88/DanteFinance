@@ -1,0 +1,364 @@
+{
+  "generatedAt": "2026-05-14T17:49:23.826Z",
+  "waves": [
+    {
+      "waveNumber": 1,
+      "description": "Wave 1: 6 parallel-safe work packets",
+      "workPacketIds": [
+        "work.dim_001.2026-05-14T17-49-23",
+        "work.dim_002.2026-05-14T17-49-23",
+        "work.dim_003.2026-05-14T17-49-23",
+        "work.dim_004.2026-05-14T17-49-23",
+        "work.dim_005.2026-05-14T17-49-23",
+        "work.dim_006.2026-05-14T17-49-23"
+      ],
+      "estimatedDurationMinutes": 60,
+      "estimatedTokens": 60000,
+      "estimatedUsdLow": 0.18,
+      "estimatedUsdHigh": 0.8999999999999999,
+      "rationale": [
+        "Touches 6 dimension(s)",
+        "Contains critical-risk packet"
+      ]
+    },
+    {
+      "waveNumber": 2,
+      "description": "Wave 2: 6 parallel-safe work packets",
+      "workPacketIds": [
+        "work.dim_007.2026-05-14T17-49-23",
+        "work.dim_008.2026-05-14T17-49-23",
+        "work.dim_009.2026-05-14T17-49-23",
+        "work.dim_011.2026-05-14T17-49-23",
+        "work.dim_013.2026-05-14T17-49-23",
+        "work.dim_014.2026-05-14T17-49-23"
+      ],
+      "estimatedDurationMinutes": 60,
+      "estimatedTokens": 42000,
+      "estimatedUsdLow": 0.126,
+      "estimatedUsdHigh": 0.63,
+      "rationale": [
+        "Touches 6 dimension(s)",
+        "Contains critical-risk packet"
+      ]
+    },
+    {
+      "waveNumber": 3,
+      "description": "Wave 3: 6 parallel-safe work packets",
+      "workPacketIds": [
+        "work.dim_015.2026-05-14T17-49-23",
+        "work.dim_016.2026-05-14T17-49-23",
+        "work.dim_017.2026-05-14T17-49-23",
+        "work.dim_020.2026-05-14T17-49-23",
+        "work.dim_021.2026-05-14T17-49-23",
+        "work.dim_022.2026-05-14T17-49-23"
+      ],
+      "estimatedDurationMinutes": 60,
+      "estimatedTokens": 42000,
+      "estimatedUsdLow": 0.126,
+      "estimatedUsdHigh": 0.63,
+      "rationale": [
+        "Touches 6 dimension(s)",
+        "Contains high-risk packet"
+      ]
+    },
+    {
+      "waveNumber": 4,
+      "description": "Wave 4: 6 parallel-safe work packets",
+      "workPacketIds": [
+        "work.dim_023.2026-05-14T17-49-23",
+        "work.dim_024.2026-05-14T17-49-23",
+        "work.dim_025.2026-05-14T17-49-23",
+        "work.dim_026.2026-05-14T17-49-23",
+        "work.dim_027.2026-05-14T17-49-23",
+        "work.dim_028.2026-05-14T17-49-23"
+      ],
+      "estimatedDurationMinutes": 30,
+      "estimatedTokens": 36000,
+      "estimatedUsdLow": 0.10799999999999998,
+      "estimatedUsdHigh": 0.5399999999999999,
+      "rationale": [
+        "Touches 6 dimension(s)",
+        "Contains high-risk packet"
+      ]
+    },
+    {
+      "waveNumber": 5,
+      "description": "Wave 5: 6 parallel-safe work packets",
+      "workPacketIds": [
+        "work.dim_029.2026-05-14T17-49-23",
+        "work.dim_030.2026-05-14T17-49-23",
+        "work.dim_031.2026-05-14T17-49-23",
+        "work.dim_032.2026-05-14T17-49-23",
+        "work.dim_033.2026-05-14T17-49-23",
+        "work.dim_034.2026-05-14T17-49-23"
+      ],
+      "estimatedDurationMinutes": 60,
+      "estimatedTokens": 60000,
+      "estimatedUsdLow": 0.18,
+      "estimatedUsdHigh": 0.8999999999999999,
+      "rationale": [
+        "Touches 6 dimension(s)",
+        "Contains critical-risk packet"
+      ]
+    },
+    {
+      "waveNumber": 6,
+      "description": "Wave 6: 6 parallel-safe work packets",
+      "workPacketIds": [
+        "work.dim_035.2026-05-14T17-49-23",
+        "work.dim_036.2026-05-14T17-49-23",
+        "work.dim_037.2026-05-14T17-49-23",
+        "work.dim_038.2026-05-14T17-49-23",
+        "work.dim_039.2026-05-14T17-49-23",
+        "work.dim_043.2026-05-14T17-49-23"
+      ],
+      "estimatedDurationMinutes": 60,
+      "estimatedTokens": 42000,
+      "estimatedUsdLow": 0.126,
+      "estimatedUsdHigh": 0.63,
+      "rationale": [
+        "Touches 6 dimension(s)",
+        "Contains critical-risk packet"
+      ]
+    },
+    {
+      "waveNumber": 7,
+      "description": "Wave 7: 6 parallel-safe work packets",
+      "workPacketIds": [
+        "work.dim_044.2026-05-14T17-49-23",
+        "work.dim_045.2026-05-14T17-49-23",
+        "work.dim_046.2026-05-14T17-49-23",
+        "work.dim_047.2026-05-14T17-49-23",
+        "work.dim_048.2026-05-14T17-49-23",
+        "work.dim_049.2026-05-14T17-49-23"
+      ],
+      "estimatedDurationMinutes": 30,
+      "estimatedTokens": 36000,
+      "estimatedUsdLow": 0.10799999999999998,
+      "estimatedUsdHigh": 0.5399999999999999,
+      "rationale": [
+        "Touches 6 dimension(s)",
+        "Contains high-risk packet"
+      ]
+    },
+    {
+      "waveNumber": 8,
+      "description": "Wave 8: 6 parallel-safe work packets",
+      "workPacketIds": [
+        "work.dim_050.2026-05-14T17-49-23",
+        "work.dim_051.2026-05-14T17-49-23",
+        "work.dim_052.2026-05-14T17-49-23",
+        "work.dim_053.2026-05-14T17-49-23",
+        "work.dim_054.2026-05-14T17-49-23",
+        "work.dim_055.2026-05-14T17-49-23"
+      ],
+      "estimatedDurationMinutes": 30,
+      "estimatedTokens": 36000,
+      "estimatedUsdLow": 0.10799999999999998,
+      "estimatedUsdHigh": 0.5399999999999999,
+      "rationale": [
+        "Touches 6 dimension(s)",
+        "Contains high-risk packet"
+      ]
+    },
+    {
+      "waveNumber": 9,
+      "description": "Wave 9: 6 parallel-safe work packets",
+      "workPacketIds": [
+        "work.dim_056.2026-05-14T17-49-23",
+        "work.dim_057.2026-05-14T17-49-23",
+        "work.dim_060.2026-05-14T17-49-23",
+        "work.dim_061.2026-05-14T17-49-23",
+        "work.dim_062.2026-05-14T17-49-23",
+        "work.dim_063.2026-05-14T17-49-23"
+      ],
+      "estimatedDurationMinutes": 30,
+      "estimatedTokens": 36000,
+      "estimatedUsdLow": 0.10799999999999998,
+      "estimatedUsdHigh": 0.5399999999999999,
+      "rationale": [
+        "Touches 6 dimension(s)"
+      ]
+    },
+    {
+      "waveNumber": 10,
+      "description": "Wave 10: 6 parallel-safe work packets",
+      "workPacketIds": [
+        "work.dim_064.2026-05-14T17-49-23",
+        "work.dim_065.2026-05-14T17-49-23",
+        "work.dim_066.2026-05-14T17-49-23",
+        "work.dim_067.2026-05-14T17-49-23",
+        "work.dim_068.2026-05-14T17-49-23",
+        "work.dim_070.2026-05-14T17-49-23"
+      ],
+      "estimatedDurationMinutes": 30,
+      "estimatedTokens": 36000,
+      "estimatedUsdLow": 0.10799999999999998,
+      "estimatedUsdHigh": 0.5399999999999999,
+      "rationale": [
+        "Touches 6 dimension(s)",
+        "Contains high-risk packet"
+      ]
+    },
+    {
+      "waveNumber": 11,
+      "description": "Wave 11: 6 parallel-safe work packets",
+      "workPacketIds": [
+        "work.dim_071.2026-05-14T17-49-23",
+        "work.dim_072.2026-05-14T17-49-23",
+        "work.dim_073.2026-05-14T17-49-23",
+        "work.dim_074.2026-05-14T17-49-23",
+        "work.dim_075.2026-05-14T17-49-23",
+        "work.dim_076.2026-05-14T17-49-23"
+      ],
+      "estimatedDurationMinutes": 60,
+      "estimatedTokens": 42000,
+      "estimatedUsdLow": 0.126,
+      "estimatedUsdHigh": 0.63,
+      "rationale": [
+        "Touches 6 dimension(s)",
+        "Contains high-risk packet"
+      ]
+    },
+    {
+      "waveNumber": 12,
+      "description": "Wave 12: 6 parallel-safe work packets",
+      "workPacketIds": [
+        "work.dim_078.2026-05-14T17-49-23",
+        "work.dim_079.2026-05-14T17-49-23",
+        "work.dim_080.2026-05-14T17-49-23",
+        "work.dim_081.2026-05-14T17-49-23",
+        "work.dim_082.2026-05-14T17-49-23",
+        "work.dim_083.2026-05-14T17-49-23"
+      ],
+      "estimatedDurationMinutes": 30,
+      "estimatedTokens": 36000,
+      "estimatedUsdLow": 0.10799999999999998,
+      "estimatedUsdHigh": 0.5399999999999999,
+      "rationale": [
+        "Touches 6 dimension(s)"
+      ]
+    },
+    {
+      "waveNumber": 13,
+      "description": "Wave 13: 6 parallel-safe work packets",
+      "workPacketIds": [
+        "work.dim_084.2026-05-14T17-49-23",
+        "work.dim_085.2026-05-14T17-49-23",
+        "work.dim_086.2026-05-14T17-49-23",
+        "work.dim_089.2026-05-14T17-49-23",
+        "work.dim_090.2026-05-14T17-49-23",
+        "work.dim_091.2026-05-14T17-49-23"
+      ],
+      "estimatedDurationMinutes": 60,
+      "estimatedTokens": 42000,
+      "estimatedUsdLow": 0.126,
+      "estimatedUsdHigh": 0.63,
+      "rationale": [
+        "Touches 6 dimension(s)",
+        "Contains critical-risk packet"
+      ]
+    },
+    {
+      "waveNumber": 14,
+      "description": "Wave 14: 6 parallel-safe work packets",
+      "workPacketIds": [
+        "work.dim_092.2026-05-14T17-49-23",
+        "work.dim_093.2026-05-14T17-49-23",
+        "work.dim_095.2026-05-14T17-49-23",
+        "work.dim_096.2026-05-14T17-49-23",
+        "work.dim_097.2026-05-14T17-49-23",
+        "work.dim_098.2026-05-14T17-49-23"
+      ],
+      "estimatedDurationMinutes": 60,
+      "estimatedTokens": 60000,
+      "estimatedUsdLow": 0.18,
+      "estimatedUsdHigh": 0.8999999999999999,
+      "rationale": [
+        "Touches 6 dimension(s)",
+        "Contains critical-risk packet"
+      ]
+    },
+    {
+      "waveNumber": 15,
+      "description": "Wave 15: 6 parallel-safe work packets",
+      "workPacketIds": [
+        "work.dim_100.2026-05-14T17-49-23",
+        "work.dim_101.2026-05-14T17-49-23",
+        "work.dim_102.2026-05-14T17-49-23",
+        "work.dim_103.2026-05-14T17-49-23",
+        "work.dim_104.2026-05-14T17-49-23",
+        "work.dim_105.2026-05-14T17-49-23"
+      ],
+      "estimatedDurationMinutes": 60,
+      "estimatedTokens": 54000,
+      "estimatedUsdLow": 0.162,
+      "estimatedUsdHigh": 0.8099999999999999,
+      "rationale": [
+        "Touches 6 dimension(s)",
+        "Contains critical-risk packet"
+      ]
+    },
+    {
+      "waveNumber": 16,
+      "description": "Wave 16: 5 parallel-safe work packets",
+      "workPacketIds": [
+        "work.dim_106.2026-05-14T17-49-23",
+        "work.dim_107.2026-05-14T17-49-23",
+        "work.dim_108.2026-05-14T17-49-23",
+        "work.dim_109.2026-05-14T17-49-23",
+        "work.dim_110.2026-05-14T17-49-23"
+      ],
+      "estimatedDurationMinutes": 60,
+      "estimatedTokens": 42000,
+      "estimatedUsdLow": 0.126,
+      "estimatedUsdHigh": 0.63,
+      "rationale": [
+        "Touches 5 dimension(s)",
+        "Contains high-risk packet"
+      ]
+    }
+  ],
+  "safeParallelism": {
+    "requestedAgents": 6,
+    "safeAgentsNow": 6,
+    "recommendedWaveSize": 6,
+    "blockedWorkPackets": 0,
+    "highConflictPackets": 0,
+    "sequentialOnlyPackets": 0,
+    "reasoning": [
+      "All packets ready; no blockers detected"
+    ]
+  },
+  "riskSummary": {
+    "highestRiskAreas": [],
+    "sequentialBottlenecks": [],
+    "predictedConflicts": 0,
+    "requiredHumanApprovals": 0
+  },
+  "expectedReports": [
+    ".danteforge/matrix/matrix.project-graph.json",
+    ".danteforge/matrix/matrix.dimension-graph.json",
+    ".danteforge/matrix/matrix.work-graph.json",
+    ".danteforge/matrix/matrix.dependency-graph.json",
+    ".danteforge/matrix/matrix.lease-graph.json",
+    ".danteforge/matrix/matrix.evidence-graph.json",
+    ".danteforge/matrix/matrix.simulation-plan.json",
+    ".danteforge/matrix/matrix.ownership-map.json",
+    ".danteforge/matrix/matrix.conflicts.json",
+    ".danteforge/matrix/matrix.work-packets.json",
+    ".danteforge/matrix/matrix.leases.json",
+    ".danteforge/matrix/matrix.agent-runs.json",
+    ".danteforge/matrix/matrix.mailbox.json",
+    ".danteforge/matrix/matrix.gate-reports.json",
+    ".danteforge/matrix/matrix.red-team-reports.json",
+    ".danteforge/matrix/matrix.taste-gates.json",
+    ".danteforge/matrix/matrix.merge-decisions.json",
+    ".danteforge/matrix/matrix.retrospective.json",
+    ".danteforge/matrix/matrix.final-report.md",
+    ".danteforge/matrix/agent-memory"
+  ],
+  "totalEstimatedTokens": 702000,
+  "totalEstimatedUsdLow": 2.106,
+  "totalEstimatedUsdHigh": 10.53
+}

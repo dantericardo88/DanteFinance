@@ -1,0 +1,19 @@
+{
+  "project": {
+    "projectId": "DanteFinance",
+    "rootPath": "C:\\Projects\\DanteFinance",
+    "detectedAt": "2026-05-14T16:10:13.285Z",
+    "buildCommands": [
+      "npm run build"
+    ],
+    "verifyCommands": [
+      "npm run typecheck",
+      "npm test"
+    ],
+    "protectedPaths": [],
+    "ownershipPath": ".danteforge/agent-ownership.json",
+    "evidenceDir": ".danteforge/evidence"
+  },
+  "nodes": [],
+  "generatedAt": "2026-05-14T16:10:13.289Z"
+}

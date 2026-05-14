@@ -1,0 +1,39 @@
+{
+  "_meta": {
+    "description": "Permanent exclusion registry — dimensions that CANNOT reach 9.0 with free data or are deliberate non-goals. These dims are EXCLUDED from /goal-loop-matrix scoring gates.",
+    "last_updated": "2026-05-14",
+    "excluded_count": 12
+  },
+  "permanent_exclusions": [
+    {"id":10, "feature":"Order book / Level 2 market depth", "reason":"Requires exchange SIP feed license; not addressable free", "realistic_max":0, "revisit_if":"Polygon Advanced tier ($200+/mo)"},
+    {"id":12, "feature":"Tick-level trade data (TAQ-equivalent)", "reason":"NYSE/NASDAQ TAQ costs $30K+/yr; LOBSTER academic only", "realistic_max":0, "revisit_if":"Academic affiliation or $30K budget"},
+    {"id":18, "feature":"Analyst consensus estimates (200+ brokers)", "reason":"Requires IBES/Refinitiv FactSet Estimates paid feed; no free equivalent at 200-broker depth; yfinance proxy caps at ~4/10", "realistic_max":4, "revisit_if":"FactSet Estimates license ($2K+/yr)"},
+    {"id":40, "feature":"MBS / ABS / CLO structured products", "reason":"Requires Bloomberg/ICE CMBS/RMBS pricing feed", "realistic_max":0, "revisit_if":"Bloomberg Data License"},
+    {"id":41, "feature":"High yield / leveraged loan data", "reason":"Requires LSTA/Refinitiv LPC commercial license", "realistic_max":0, "revisit_if":"Refinitiv LPC license"},
+    {"id":42, "feature":"Live OTC bond bid/ask", "reason":"Deliberate non-goal; Bloomberg BVAL moat; free FINRA TRACE is aggregated only", "realistic_max":0, "revisit_if":"Never — deliberate exclusion"},
+    {"id":58, "feature":"Expert call / scuttlebutt transcripts", "reason":"Deliberate non-goal; Tegus/Mosaic/GLG moat; legal/compliance risk for non-institutional", "realistic_max":0, "revisit_if":"Never — deliberate exclusion"},
+    {"id":69, "feature":"HFT / market-making engine", "reason":"Requires co-location, exchange membership, DMA; functionally out of scope for personal terminal", "realistic_max":0, "revisit_if":"Co-location + exchange membership"},
+    {"id":87, "feature":"Satellite imagery signals", "reason":"Maxar/Planet Labs commercial license; no free equivalent at quality", "realistic_max":0, "revisit_if":"$500+/mo satellite data budget"},
+    {"id":88, "feature":"AIS shipping / cargo tracking", "reason":"MarineTraffic free tier too limited for signal generation", "realistic_max":2, "revisit_if":"MarineTraffic commercial API"},
+    {"id":94, "feature":"Mobile app", "reason":"Not in scope; REST API + MCP tools enable third-party mobile client if desired", "realistic_max":0, "revisit_if":"Dedicated mobile development sprint"},
+    {"id":99, "feature":"Private valuations (PitchBook/CB Insights)", "reason":"Deliberate non-goal; PitchBook moat; EDGAR has no equivalent free data", "realistic_max":0, "revisit_if":"Never — deliberate exclusion"}
+  ],
+  "already_at_target": [
+    {"id":19, "feature":"Earnings KPI / surprise tracking", "score":9, "file":"sfe/earnings_surprise.py + sil/earnings_nlp.py"},
+    {"id":59, "feature":"MCP agent-native tool surface (122 tools)", "score":9, "file":"sil/mcp_server.py"},
+    {"id":77, "feature":"Portfolio VaR / CVaR (GARCH + Basel III)", "score":9, "file":"spr/garch_var.py"}
+  ],
+  "stretch_targets": [
+    {"id":1, "feature":"Real-time equity quotes", "current":3, "realistic_max":9, "condition":"Polygon Starter $30/mo — ONLY paid tier that pays for itself", "priority":"high"},
+    {"id":3, "feature":"Historical OHLCV intraday", "current":3, "realistic_max":9, "condition":"Polygon Starter $30/mo", "priority":"medium"},
+    {"id":11, "feature":"Pre/post-market quotes", "current":2, "realistic_max":9, "condition":"Polygon Starter $30/mo", "priority":"medium"},
+    {"id":21, "feature":"International IFRS (ex-US)", "current":4, "realistic_max":8, "condition":"Limited by 20-F XBRL filer universe; genuinely non-US companies excluded", "priority":"medium"},
+    {"id":86, "feature":"Job postings / web traffic", "current":0, "realistic_max":8, "condition":"Indeed/Glassdoor/SimilarWeb scraping; no free tier at signal quality", "priority":"low"},
+    {"id":92, "feature":"Real-time charting (TradingView)", "current":3, "realistic_max":9, "condition":"TradingView Lightweight Charts is Apache-licensed free; this IS buildable", "priority":"high"},
+    {"id":98, "feature":"VC/PE fund tracking", "current":2, "realistic_max":7, "condition":"Limited to Form D data; no AUM updates between filings", "priority":"low"}
+  ],
+  "total_achievable_at_9": 95,
+  "total_permanent_caps": 12,
+  "total_already_done": 3,
+  "total_dimensions": 110
+}

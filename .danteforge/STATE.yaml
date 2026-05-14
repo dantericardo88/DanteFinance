@@ -1,0 +1,11 @@
+project: DanteFinance
+lastHandoff: initialized
+workflowStage: initialized
+currentPhase: 0
+tasks: {}
+auditLog: []
+profile: balanced
+enforcementMode: strict
+projectType: unknown
+maxBudgetUsd: 10
+routingAggressiveness: balanced

@@ -1,0 +1,3615 @@
+{
+  "generatedAt": "2026-05-14T17:49:23.505Z",
+  "packets": [
+    {
+      "id": "work.dim_001.2026-05-14T17-49-23",
+      "title": "Close gap on Real-time equity quotes (full SIP)",
+      "objective": "Move \"Real-time equity quotes (full SIP)\" from current score 3 toward target 9.",
+      "dimensionId": "dim_001",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 3 toward 5",
+        "Score for dim_001 moves from 3 to at least 9 (gap: 6.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "critical",
+      "estimatedLoc": 400,
+      "estimatedMinutes": 60,
+      "createdAt": "2026-05-14T17:49:23.412Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_002.2026-05-14T17-49-23",
+      "title": "Close gap on Historical OHLCV daily (30+ years, 50+ markets)",
+      "objective": "Move \"Historical OHLCV daily (30+ years, 50+ markets)\" from current score 4 toward target 9.",
+      "dimensionId": "dim_002",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 4 toward 6",
+        "Score for dim_002 moves from 4 to at least 9 (gap: 5.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 400,
+      "estimatedMinutes": 60,
+      "createdAt": "2026-05-14T17:49:23.412Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_003.2026-05-14T17-49-23",
+      "title": "Close gap on Historical OHLCV intraday (1-min, 20+ years)",
+      "objective": "Move \"Historical OHLCV intraday (1-min, 20+ years)\" from current score 3 toward target 9.",
+      "dimensionId": "dim_003",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 3 toward 5",
+        "Score for dim_003 moves from 3 to at least 9 (gap: 6.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "critical",
+      "estimatedLoc": 400,
+      "estimatedMinutes": 60,
+      "createdAt": "2026-05-14T17:49:23.412Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_004.2026-05-14T17-49-23",
+      "title": "Close gap on Options chain (all strikes/expiries, live Greeks)",
+      "objective": "Move \"Options chain (all strikes/expiries, live Greeks)\" from current score 6 toward target 9.",
+      "dimensionId": "dim_004",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8",
+        "Score for dim_004 moves from 6 to at least 9 (gap: 3.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.412Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_005.2026-05-14T17-49-23",
+      "title": "Close gap on Futures term structure / continuous contracts",
+      "objective": "Move \"Futures term structure / continuous contracts\" from current score 4 toward target 9.",
+      "dimensionId": "dim_005",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 4 toward 6",
+        "Score for dim_005 moves from 4 to at least 9 (gap: 5.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 400,
+      "estimatedMinutes": 60,
+      "createdAt": "2026-05-14T17:49:23.413Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_006.2026-05-14T17-49-23",
+      "title": "Close gap on FX spot, forwards, volatility surface",
+      "objective": "Move \"FX spot, forwards, volatility surface\" from current score 5 toward target 9.",
+      "dimensionId": "dim_006",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7",
+        "Score for dim_006 moves from 5 to at least 9 (gap: 4.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.413Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_007.2026-05-14T17-49-23",
+      "title": "Close gap on Crypto multi-exchange OHLCV (100+ venues)",
+      "objective": "Move \"Crypto multi-exchange OHLCV (100+ venues)\" from current score 6 toward target 9.",
+      "dimensionId": "dim_007",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8",
+        "Score for dim_007 moves from 6 to at least 9 (gap: 3.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.413Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_008.2026-05-14T17-49-23",
+      "title": "Close gap on Corporate actions (splits, dividends, M&A adj.)",
+      "objective": "Move \"Corporate actions (splits, dividends, M&A adj.)\" from current score 5 toward target 9.",
+      "dimensionId": "dim_008",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7",
+        "Score for dim_008 moves from 5 to at least 9 (gap: 4.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.413Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_009.2026-05-14T17-49-23",
+      "title": "Close gap on Short interest (FINRA bi-monthly / daily)",
+      "objective": "Move \"Short interest (FINRA bi-monthly / daily)\" from current score 7 toward target 9.",
+      "dimensionId": "dim_009",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9",
+        "Score for dim_009 moves from 7 to at least 9 (gap: 2.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.413Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_011.2026-05-14T17-49-23",
+      "title": "Close gap on Pre/post-market quotes",
+      "objective": "Move \"Pre/post-market quotes\" from current score 2 toward target 9.",
+      "dimensionId": "dim_011",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 2 toward 4",
+        "Score for dim_011 moves from 2 to at least 9 (gap: 7.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "critical",
+      "estimatedLoc": 400,
+      "estimatedMinutes": 60,
+      "createdAt": "2026-05-14T17:49:23.414Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_013.2026-05-14T17-49-23",
+      "title": "Close gap on Income statement standardized (10K+ companies)",
+      "objective": "Move \"Income statement standardized (10K+ companies)\" from current score 6 toward target 9.",
+      "dimensionId": "dim_013",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8",
+        "Score for dim_013 moves from 6 to at least 9 (gap: 3.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.414Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_014.2026-05-14T17-49-23",
+      "title": "Close gap on Balance sheet standardized",
+      "objective": "Move \"Balance sheet standardized\" from current score 6 toward target 9.",
+      "dimensionId": "dim_014",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8",
+        "Score for dim_014 moves from 6 to at least 9 (gap: 3.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.414Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_015.2026-05-14T17-49-23",
+      "title": "Close gap on Cash flow statement standardized",
+      "objective": "Move \"Cash flow statement standardized\" from current score 6 toward target 9.",
+      "dimensionId": "dim_015",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8",
+        "Score for dim_015 moves from 6 to at least 9 (gap: 3.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.414Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_016.2026-05-14T17-49-23",
+      "title": "Close gap on Segment & geographic revenue breakdown",
+      "objective": "Move \"Segment & geographic revenue breakdown\" from current score 7 toward target 9.",
+      "dimensionId": "dim_016",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9",
+        "Score for dim_016 moves from 7 to at least 9 (gap: 2.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.414Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_017.2026-05-14T17-49-23",
+      "title": "Close gap on Non-GAAP reconciliation tables",
+      "objective": "Move \"Non-GAAP reconciliation tables\" from current score 8 toward target 9.",
+      "dimensionId": "dim_017",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 8 toward 9",
+        "Score for dim_017 moves from 8 to at least 9 (gap: 1.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "low",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.414Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_020.2026-05-14T17-49-23",
+      "title": "Close gap on Historical financials (point-in-time, 15+ years)",
+      "objective": "Move \"Historical financials (point-in-time, 15+ years)\" from current score 5 toward target 9.",
+      "dimensionId": "dim_020",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7",
+        "Score for dim_020 moves from 5 to at least 9 (gap: 4.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.414Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_021.2026-05-14T17-49-23",
+      "title": "Close gap on International / IFRS financials (ex-US)",
+      "objective": "Move \"International / IFRS financials (ex-US)\" from current score 4 toward target 9.",
+      "dimensionId": "dim_021",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 4 toward 6",
+        "Score for dim_021 moves from 4 to at least 9 (gap: 5.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 400,
+      "estimatedMinutes": 60,
+      "createdAt": "2026-05-14T17:49:23.415Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_022.2026-05-14T17-49-23",
+      "title": "Close gap on Point-in-time data (no look-ahead bias)",
+      "objective": "Move \"Point-in-time data (no look-ahead bias)\" from current score 5 toward target 9.",
+      "dimensionId": "dim_022",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7",
+        "Score for dim_022 moves from 5 to at least 9 (gap: 4.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.415Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_023.2026-05-14T17-49-23",
+      "title": "Close gap on DCF / WACC built-in templates",
+      "objective": "Move \"DCF / WACC built-in templates\" from current score 7 toward target 9.",
+      "dimensionId": "dim_023",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9",
+        "Score for dim_023 moves from 7 to at least 9 (gap: 2.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.415Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_024.2026-05-14T17-49-23",
+      "title": "Close gap on Comparable company (comps) tables",
+      "objective": "Move \"Comparable company (comps) tables\" from current score 6 toward target 9.",
+      "dimensionId": "dim_024",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8",
+        "Score for dim_024 moves from 6 to at least 9 (gap: 3.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.415Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_025.2026-05-14T17-49-23",
+      "title": "Close gap on Institutional ownership 13F",
+      "objective": "Move \"Institutional ownership 13F\" from current score 6 toward target 9.",
+      "dimensionId": "dim_025",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8",
+        "Score for dim_025 moves from 6 to at least 9 (gap: 3.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.415Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_026.2026-05-14T17-49-23",
+      "title": "Close gap on Insider transactions Form 4",
+      "objective": "Move \"Insider transactions Form 4\" from current score 7 toward target 9.",
+      "dimensionId": "dim_026",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9",
+        "Score for dim_026 moves from 7 to at least 9 (gap: 2.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.416Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_027.2026-05-14T17-49-23",
+      "title": "Close gap on Activist 13D/13G tracking",
+      "objective": "Move \"Activist 13D/13G tracking\" from current score 5 toward target 9.",
+      "dimensionId": "dim_027",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7",
+        "Score for dim_027 moves from 5 to at least 9 (gap: 4.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.417Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_028.2026-05-14T17-49-23",
+      "title": "Close gap on Proxy / DEF 14A intelligence",
+      "objective": "Move \"Proxy / DEF 14A intelligence\" from current score 6 toward target 9.",
+      "dimensionId": "dim_028",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8",
+        "Score for dim_028 moves from 6 to at least 9 (gap: 3.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.417Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_029.2026-05-14T17-49-23",
+      "title": "Close gap on Congressional STOCK Act eFD",
+      "objective": "Move \"Congressional STOCK Act eFD\" from current score 6 toward target 9.",
+      "dimensionId": "dim_029",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8",
+        "Score for dim_029 moves from 6 to at least 9 (gap: 3.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.417Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_030.2026-05-14T17-49-23",
+      "title": "Close gap on IPO / S-1 filing intelligence",
+      "objective": "Move \"IPO / S-1 filing intelligence\" from current score 3 toward target 9.",
+      "dimensionId": "dim_030",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 3 toward 5",
+        "Score for dim_030 moves from 3 to at least 9 (gap: 6.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "critical",
+      "estimatedLoc": 400,
+      "estimatedMinutes": 60,
+      "createdAt": "2026-05-14T17:49:23.418Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_031.2026-05-14T17-49-23",
+      "title": "Close gap on Private placement Form D",
+      "objective": "Move \"Private placement Form D\" from current score 4 toward target 9.",
+      "dimensionId": "dim_031",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 4 toward 6",
+        "Score for dim_031 moves from 4 to at least 9 (gap: 5.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 400,
+      "estimatedMinutes": 60,
+      "createdAt": "2026-05-14T17:49:23.418Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_032.2026-05-14T17-49-23",
+      "title": "Close gap on Fund holdings N-PORT",
+      "objective": "Move \"Fund holdings N-PORT\" from current score 2 toward target 9.",
+      "dimensionId": "dim_032",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 2 toward 4",
+        "Score for dim_032 moves from 2 to at least 9 (gap: 7.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "critical",
+      "estimatedLoc": 400,
+      "estimatedMinutes": 60,
+      "createdAt": "2026-05-14T17:49:23.418Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_033.2026-05-14T17-49-23",
+      "title": "Close gap on Full-text EDGAR search",
+      "objective": "Move \"Full-text EDGAR search\" from current score 5 toward target 9.",
+      "dimensionId": "dim_033",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7",
+        "Score for dim_033 moves from 5 to at least 9 (gap: 4.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.418Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_034.2026-05-14T17-49-23",
+      "title": "Close gap on Form ADV / RIA adviser intelligence",
+      "objective": "Move \"Form ADV / RIA adviser intelligence\" from current score 4 toward target 9.",
+      "dimensionId": "dim_034",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 4 toward 6",
+        "Score for dim_034 moves from 4 to at least 9 (gap: 5.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 400,
+      "estimatedMinutes": 60,
+      "createdAt": "2026-05-14T17:49:23.418Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_035.2026-05-14T17-49-23",
+      "title": "Close gap on US Treasury yield curves (FRED)",
+      "objective": "Move \"US Treasury yield curves (FRED)\" from current score 7 toward target 9.",
+      "dimensionId": "dim_035",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9",
+        "Score for dim_035 moves from 7 to at least 9 (gap: 2.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.425Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_036.2026-05-14T17-49-23",
+      "title": "Close gap on Corporate bond pricing (FINRA TRACE)",
+      "objective": "Move \"Corporate bond pricing (FINRA TRACE)\" from current score 5 toward target 9.",
+      "dimensionId": "dim_036",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7",
+        "Score for dim_036 moves from 5 to at least 9 (gap: 4.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.425Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_037.2026-05-14T17-49-23",
+      "title": "Close gap on Municipal bond market (MSRB EMMA)",
+      "objective": "Move \"Municipal bond market (MSRB EMMA)\" from current score 0 toward target 9.",
+      "dimensionId": "dim_037",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 0 toward 2",
+        "Score for dim_037 moves from 0 to at least 9 (gap: 9.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "critical",
+      "estimatedLoc": 400,
+      "estimatedMinutes": 60,
+      "createdAt": "2026-05-14T17:49:23.426Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_038.2026-05-14T17-49-23",
+      "title": "Close gap on Bond analytics engine (QuantLib: DV01, OAS)",
+      "objective": "Move \"Bond analytics engine (QuantLib: DV01, OAS)\" from current score 7 toward target 9.",
+      "dimensionId": "dim_038",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9",
+        "Score for dim_038 moves from 7 to at least 9 (gap: 2.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.426Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_039.2026-05-14T17-49-23",
+      "title": "Close gap on Credit spread analysis / Merton model",
+      "objective": "Move \"Credit spread analysis / Merton model\" from current score 7 toward target 9.",
+      "dimensionId": "dim_039",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9",
+        "Score for dim_039 moves from 7 to at least 9 (gap: 2.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.426Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_043.2026-05-14T17-49-23",
+      "title": "Close gap on FRED macro time series (765K+ series)",
+      "objective": "Move \"FRED macro time series (765K+ series)\" from current score 8 toward target 9.",
+      "dimensionId": "dim_043",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 8 toward 9",
+        "Score for dim_043 moves from 8 to at least 9 (gap: 1.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "low",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.426Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_044.2026-05-14T17-49-23",
+      "title": "Close gap on Economic calendar & release consensus",
+      "objective": "Move \"Economic calendar & release consensus\" from current score 5 toward target 9.",
+      "dimensionId": "dim_044",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7",
+        "Score for dim_044 moves from 5 to at least 9 (gap: 4.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.427Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_045.2026-05-14T17-49-23",
+      "title": "Close gap on Central bank speech NLP",
+      "objective": "Move \"Central bank speech NLP\" from current score 5 toward target 9.",
+      "dimensionId": "dim_045",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7",
+        "Score for dim_045 moves from 5 to at least 9 (gap: 4.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.428Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_046.2026-05-14T17-49-23",
+      "title": "Close gap on CFTC COT positioning",
+      "objective": "Move \"CFTC COT positioning\" from current score 6 toward target 9.",
+      "dimensionId": "dim_046",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8",
+        "Score for dim_046 moves from 6 to at least 9 (gap: 3.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.428Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_047.2026-05-14T17-49-23",
+      "title": "Close gap on Yield curve spread analytics",
+      "objective": "Move \"Yield curve spread analytics\" from current score 7 toward target 9.",
+      "dimensionId": "dim_047",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9",
+        "Score for dim_047 moves from 7 to at least 9 (gap: 2.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.428Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_048.2026-05-14T17-49-23",
+      "title": "Close gap on Inflation breakeven / VIX analytics / vol risk premium",
+      "objective": "Move \"Inflation breakeven / VIX analytics / vol risk premium\" from current score 7 toward target 9.",
+      "dimensionId": "dim_048",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9",
+        "Score for dim_048 moves from 7 to at least 9 (gap: 2.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.428Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_049.2026-05-14T17-49-23",
+      "title": "Close gap on Cross-country macro comparison",
+      "objective": "Move \"Cross-country macro comparison\" from current score 6 toward target 9.",
+      "dimensionId": "dim_049",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8",
+        "Score for dim_049 moves from 6 to at least 9 (gap: 3.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.428Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_050.2026-05-14T17-49-23",
+      "title": "Close gap on Regime detection (HMM / macro nowcast)",
+      "objective": "Move \"Regime detection (HMM / macro nowcast)\" from current score 7 toward target 9.",
+      "dimensionId": "dim_050",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9",
+        "Score for dim_050 moves from 7 to at least 9 (gap: 2.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.429Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_051.2026-05-14T17-49-23",
+      "title": "Close gap on RAG over financial documents (pgvector + LlamaIndex)",
+      "objective": "Move \"RAG over financial documents (pgvector + LlamaIndex)\" from current score 6 toward target 9.",
+      "dimensionId": "dim_051",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8",
+        "Score for dim_051 moves from 6 to at least 9 (gap: 3.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.429Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_052.2026-05-14T17-49-23",
+      "title": "Close gap on Financial sentiment (FinBERT)",
+      "objective": "Move \"Financial sentiment (FinBERT)\" from current score 5 toward target 9.",
+      "dimensionId": "dim_052",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7",
+        "Score for dim_052 moves from 5 to at least 9 (gap: 4.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.429Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_053.2026-05-14T17-49-23",
+      "title": "Close gap on Natural language → screener translator",
+      "objective": "Move \"Natural language → screener translator\" from current score 7 toward target 9.",
+      "dimensionId": "dim_053",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9",
+        "Score for dim_053 moves from 7 to at least 9 (gap: 2.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.429Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_054.2026-05-14T17-49-23",
+      "title": "Close gap on Natural language → trading strategy generator",
+      "objective": "Move \"Natural language → trading strategy generator\" from current score 7 toward target 9.",
+      "dimensionId": "dim_054",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9",
+        "Score for dim_054 moves from 7 to at least 9 (gap: 2.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.429Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_055.2026-05-14T17-49-23",
+      "title": "Close gap on LLM document summarization",
+      "objective": "Move \"LLM document summarization\" from current score 6 toward target 9.",
+      "dimensionId": "dim_055",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8",
+        "Score for dim_055 moves from 6 to at least 9 (gap: 3.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.430Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_056.2026-05-14T17-49-23",
+      "title": "Close gap on Smart synonym / query expansion",
+      "objective": "Move \"Smart synonym / query expansion\" from current score 6 toward target 9.",
+      "dimensionId": "dim_056",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8",
+        "Score for dim_056 moves from 6 to at least 9 (gap: 3.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.430Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_057.2026-05-14T17-49-23",
+      "title": "Close gap on Earnings call / news corpus (RAG)",
+      "objective": "Move \"Earnings call / news corpus (RAG)\" from current score 6 toward target 9.",
+      "dimensionId": "dim_057",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8",
+        "Score for dim_057 moves from 6 to at least 9 (gap: 3.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.430Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_060.2026-05-14T17-49-23",
+      "title": "Close gap on Autonomous AI research agent",
+      "objective": "Move \"Autonomous AI research agent\" from current score 7 toward target 9.",
+      "dimensionId": "dim_060",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9",
+        "Score for dim_060 moves from 7 to at least 9 (gap: 2.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.430Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_061.2026-05-14T17-49-23",
+      "title": "Close gap on Vectorized backtesting (VectorBT)",
+      "objective": "Move \"Vectorized backtesting (VectorBT)\" from current score 7 toward target 9.",
+      "dimensionId": "dim_061",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9",
+        "Score for dim_061 moves from 7 to at least 9 (gap: 2.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.430Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_062.2026-05-14T17-49-23",
+      "title": "Close gap on Event-driven backtesting (NautilusTrader)",
+      "objective": "Move \"Event-driven backtesting (NautilusTrader)\" from current score 6 toward target 9.",
+      "dimensionId": "dim_062",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8",
+        "Score for dim_062 moves from 6 to at least 9 (gap: 3.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.497Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_063.2026-05-14T17-49-23",
+      "title": "Close gap on Walk-forward + anchored OOS validation",
+      "objective": "Move \"Walk-forward + anchored OOS validation\" from current score 6 toward target 9.",
+      "dimensionId": "dim_063",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8",
+        "Score for dim_063 moves from 6 to at least 9 (gap: 3.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.498Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_064.2026-05-14T17-49-23",
+      "title": "Close gap on Overfitting detection (DSR + PBO)",
+      "objective": "Move \"Overfitting detection (DSR + PBO)\" from current score 7 toward target 9.",
+      "dimensionId": "dim_064",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9",
+        "Score for dim_064 moves from 7 to at least 9 (gap: 2.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.498Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_065.2026-05-14T17-49-23",
+      "title": "Close gap on Live trading execution (Alpaca)",
+      "objective": "Move \"Live trading execution (Alpaca)\" from current score 6 toward target 9.",
+      "dimensionId": "dim_065",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8",
+        "Score for dim_065 moves from 6 to at least 9 (gap: 3.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.498Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_066.2026-05-14T17-49-23",
+      "title": "Close gap on Paper trading simulator",
+      "objective": "Move \"Paper trading simulator\" from current score 5 toward target 9.",
+      "dimensionId": "dim_066",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7",
+        "Score for dim_066 moves from 5 to at least 9 (gap: 4.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.498Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_067.2026-05-14T17-49-23",
+      "title": "Close gap on Strategy promotion state machine",
+      "objective": "Move \"Strategy promotion state machine\" from current score 7 toward target 9.",
+      "dimensionId": "dim_067",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9",
+        "Score for dim_067 moves from 7 to at least 9 (gap: 2.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.499Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_068.2026-05-14T17-49-23",
+      "title": "Close gap on AI-driven factor research (alpha signals)",
+      "objective": "Move \"AI-driven factor research (alpha signals)\" from current score 7 toward target 9.",
+      "dimensionId": "dim_068",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9",
+        "Score for dim_068 moves from 7 to at least 9 (gap: 2.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.500Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_070.2026-05-14T17-49-23",
+      "title": "Close gap on Fundamental equity screener (50+ fields, DuckDB)",
+      "objective": "Move \"Fundamental equity screener (50+ fields, DuckDB)\" from current score 6 toward target 9.",
+      "dimensionId": "dim_070",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8",
+        "Score for dim_070 moves from 6 to at least 9 (gap: 3.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.501Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_071.2026-05-14T17-49-23",
+      "title": "Close gap on Technical screener (25+ criteria, pandas-ta)",
+      "objective": "Move \"Technical screener (25+ criteria, pandas-ta)\" from current score 6 toward target 9.",
+      "dimensionId": "dim_071",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8",
+        "Score for dim_071 moves from 6 to at least 9 (gap: 3.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.501Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_072.2026-05-14T17-49-23",
+      "title": "Close gap on Ownership-based screener (13F + Form 4)",
+      "objective": "Move \"Ownership-based screener (13F + Form 4)\" from current score 5 toward target 9.",
+      "dimensionId": "dim_072",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7",
+        "Score for dim_072 moves from 5 to at least 9 (gap: 4.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.501Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_073.2026-05-14T17-49-23",
+      "title": "Close gap on Options flow screener",
+      "objective": "Move \"Options flow screener\" from current score 7 toward target 9.",
+      "dimensionId": "dim_073",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9",
+        "Score for dim_073 moves from 7 to at least 9 (gap: 2.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.502Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_074.2026-05-14T17-49-23",
+      "title": "Close gap on Fixed income screener",
+      "objective": "Move \"Fixed income screener\" from current score 4 toward target 9.",
+      "dimensionId": "dim_074",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 4 toward 6",
+        "Score for dim_074 moves from 4 to at least 9 (gap: 5.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 400,
+      "estimatedMinutes": 60,
+      "createdAt": "2026-05-14T17:49:23.502Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_075.2026-05-14T17-49-23",
+      "title": "Close gap on Crypto / on-chain screener",
+      "objective": "Move \"Crypto / on-chain screener\" from current score 5 toward target 9.",
+      "dimensionId": "dim_075",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7",
+        "Score for dim_075 moves from 5 to at least 9 (gap: 4.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.502Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_076.2026-05-14T17-49-23",
+      "title": "Close gap on Natural language screener",
+      "objective": "Move \"Natural language screener\" from current score 7 toward target 9.",
+      "dimensionId": "dim_076",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9",
+        "Score for dim_076 moves from 7 to at least 9 (gap: 2.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.502Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_078.2026-05-14T17-49-23",
+      "title": "Close gap on Brinson-Hood-Beebower attribution",
+      "objective": "Move \"Brinson-Hood-Beebower attribution\" from current score 6 toward target 9.",
+      "dimensionId": "dim_078",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8",
+        "Score for dim_078 moves from 6 to at least 9 (gap: 3.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.502Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_079.2026-05-14T17-49-23",
+      "title": "Close gap on Multi-factor risk (Fama-French 5+mom)",
+      "objective": "Move \"Multi-factor risk (Fama-French 5+mom)\" from current score 7 toward target 9.",
+      "dimensionId": "dim_079",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9",
+        "Score for dim_079 moves from 7 to at least 9 (gap: 2.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.502Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_080.2026-05-14T17-49-23",
+      "title": "Close gap on Correlation monitoring + regime alerts",
+      "objective": "Move \"Correlation monitoring + regime alerts\" from current score 6 toward target 9.",
+      "dimensionId": "dim_080",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8",
+        "Score for dim_080 moves from 6 to at least 9 (gap: 3.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.502Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_081.2026-05-14T17-49-23",
+      "title": "Close gap on Portfolio optimizer (mean-variance, BL, ERC)",
+      "objective": "Move \"Portfolio optimizer (mean-variance, BL, ERC)\" from current score 7 toward target 9.",
+      "dimensionId": "dim_081",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9",
+        "Score for dim_081 moves from 7 to at least 9 (gap: 2.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.502Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_082.2026-05-14T17-49-23",
+      "title": "Close gap on Kelly / vol-target / risk-parity sizing",
+      "objective": "Move \"Kelly / vol-target / risk-parity sizing\" from current score 7 toward target 9.",
+      "dimensionId": "dim_082",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9",
+        "Score for dim_082 moves from 7 to at least 9 (gap: 2.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.502Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_083.2026-05-14T17-49-23",
+      "title": "Close gap on Stress testing / scenario analysis",
+      "objective": "Move \"Stress testing / scenario analysis\" from current score 7 toward target 9.",
+      "dimensionId": "dim_083",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9",
+        "Score for dim_083 moves from 7 to at least 9 (gap: 2.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.502Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_084.2026-05-14T17-49-23",
+      "title": "Close gap on News sentiment pipeline (GDELT + FinBERT)",
+      "objective": "Move \"News sentiment pipeline (GDELT + FinBERT)\" from current score 6 toward target 9.",
+      "dimensionId": "dim_084",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8",
+        "Score for dim_084 moves from 6 to at least 9 (gap: 3.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.503Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_085.2026-05-14T17-49-23",
+      "title": "Close gap on Social media sentiment (Reddit/Twitter)",
+      "objective": "Move \"Social media sentiment (Reddit/Twitter)\" from current score 5 toward target 9.",
+      "dimensionId": "dim_085",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7",
+        "Score for dim_085 moves from 5 to at least 9 (gap: 4.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.503Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_086.2026-05-14T17-49-23",
+      "title": "Close gap on Job postings / web traffic signals",
+      "objective": "Move \"Job postings / web traffic signals\" from current score 0 toward target 9.",
+      "dimensionId": "dim_086",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 0 toward 2",
+        "Score for dim_086 moves from 0 to at least 9 (gap: 9.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "critical",
+      "estimatedLoc": 400,
+      "estimatedMinutes": 60,
+      "createdAt": "2026-05-14T17:49:23.503Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_089.2026-05-14T17-49-23",
+      "title": "Close gap on Google Trends / pytrends signals",
+      "objective": "Move \"Google Trends / pytrends signals\" from current score 5 toward target 9.",
+      "dimensionId": "dim_089",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7",
+        "Score for dim_089 moves from 5 to at least 9 (gap: 4.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.503Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_090.2026-05-14T17-49-23",
+      "title": "Close gap on Bloomberg-style command bar (102 codes)",
+      "objective": "Move \"Bloomberg-style command bar (102 codes)\" from current score 8 toward target 9.",
+      "dimensionId": "dim_090",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 8 toward 9",
+        "Score for dim_090 moves from 8 to at least 9 (gap: 1.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "low",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.503Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_091.2026-05-14T17-49-23",
+      "title": "Close gap on Multi-panel workspace",
+      "objective": "Move \"Multi-panel workspace\" from current score 5 toward target 9.",
+      "dimensionId": "dim_091",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7",
+        "Score for dim_091 moves from 5 to at least 9 (gap: 4.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.503Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_092.2026-05-14T17-49-23",
+      "title": "Close gap on Real-time charting (TradingView)",
+      "objective": "Move \"Real-time charting (TradingView)\" from current score 3 toward target 9.",
+      "dimensionId": "dim_092",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 3 toward 5",
+        "Score for dim_092 moves from 3 to at least 9 (gap: 6.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "critical",
+      "estimatedLoc": 400,
+      "estimatedMinutes": 60,
+      "createdAt": "2026-05-14T17:49:23.503Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_093.2026-05-14T17-49-23",
+      "title": "Close gap on Excel / Google Sheets plugin",
+      "objective": "Move \"Excel / Google Sheets plugin\" from current score 4 toward target 9.",
+      "dimensionId": "dim_093",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 4 toward 6",
+        "Score for dim_093 moves from 4 to at least 9 (gap: 5.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 400,
+      "estimatedMinutes": 60,
+      "createdAt": "2026-05-14T17:49:23.503Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_095.2026-05-14T17-49-23",
+      "title": "Close gap on REST API + WebSocket SDK",
+      "objective": "Move \"REST API + WebSocket SDK\" from current score 6 toward target 9.",
+      "dimensionId": "dim_095",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8",
+        "Score for dim_095 moves from 6 to at least 9 (gap: 3.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.503Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_096.2026-05-14T17-49-23",
+      "title": "Close gap on Self-hosted / sovereign (no seat fee)",
+      "objective": "Move \"Self-hosted / sovereign (no seat fee)\" from current score 8 toward target 9.",
+      "dimensionId": "dim_096",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 8 toward 10",
+        "Score for dim_096 moves from 8 to at least 9 (gap: 1.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "low",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.503Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_097.2026-05-14T17-49-23",
+      "title": "Close gap on Private company profiles (Form D)",
+      "objective": "Move \"Private company profiles (Form D)\" from current score 4 toward target 9.",
+      "dimensionId": "dim_097",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 4 toward 6",
+        "Score for dim_097 moves from 4 to at least 9 (gap: 5.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 400,
+      "estimatedMinutes": 60,
+      "createdAt": "2026-05-14T17:49:23.503Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_098.2026-05-14T17-49-23",
+      "title": "Close gap on VC/PE fund tracking",
+      "objective": "Move \"VC/PE fund tracking\" from current score 2 toward target 9.",
+      "dimensionId": "dim_098",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 2 toward 4",
+        "Score for dim_098 moves from 2 to at least 9 (gap: 7.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "critical",
+      "estimatedLoc": 400,
+      "estimatedMinutes": 60,
+      "createdAt": "2026-05-14T17:49:23.504Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_100.2026-05-14T17-49-23",
+      "title": "Close gap on M&A deal intelligence",
+      "objective": "Move \"M&A deal intelligence\" from current score 5 toward target 9.",
+      "dimensionId": "dim_100",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7",
+        "Score for dim_100 moves from 5 to at least 9 (gap: 4.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.504Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_101.2026-05-14T17-49-23",
+      "title": "Close gap on LBO / merger model templates",
+      "objective": "Move \"LBO / merger model templates\" from current score 5 toward target 9.",
+      "dimensionId": "dim_101",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7",
+        "Score for dim_101 moves from 5 to at least 9 (gap: 4.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.504Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_102.2026-05-14T17-49-23",
+      "title": "Close gap on ESG composite ratings & sector scores",
+      "objective": "Move \"ESG composite ratings & sector scores\" from current score 4 toward target 9.",
+      "dimensionId": "dim_102",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 4 toward 6",
+        "Score for dim_102 moves from 4 to at least 9 (gap: 5.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 400,
+      "estimatedMinutes": 60,
+      "createdAt": "2026-05-14T17:49:23.504Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_103.2026-05-14T17-49-23",
+      "title": "Close gap on CDP / TCFD climate disclosure parsing",
+      "objective": "Move \"CDP / TCFD climate disclosure parsing\" from current score 4 toward target 9.",
+      "dimensionId": "dim_103",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 4 toward 6",
+        "Score for dim_103 moves from 4 to at least 9 (gap: 5.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 400,
+      "estimatedMinutes": 60,
+      "createdAt": "2026-05-14T17:49:23.504Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_104.2026-05-14T17-49-23",
+      "title": "Close gap on Controversy monitoring (GDELT)",
+      "objective": "Move \"Controversy monitoring (GDELT)\" from current score 5 toward target 9.",
+      "dimensionId": "dim_104",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7",
+        "Score for dim_104 moves from 5 to at least 9 (gap: 4.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.504Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_105.2026-05-14T17-49-23",
+      "title": "Close gap on UN SDG alignment / impact scoring",
+      "objective": "Move \"UN SDG alignment / impact scoring\" from current score 0 toward target 9.",
+      "dimensionId": "dim_105",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 0 toward 2",
+        "Score for dim_105 moves from 0 to at least 9 (gap: 9.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "critical",
+      "estimatedLoc": 400,
+      "estimatedMinutes": 60,
+      "createdAt": "2026-05-14T17:49:23.504Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_106.2026-05-14T17-49-23",
+      "title": "Close gap on Multi-exchange OHLCV + execution (CCXT)",
+      "objective": "Move \"Multi-exchange OHLCV + execution (CCXT)\" from current score 7 toward target 9.",
+      "dimensionId": "dim_106",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9",
+        "Score for dim_106 moves from 7 to at least 9 (gap: 2.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": false,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "medium",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.504Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_107.2026-05-14T17-49-23",
+      "title": "Close gap on DeFi protocol analytics (DefiLlama)",
+      "objective": "Move \"DeFi protocol analytics (DefiLlama)\" from current score 5 toward target 9.",
+      "dimensionId": "dim_107",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7",
+        "Score for dim_107 moves from 5 to at least 9 (gap: 4.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.504Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_108.2026-05-14T17-49-23",
+      "title": "Close gap on On-chain metrics (MVRV, NVT, SOPR)",
+      "objective": "Move \"On-chain metrics (MVRV, NVT, SOPR)\" from current score 5 toward target 9.",
+      "dimensionId": "dim_108",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7",
+        "Score for dim_108 moves from 5 to at least 9 (gap: 4.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 200,
+      "estimatedMinutes": 30,
+      "createdAt": "2026-05-14T17:49:23.504Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_109.2026-05-14T17-49-23",
+      "title": "Close gap on On-chain event monitoring",
+      "objective": "Move \"On-chain event monitoring\" from current score 4 toward target 9.",
+      "dimensionId": "dim_109",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 4 toward 6",
+        "Score for dim_109 moves from 4 to at least 9 (gap: 5.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 400,
+      "estimatedMinutes": 60,
+      "createdAt": "2026-05-14T17:49:23.504Z",
+      "createdBy": "matrix-kernel"
+    },
+    {
+      "id": "work.dim_110.2026-05-14T17-49-23",
+      "title": "Close gap on DEX / AMM liquidity analytics",
+      "objective": "Move \"DEX / AMM liquidity analytics\" from current score 4 toward target 9.",
+      "dimensionId": "dim_110",
+      "paths": {
+        "ownedPaths": [],
+        "readOnlyPaths": [],
+        "forbiddenPaths": []
+      },
+      "dependsOn": [],
+      "mayConflictWith": [],
+      "acceptanceCriteria": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 4 toward 6",
+        "Score for dim_110 moves from 4 to at least 9 (gap: 5.0)"
+      ],
+      "proof": {
+        "proofRequired": [
+          "typecheck exits 0",
+          "tests pass",
+          "no forbidden files changed",
+          "dimension score moves verifiably"
+        ],
+        "requiredCommands": [
+          "npm run typecheck",
+          "npm test"
+        ]
+      },
+      "tasteGateRequired": false,
+      "redTeamRequired": true,
+      "rollbackPlan": "Remove worktree, discard branch, restore from Time Machine snapshot.",
+      "riskLevel": "high",
+      "estimatedLoc": 400,
+      "estimatedMinutes": 60,
+      "createdAt": "2026-05-14T17:49:23.505Z",
+      "createdBy": "matrix-kernel"
+    }
+  ]
+}

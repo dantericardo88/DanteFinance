@@ -1,0 +1,1995 @@
+{
+  "generatedAt": "2026-05-14T17:41:16.107Z",
+  "nodes": [
+    {
+      "dimensionId": "dim_001",
+      "name": "Real-time equity quotes (full SIP)",
+      "category": "market_data",
+      "targetScore": 9,
+      "currentScore": 3,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 3 toward 5"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 6,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 6,
+      "gapVsOssFrontier": 3,
+      "gapVsClosedFrontier": 7
+    },
+    {
+      "dimensionId": "dim_002",
+      "name": "Historical OHLCV daily (30+ years, 50+ markets)",
+      "category": "market_data",
+      "targetScore": 9,
+      "currentScore": 4,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 4 toward 6"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 7,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 5,
+      "gapVsOssFrontier": 3,
+      "gapVsClosedFrontier": 6
+    },
+    {
+      "dimensionId": "dim_003",
+      "name": "Historical OHLCV intraday (1-min, 20+ years)",
+      "category": "market_data",
+      "targetScore": 9,
+      "currentScore": 3,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 3 toward 5"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 5,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 6,
+      "gapVsOssFrontier": 2,
+      "gapVsClosedFrontier": 6
+    },
+    {
+      "dimensionId": "dim_004",
+      "name": "Options chain (all strikes/expiries, live Greeks)",
+      "category": "market_data",
+      "targetScore": 9,
+      "currentScore": 6,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 6,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 3,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 4
+    },
+    {
+      "dimensionId": "dim_005",
+      "name": "Futures term structure / continuous contracts",
+      "category": "market_data",
+      "targetScore": 9,
+      "currentScore": 4,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 4 toward 6"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 4,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 5,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 6
+    },
+    {
+      "dimensionId": "dim_006",
+      "name": "FX spot, forwards, volatility surface",
+      "category": "market_data",
+      "targetScore": 9,
+      "currentScore": 5,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 6,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 4,
+      "gapVsOssFrontier": 1,
+      "gapVsClosedFrontier": 5
+    },
+    {
+      "dimensionId": "dim_007",
+      "name": "Crypto multi-exchange OHLCV (100+ venues)",
+      "category": "market_data",
+      "targetScore": 9,
+      "currentScore": 6,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8"
+      ],
+      "frontierLeaderId": "competitor.openbb",
+      "ossFrontierScore": 7,
+      "closedFrontierScore": 6,
+      "gapVsTarget": 3,
+      "gapVsOssFrontier": 1,
+      "gapVsClosedFrontier": 0
+    },
+    {
+      "dimensionId": "dim_008",
+      "name": "Corporate actions (splits, dividends, M&A adj.)",
+      "category": "market_data",
+      "targetScore": 9,
+      "currentScore": 5,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 5,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 4,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 5
+    },
+    {
+      "dimensionId": "dim_009",
+      "name": "Short interest (FINRA bi-monthly / daily)",
+      "category": "market_data",
+      "targetScore": 9,
+      "currentScore": 7,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 7,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 2,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 2
+    },
+    {
+      "dimensionId": "dim_011",
+      "name": "Pre/post-market quotes",
+      "category": "market_data",
+      "targetScore": 9,
+      "currentScore": 2,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 2 toward 4"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 3,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 7,
+      "gapVsOssFrontier": 1,
+      "gapVsClosedFrontier": 7
+    },
+    {
+      "dimensionId": "dim_013",
+      "name": "Income statement standardized (10K+ companies)",
+      "category": "fundamentals",
+      "targetScore": 9,
+      "currentScore": 6,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 6,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 3,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 4
+    },
+    {
+      "dimensionId": "dim_014",
+      "name": "Balance sheet standardized",
+      "category": "fundamentals",
+      "targetScore": 9,
+      "currentScore": 6,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 6,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 3,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 4
+    },
+    {
+      "dimensionId": "dim_015",
+      "name": "Cash flow statement standardized",
+      "category": "fundamentals",
+      "targetScore": 9,
+      "currentScore": 6,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 6,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 3,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 4
+    },
+    {
+      "dimensionId": "dim_016",
+      "name": "Segment & geographic revenue breakdown",
+      "category": "fundamentals",
+      "targetScore": 9,
+      "currentScore": 7,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 7,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 2,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 3
+    },
+    {
+      "dimensionId": "dim_017",
+      "name": "Non-GAAP reconciliation tables",
+      "category": "fundamentals",
+      "targetScore": 9,
+      "currentScore": 8,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 8 toward 9"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 8,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 1,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 1
+    },
+    {
+      "dimensionId": "dim_019",
+      "name": "Bottom-up KPI / earnings surprise tracking",
+      "category": "fundamentals",
+      "targetScore": 9,
+      "currentScore": 9,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 9 toward 9"
+      ],
+      "frontierLeaderId": "competitor.capiq",
+      "ossFrontierScore": 9,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 0,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 1
+    },
+    {
+      "dimensionId": "dim_020",
+      "name": "Historical financials (point-in-time, 15+ years)",
+      "category": "fundamentals",
+      "targetScore": 9,
+      "currentScore": 5,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 5,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 4,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 5
+    },
+    {
+      "dimensionId": "dim_021",
+      "name": "International / IFRS financials (ex-US)",
+      "category": "fundamentals",
+      "targetScore": 9,
+      "currentScore": 4,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 4 toward 6"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 4,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 5,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 6
+    },
+    {
+      "dimensionId": "dim_022",
+      "name": "Point-in-time data (no look-ahead bias)",
+      "category": "fundamentals",
+      "targetScore": 9,
+      "currentScore": 5,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 5,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 4,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 5
+    },
+    {
+      "dimensionId": "dim_023",
+      "name": "DCF / WACC built-in templates",
+      "category": "fundamentals",
+      "targetScore": 9,
+      "currentScore": 7,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 7,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 2,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 2
+    },
+    {
+      "dimensionId": "dim_024",
+      "name": "Comparable company (comps) tables",
+      "category": "fundamentals",
+      "targetScore": 9,
+      "currentScore": 6,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 6,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 3,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 4
+    },
+    {
+      "dimensionId": "dim_025",
+      "name": "Institutional ownership 13F",
+      "category": "ownership_sec",
+      "targetScore": 9,
+      "currentScore": 6,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 6,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 3,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 3
+    },
+    {
+      "dimensionId": "dim_026",
+      "name": "Insider transactions Form 4",
+      "category": "ownership_sec",
+      "targetScore": 9,
+      "currentScore": 7,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 7,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 2,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 2
+    },
+    {
+      "dimensionId": "dim_027",
+      "name": "Activist 13D/13G tracking",
+      "category": "ownership_sec",
+      "targetScore": 9,
+      "currentScore": 5,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 5,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 4,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 4
+    },
+    {
+      "dimensionId": "dim_028",
+      "name": "Proxy / DEF 14A intelligence",
+      "category": "ownership_sec",
+      "targetScore": 9,
+      "currentScore": 6,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 6,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 3,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 3
+    },
+    {
+      "dimensionId": "dim_029",
+      "name": "Congressional STOCK Act eFD",
+      "category": "ownership_sec",
+      "targetScore": 9,
+      "currentScore": 6,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8"
+      ],
+      "frontierLeaderId": "competitor.sentinel",
+      "ossFrontierScore": 6,
+      "closedFrontierScore": 6,
+      "gapVsTarget": 3,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 0
+    },
+    {
+      "dimensionId": "dim_030",
+      "name": "IPO / S-1 filing intelligence",
+      "category": "ownership_sec",
+      "targetScore": 9,
+      "currentScore": 3,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 3 toward 5"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 3,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 6,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 6
+    },
+    {
+      "dimensionId": "dim_031",
+      "name": "Private placement Form D",
+      "category": "ownership_sec",
+      "targetScore": 9,
+      "currentScore": 4,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 4 toward 6"
+      ],
+      "frontierLeaderId": "competitor.capiq",
+      "ossFrontierScore": 4,
+      "closedFrontierScore": 6,
+      "gapVsTarget": 5,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 2
+    },
+    {
+      "dimensionId": "dim_032",
+      "name": "Fund holdings N-PORT",
+      "category": "ownership_sec",
+      "targetScore": 9,
+      "currentScore": 2,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 2 toward 4"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 2,
+      "closedFrontierScore": 7,
+      "gapVsTarget": 7,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 5
+    },
+    {
+      "dimensionId": "dim_033",
+      "name": "Full-text EDGAR search",
+      "category": "ownership_sec",
+      "targetScore": 9,
+      "currentScore": 5,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7"
+      ],
+      "frontierLeaderId": "competitor.alphasense",
+      "ossFrontierScore": 5,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 4,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 4
+    },
+    {
+      "dimensionId": "dim_034",
+      "name": "Form ADV / RIA adviser intelligence",
+      "category": "ownership_sec",
+      "targetScore": 9,
+      "currentScore": 4,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 4 toward 6"
+      ],
+      "frontierLeaderId": "competitor.sentinel",
+      "ossFrontierScore": 4,
+      "closedFrontierScore": 4,
+      "gapVsTarget": 5,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 0
+    },
+    {
+      "dimensionId": "dim_035",
+      "name": "US Treasury yield curves (FRED)",
+      "category": "fixed_income",
+      "targetScore": 9,
+      "currentScore": 7,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 7,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 2,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 3
+    },
+    {
+      "dimensionId": "dim_036",
+      "name": "Corporate bond pricing (FINRA TRACE)",
+      "category": "fixed_income",
+      "targetScore": 9,
+      "currentScore": 5,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 5,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 4,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 5
+    },
+    {
+      "dimensionId": "dim_037",
+      "name": "Municipal bond market (MSRB EMMA)",
+      "category": "fixed_income",
+      "targetScore": 9,
+      "currentScore": 0,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 0 toward 2"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 1,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 9,
+      "gapVsOssFrontier": 1,
+      "gapVsClosedFrontier": 9
+    },
+    {
+      "dimensionId": "dim_038",
+      "name": "Bond analytics engine (QuantLib: DV01, OAS)",
+      "category": "fixed_income",
+      "targetScore": 9,
+      "currentScore": 7,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 7,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 2,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 3
+    },
+    {
+      "dimensionId": "dim_039",
+      "name": "Credit spread analysis / Merton model",
+      "category": "fixed_income",
+      "targetScore": 9,
+      "currentScore": 7,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 7,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 2,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 3
+    },
+    {
+      "dimensionId": "dim_043",
+      "name": "FRED macro time series (765K+ series)",
+      "category": "macro_economics",
+      "targetScore": 9,
+      "currentScore": 8,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 8 toward 9"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 8,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 1,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 1
+    },
+    {
+      "dimensionId": "dim_044",
+      "name": "Economic calendar & release consensus",
+      "category": "macro_economics",
+      "targetScore": 9,
+      "currentScore": 5,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 6,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 4,
+      "gapVsOssFrontier": 1,
+      "gapVsClosedFrontier": 4
+    },
+    {
+      "dimensionId": "dim_045",
+      "name": "Central bank speech NLP",
+      "category": "macro_economics",
+      "targetScore": 9,
+      "currentScore": 5,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 5,
+      "closedFrontierScore": 7,
+      "gapVsTarget": 4,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 2
+    },
+    {
+      "dimensionId": "dim_046",
+      "name": "CFTC COT positioning",
+      "category": "macro_economics",
+      "targetScore": 9,
+      "currentScore": 6,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 6,
+      "closedFrontierScore": 7,
+      "gapVsTarget": 3,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 1
+    },
+    {
+      "dimensionId": "dim_047",
+      "name": "Yield curve spread analytics",
+      "category": "macro_economics",
+      "targetScore": 9,
+      "currentScore": 7,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 7,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 2,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 3
+    },
+    {
+      "dimensionId": "dim_048",
+      "name": "Inflation breakeven / VIX analytics / vol risk premium",
+      "category": "macro_economics",
+      "targetScore": 9,
+      "currentScore": 7,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 7,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 2,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 3
+    },
+    {
+      "dimensionId": "dim_049",
+      "name": "Cross-country macro comparison",
+      "category": "macro_economics",
+      "targetScore": 9,
+      "currentScore": 6,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 6,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 3,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 3
+    },
+    {
+      "dimensionId": "dim_050",
+      "name": "Regime detection (HMM / macro nowcast)",
+      "category": "macro_economics",
+      "targetScore": 9,
+      "currentScore": 7,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9"
+      ],
+      "frontierLeaderId": "competitor.sentinel",
+      "ossFrontierScore": 7,
+      "closedFrontierScore": 7,
+      "gapVsTarget": 2,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 0
+    },
+    {
+      "dimensionId": "dim_051",
+      "name": "RAG over financial documents (pgvector + LlamaIndex)",
+      "category": "ai_nlp",
+      "targetScore": 9,
+      "currentScore": 6,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8"
+      ],
+      "frontierLeaderId": "competitor.alphasense",
+      "ossFrontierScore": 6,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 3,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 4
+    },
+    {
+      "dimensionId": "dim_052",
+      "name": "Financial sentiment (FinBERT)",
+      "category": "ai_nlp",
+      "targetScore": 9,
+      "currentScore": 5,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7"
+      ],
+      "frontierLeaderId": "competitor.alphasense",
+      "ossFrontierScore": 5,
+      "closedFrontierScore": 7,
+      "gapVsTarget": 4,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 2
+    },
+    {
+      "dimensionId": "dim_053",
+      "name": "Natural language → screener translator",
+      "category": "ai_nlp",
+      "targetScore": 9,
+      "currentScore": 7,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9"
+      ],
+      "frontierLeaderId": "competitor.sentinel",
+      "ossFrontierScore": 7,
+      "closedFrontierScore": 7,
+      "gapVsTarget": 2,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 0
+    },
+    {
+      "dimensionId": "dim_054",
+      "name": "Natural language → trading strategy generator",
+      "category": "ai_nlp",
+      "targetScore": 9,
+      "currentScore": 7,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9"
+      ],
+      "frontierLeaderId": "competitor.sentinel",
+      "ossFrontierScore": 7,
+      "closedFrontierScore": 7,
+      "gapVsTarget": 2,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 0
+    },
+    {
+      "dimensionId": "dim_055",
+      "name": "LLM document summarization",
+      "category": "ai_nlp",
+      "targetScore": 9,
+      "currentScore": 6,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8"
+      ],
+      "frontierLeaderId": "competitor.alphasense",
+      "ossFrontierScore": 6,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 3,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 3
+    },
+    {
+      "dimensionId": "dim_056",
+      "name": "Smart synonym / query expansion",
+      "category": "ai_nlp",
+      "targetScore": 9,
+      "currentScore": 6,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8"
+      ],
+      "frontierLeaderId": "competitor.alphasense",
+      "ossFrontierScore": 6,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 3,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 4
+    },
+    {
+      "dimensionId": "dim_057",
+      "name": "Earnings call / news corpus (RAG)",
+      "category": "ai_nlp",
+      "targetScore": 9,
+      "currentScore": 6,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8"
+      ],
+      "frontierLeaderId": "competitor.alphasense",
+      "ossFrontierScore": 6,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 3,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 4
+    },
+    {
+      "dimensionId": "dim_059",
+      "name": "MCP agent-native tool surface (122 tools)",
+      "category": "ai_nlp",
+      "targetScore": 9,
+      "currentScore": 9,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 9 toward 10"
+      ],
+      "frontierLeaderId": "competitor.sentinel",
+      "ossFrontierScore": 9,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 0,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 0
+    },
+    {
+      "dimensionId": "dim_060",
+      "name": "Autonomous AI research agent",
+      "category": "ai_nlp",
+      "targetScore": 9,
+      "currentScore": 7,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9"
+      ],
+      "frontierLeaderId": "competitor.sentinel",
+      "ossFrontierScore": 7,
+      "closedFrontierScore": 7,
+      "gapVsTarget": 2,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 0
+    },
+    {
+      "dimensionId": "dim_061",
+      "name": "Vectorized backtesting (VectorBT)",
+      "category": "backtesting",
+      "targetScore": 9,
+      "currentScore": 7,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9"
+      ],
+      "frontierLeaderId": "competitor.vectorbt",
+      "ossFrontierScore": 10,
+      "closedFrontierScore": 7,
+      "gapVsTarget": 2,
+      "gapVsOssFrontier": 3,
+      "gapVsClosedFrontier": 0
+    },
+    {
+      "dimensionId": "dim_062",
+      "name": "Event-driven backtesting (NautilusTrader)",
+      "category": "backtesting",
+      "targetScore": 9,
+      "currentScore": 6,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8"
+      ],
+      "frontierLeaderId": "competitor.sentinel",
+      "ossFrontierScore": 6,
+      "closedFrontierScore": 6,
+      "gapVsTarget": 3,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 0
+    },
+    {
+      "dimensionId": "dim_063",
+      "name": "Walk-forward + anchored OOS validation",
+      "category": "backtesting",
+      "targetScore": 9,
+      "currentScore": 6,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8"
+      ],
+      "frontierLeaderId": "competitor.vectorbt",
+      "ossFrontierScore": 7,
+      "closedFrontierScore": 6,
+      "gapVsTarget": 3,
+      "gapVsOssFrontier": 1,
+      "gapVsClosedFrontier": 0
+    },
+    {
+      "dimensionId": "dim_064",
+      "name": "Overfitting detection (DSR + PBO)",
+      "category": "backtesting",
+      "targetScore": 9,
+      "currentScore": 7,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9"
+      ],
+      "frontierLeaderId": "competitor.sentinel",
+      "ossFrontierScore": 7,
+      "closedFrontierScore": 7,
+      "gapVsTarget": 2,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 0
+    },
+    {
+      "dimensionId": "dim_065",
+      "name": "Live trading execution (Alpaca)",
+      "category": "backtesting",
+      "targetScore": 9,
+      "currentScore": 6,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 6,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 3,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 3
+    },
+    {
+      "dimensionId": "dim_066",
+      "name": "Paper trading simulator",
+      "category": "backtesting",
+      "targetScore": 9,
+      "currentScore": 5,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7"
+      ],
+      "frontierLeaderId": "competitor.vectorbt",
+      "ossFrontierScore": 6,
+      "closedFrontierScore": 5,
+      "gapVsTarget": 4,
+      "gapVsOssFrontier": 1,
+      "gapVsClosedFrontier": 0
+    },
+    {
+      "dimensionId": "dim_067",
+      "name": "Strategy promotion state machine",
+      "category": "backtesting",
+      "targetScore": 9,
+      "currentScore": 7,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9"
+      ],
+      "frontierLeaderId": "competitor.sentinel",
+      "ossFrontierScore": 7,
+      "closedFrontierScore": 7,
+      "gapVsTarget": 2,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 0
+    },
+    {
+      "dimensionId": "dim_068",
+      "name": "AI-driven factor research (alpha signals)",
+      "category": "backtesting",
+      "targetScore": 9,
+      "currentScore": 7,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9"
+      ],
+      "frontierLeaderId": "competitor.qlib",
+      "ossFrontierScore": 9,
+      "closedFrontierScore": 7,
+      "gapVsTarget": 2,
+      "gapVsOssFrontier": 2,
+      "gapVsClosedFrontier": 0
+    },
+    {
+      "dimensionId": "dim_070",
+      "name": "Fundamental equity screener (50+ fields, DuckDB)",
+      "category": "screening",
+      "targetScore": 9,
+      "currentScore": 6,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 6,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 3,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 4
+    },
+    {
+      "dimensionId": "dim_071",
+      "name": "Technical screener (25+ criteria, pandas-ta)",
+      "category": "screening",
+      "targetScore": 9,
+      "currentScore": 6,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 6,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 3,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 3
+    },
+    {
+      "dimensionId": "dim_072",
+      "name": "Ownership-based screener (13F + Form 4)",
+      "category": "screening",
+      "targetScore": 9,
+      "currentScore": 5,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 5,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 4,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 4
+    },
+    {
+      "dimensionId": "dim_073",
+      "name": "Options flow screener",
+      "category": "screening",
+      "targetScore": 9,
+      "currentScore": 7,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 7,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 2,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 2
+    },
+    {
+      "dimensionId": "dim_074",
+      "name": "Fixed income screener",
+      "category": "screening",
+      "targetScore": 9,
+      "currentScore": 4,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 4 toward 6"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 4,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 5,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 5
+    },
+    {
+      "dimensionId": "dim_075",
+      "name": "Crypto / on-chain screener",
+      "category": "screening",
+      "targetScore": 9,
+      "currentScore": 5,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7"
+      ],
+      "frontierLeaderId": "competitor.openbb",
+      "ossFrontierScore": 6,
+      "closedFrontierScore": 5,
+      "gapVsTarget": 4,
+      "gapVsOssFrontier": 1,
+      "gapVsClosedFrontier": 0
+    },
+    {
+      "dimensionId": "dim_076",
+      "name": "Natural language screener",
+      "category": "screening",
+      "targetScore": 9,
+      "currentScore": 7,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9"
+      ],
+      "frontierLeaderId": "competitor.sentinel",
+      "ossFrontierScore": 7,
+      "closedFrontierScore": 7,
+      "gapVsTarget": 2,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 0
+    },
+    {
+      "dimensionId": "dim_077",
+      "name": "Portfolio VaR / CVaR (GARCH + Basel III)",
+      "category": "portfolio_risk",
+      "targetScore": 9,
+      "currentScore": 9,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 9 toward 9"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 9,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 0,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 1
+    },
+    {
+      "dimensionId": "dim_078",
+      "name": "Brinson-Hood-Beebower attribution",
+      "category": "portfolio_risk",
+      "targetScore": 9,
+      "currentScore": 6,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 6,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 3,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 4
+    },
+    {
+      "dimensionId": "dim_079",
+      "name": "Multi-factor risk (Fama-French 5+mom)",
+      "category": "portfolio_risk",
+      "targetScore": 9,
+      "currentScore": 7,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 9,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 2,
+      "gapVsOssFrontier": 2,
+      "gapVsClosedFrontier": 2
+    },
+    {
+      "dimensionId": "dim_080",
+      "name": "Correlation monitoring + regime alerts",
+      "category": "portfolio_risk",
+      "targetScore": 9,
+      "currentScore": 6,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 6,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 3,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 3
+    },
+    {
+      "dimensionId": "dim_081",
+      "name": "Portfolio optimizer (mean-variance, BL, ERC)",
+      "category": "portfolio_risk",
+      "targetScore": 9,
+      "currentScore": 7,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 7,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 2,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 2
+    },
+    {
+      "dimensionId": "dim_082",
+      "name": "Kelly / vol-target / risk-parity sizing",
+      "category": "portfolio_risk",
+      "targetScore": 9,
+      "currentScore": 7,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9"
+      ],
+      "frontierLeaderId": "competitor.sentinel",
+      "ossFrontierScore": 7,
+      "closedFrontierScore": 7,
+      "gapVsTarget": 2,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 0
+    },
+    {
+      "dimensionId": "dim_083",
+      "name": "Stress testing / scenario analysis",
+      "category": "portfolio_risk",
+      "targetScore": 9,
+      "currentScore": 7,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 7,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 2,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 2
+    },
+    {
+      "dimensionId": "dim_084",
+      "name": "News sentiment pipeline (GDELT + FinBERT)",
+      "category": "alt_data",
+      "targetScore": 9,
+      "currentScore": 6,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 6,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 3,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 3
+    },
+    {
+      "dimensionId": "dim_085",
+      "name": "Social media sentiment (Reddit/Twitter)",
+      "category": "alt_data",
+      "targetScore": 9,
+      "currentScore": 5,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7"
+      ],
+      "frontierLeaderId": "competitor.sentinel",
+      "ossFrontierScore": 5,
+      "closedFrontierScore": 5,
+      "gapVsTarget": 4,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 0
+    },
+    {
+      "dimensionId": "dim_086",
+      "name": "Job postings / web traffic signals",
+      "category": "alt_data",
+      "targetScore": 9,
+      "currentScore": 0,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 0 toward 2"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 0,
+      "closedFrontierScore": 7,
+      "gapVsTarget": 9,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 7
+    },
+    {
+      "dimensionId": "dim_089",
+      "name": "Google Trends / pytrends signals",
+      "category": "alt_data",
+      "targetScore": 9,
+      "currentScore": 5,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7"
+      ],
+      "frontierLeaderId": "competitor.sentinel",
+      "ossFrontierScore": 5,
+      "closedFrontierScore": 5,
+      "gapVsTarget": 4,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 0
+    },
+    {
+      "dimensionId": "dim_090",
+      "name": "Bloomberg-style command bar (102 codes)",
+      "category": "terminal_ux",
+      "targetScore": 9,
+      "currentScore": 8,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 8 toward 9"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 8,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 1,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 2
+    },
+    {
+      "dimensionId": "dim_091",
+      "name": "Multi-panel workspace",
+      "category": "terminal_ux",
+      "targetScore": 9,
+      "currentScore": 5,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 7,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 4,
+      "gapVsOssFrontier": 2,
+      "gapVsClosedFrontier": 5
+    },
+    {
+      "dimensionId": "dim_092",
+      "name": "Real-time charting (TradingView)",
+      "category": "terminal_ux",
+      "targetScore": 9,
+      "currentScore": 3,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 3 toward 5"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 7,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 6,
+      "gapVsOssFrontier": 4,
+      "gapVsClosedFrontier": 6
+    },
+    {
+      "dimensionId": "dim_093",
+      "name": "Excel / Google Sheets plugin",
+      "category": "terminal_ux",
+      "targetScore": 9,
+      "currentScore": 4,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 4 toward 6"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 4,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 5,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 6
+    },
+    {
+      "dimensionId": "dim_095",
+      "name": "REST API + WebSocket SDK",
+      "category": "terminal_ux",
+      "targetScore": 9,
+      "currentScore": 6,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 6 toward 8"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 6,
+      "closedFrontierScore": 7,
+      "gapVsTarget": 3,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 1
+    },
+    {
+      "dimensionId": "dim_096",
+      "name": "Self-hosted / sovereign (no seat fee)",
+      "category": "terminal_ux",
+      "targetScore": 9,
+      "currentScore": 8,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 8 toward 10"
+      ],
+      "frontierLeaderId": "competitor.openbb",
+      "ossFrontierScore": 9,
+      "closedFrontierScore": 8,
+      "gapVsTarget": 1,
+      "gapVsOssFrontier": 1,
+      "gapVsClosedFrontier": 0
+    },
+    {
+      "dimensionId": "dim_097",
+      "name": "Private company profiles (Form D)",
+      "category": "private_markets",
+      "targetScore": 9,
+      "currentScore": 4,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 4 toward 6"
+      ],
+      "frontierLeaderId": "competitor.capiq",
+      "ossFrontierScore": 4,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 5,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 6
+    },
+    {
+      "dimensionId": "dim_098",
+      "name": "VC/PE fund tracking",
+      "category": "private_markets",
+      "targetScore": 9,
+      "currentScore": 2,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 2 toward 4"
+      ],
+      "frontierLeaderId": "competitor.capiq",
+      "ossFrontierScore": 2,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 7,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 8
+    },
+    {
+      "dimensionId": "dim_100",
+      "name": "M&A deal intelligence",
+      "category": "private_markets",
+      "targetScore": 9,
+      "currentScore": 5,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7"
+      ],
+      "frontierLeaderId": "competitor.capiq",
+      "ossFrontierScore": 5,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 4,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 4
+    },
+    {
+      "dimensionId": "dim_101",
+      "name": "LBO / merger model templates",
+      "category": "private_markets",
+      "targetScore": 9,
+      "currentScore": 5,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7"
+      ],
+      "frontierLeaderId": "competitor.capiq",
+      "ossFrontierScore": 5,
+      "closedFrontierScore": 9,
+      "gapVsTarget": 4,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 4
+    },
+    {
+      "dimensionId": "dim_102",
+      "name": "ESG composite ratings & sector scores",
+      "category": "esg",
+      "targetScore": 9,
+      "currentScore": 4,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 4 toward 6"
+      ],
+      "frontierLeaderId": "competitor.lseg",
+      "ossFrontierScore": 4,
+      "closedFrontierScore": 10,
+      "gapVsTarget": 5,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 6
+    },
+    {
+      "dimensionId": "dim_103",
+      "name": "CDP / TCFD climate disclosure parsing",
+      "category": "esg",
+      "targetScore": 9,
+      "currentScore": 4,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 4 toward 6"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 4,
+      "closedFrontierScore": 7,
+      "gapVsTarget": 5,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 3
+    },
+    {
+      "dimensionId": "dim_104",
+      "name": "Controversy monitoring (GDELT)",
+      "category": "esg",
+      "targetScore": 9,
+      "currentScore": 5,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 5,
+      "closedFrontierScore": 7,
+      "gapVsTarget": 4,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 2
+    },
+    {
+      "dimensionId": "dim_105",
+      "name": "UN SDG alignment / impact scoring",
+      "category": "esg",
+      "targetScore": 9,
+      "currentScore": 0,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 0 toward 2"
+      ],
+      "frontierLeaderId": "competitor.bloomberg",
+      "ossFrontierScore": 0,
+      "closedFrontierScore": 3,
+      "gapVsTarget": 9,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 3
+    },
+    {
+      "dimensionId": "dim_106",
+      "name": "Multi-exchange OHLCV + execution (CCXT)",
+      "category": "crypto_defi",
+      "targetScore": 9,
+      "currentScore": 7,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 7 toward 9"
+      ],
+      "frontierLeaderId": "competitor.sentinel",
+      "ossFrontierScore": 7,
+      "closedFrontierScore": 7,
+      "gapVsTarget": 2,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 0
+    },
+    {
+      "dimensionId": "dim_107",
+      "name": "DeFi protocol analytics (DefiLlama)",
+      "category": "crypto_defi",
+      "targetScore": 9,
+      "currentScore": 5,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7"
+      ],
+      "frontierLeaderId": "competitor.openbb",
+      "ossFrontierScore": 6,
+      "closedFrontierScore": 5,
+      "gapVsTarget": 4,
+      "gapVsOssFrontier": 1,
+      "gapVsClosedFrontier": 0
+    },
+    {
+      "dimensionId": "dim_108",
+      "name": "On-chain metrics (MVRV, NVT, SOPR)",
+      "category": "crypto_defi",
+      "targetScore": 9,
+      "currentScore": 5,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 5 toward 7"
+      ],
+      "frontierLeaderId": "competitor.sentinel",
+      "ossFrontierScore": 5,
+      "closedFrontierScore": 5,
+      "gapVsTarget": 4,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 0
+    },
+    {
+      "dimensionId": "dim_109",
+      "name": "On-chain event monitoring",
+      "category": "crypto_defi",
+      "targetScore": 9,
+      "currentScore": 4,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 4 toward 6"
+      ],
+      "frontierLeaderId": "competitor.sentinel",
+      "ossFrontierScore": 4,
+      "closedFrontierScore": 4,
+      "gapVsTarget": 5,
+      "gapVsOssFrontier": 0,
+      "gapVsClosedFrontier": 0
+    },
+    {
+      "dimensionId": "dim_110",
+      "name": "DEX / AMM liquidity analytics",
+      "category": "crypto_defi",
+      "targetScore": 9,
+      "currentScore": 4,
+      "touches": [],
+      "dependsOnDimensions": [],
+      "evidenceRequired": [
+        "Implementation passes typecheck and tests",
+        "Score moves from 4 toward 6"
+      ],
+      "frontierLeaderId": "competitor.openbb",
+      "ossFrontierScore": 5,
+      "closedFrontierScore": 4,
+      "gapVsTarget": 5,
+      "gapVsOssFrontier": 1,
+      "gapVsClosedFrontier": 0
+    }
+  ],
+  "competitors": [
+    {
+      "id": "competitor.bloomberg",
+      "name": "bloomberg",
+      "category": "closed_source",
+      "inspectionMode": "observational",
+      "confidence": 0.7,
+      "provenance": [
+        {
+          "type": "manual_note",
+          "capturedAt": "2026-05-14T17:41:16.102Z",
+          "note": "imported from compete-matrix.json"
+        }
+      ]
+    },
+    {
+      "id": "competitor.capiq",
+      "name": "capiq",
+      "category": "closed_source",
+      "inspectionMode": "observational",
+      "confidence": 0.7,
+      "provenance": [
+        {
+          "type": "manual_note",
+          "capturedAt": "2026-05-14T17:41:16.106Z",
+          "note": "imported from compete-matrix.json"
+        }
+      ]
+    },
+    {
+      "id": "competitor.factset",
+      "name": "factset",
+      "category": "closed_source",
+      "inspectionMode": "observational",
+      "confidence": 0.7,
+      "provenance": [
+        {
+          "type": "manual_note",
+          "capturedAt": "2026-05-14T17:41:16.106Z",
+          "note": "imported from compete-matrix.json"
+        }
+      ]
+    },
+    {
+      "id": "competitor.lseg",
+      "name": "lseg",
+      "category": "closed_source",
+      "inspectionMode": "observational",
+      "confidence": 0.7,
+      "provenance": [
+        {
+          "type": "manual_note",
+          "capturedAt": "2026-05-14T17:41:16.106Z",
+          "note": "imported from compete-matrix.json"
+        }
+      ]
+    },
+    {
+      "id": "competitor.morningstar",
+      "name": "morningstar",
+      "category": "closed_source",
+      "inspectionMode": "observational",
+      "confidence": 0.7,
+      "provenance": [
+        {
+          "type": "manual_note",
+          "capturedAt": "2026-05-14T17:41:16.106Z",
+          "note": "imported from compete-matrix.json"
+        }
+      ]
+    },
+    {
+      "id": "competitor.alphasense",
+      "name": "alphasense",
+      "category": "closed_source",
+      "inspectionMode": "observational",
+      "confidence": 0.7,
+      "provenance": [
+        {
+          "type": "manual_note",
+          "capturedAt": "2026-05-14T17:41:16.106Z",
+          "note": "imported from compete-matrix.json"
+        }
+      ]
+    },
+    {
+      "id": "competitor.openbb",
+      "name": "openbb",
+      "category": "oss",
+      "inspectionMode": "source_available",
+      "confidence": 0.9,
+      "provenance": [
+        {
+          "type": "manual_note",
+          "capturedAt": "2026-05-14T17:41:16.106Z",
+          "note": "imported from compete-matrix.json"
+        }
+      ]
+    },
+    {
+      "id": "competitor.qlib",
+      "name": "qlib",
+      "category": "oss",
+      "inspectionMode": "source_available",
+      "confidence": 0.9,
+      "provenance": [
+        {
+          "type": "manual_note",
+          "capturedAt": "2026-05-14T17:41:16.106Z",
+          "note": "imported from compete-matrix.json"
+        }
+      ]
+    },
+    {
+      "id": "competitor.vectorbt",
+      "name": "vectorbt",
+      "category": "oss",
+      "inspectionMode": "source_available",
+      "confidence": 0.9,
+      "provenance": [
+        {
+          "type": "manual_note",
+          "capturedAt": "2026-05-14T17:41:16.107Z",
+          "note": "imported from compete-matrix.json"
+        }
+      ]
+    }
+  ]
+}
