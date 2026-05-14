@@ -166,5 +166,61 @@
       "causalCoherence": 20
     },
     "penaltyTotal": 15
+  },
+  {
+    "timestamp": "2026-05-14T21:01:29.302Z",
+    "harshScore": 16,
+    "displayScore": 1.6,
+    "dimensions": {
+      "functionality": 0,
+      "testing": 55,
+      "errorHandling": 50,
+      "security": 80,
+      "uxPolish": 50,
+      "documentation": 0,
+      "performance": 70,
+      "maintainability": 0,
+      "planningQuality": 0,
+      "selfImprovement": 45,
+      "developerExperience": 0,
+      "autonomy": 30,
+      "specDrivenPipeline": 20,
+      "convergenceSelfHealing": 30,
+      "tokenEconomy": 75,
+      "contextEconomy": 0,
+      "ecosystemMcp": 40,
+      "enterpriseReadiness": 50,
+      "communityAdoption": 15,
+      "causalCoherence": 20
+    },
+    "penaltyTotal": 15
+  },
+  {
+    "timestamp": "2026-05-14T21:32:45.375Z",
+    "harshScore": 11,
+    "displayScore": 1.1,
+    "dimensions": {
+      "functionality": 0,
+      "testing": 55,
+      "errorHandling": 50,
+      "security": 80,
+      "uxPolish": 50,
+      "documentation": 0,
+      "performance": 70,
+      "maintainability": 0,
+      "planningQuality": 0,
+      "selfImprovement": 45,
+      "developerExperience": 0,
+      "autonomy": 30,
+      "specDrivenPipeline": 20,
+      "convergenceSelfHealing": 30,
+      "tokenEconomy": 75,
+      "contextEconomy": 0,
+      "ecosystemMcp": 40,
+      "enterpriseReadiness": 50,
+      "communityAdoption": 15,
+      "causalCoherence": 20
+    },
+    "penaltyTotal": 20
   }
 ]
