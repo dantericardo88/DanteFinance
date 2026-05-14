@@ -25,8 +25,8 @@
     "qlib",
     "vectorbt"
   ],
-  "lastUpdated": "2026-05-14T21:32:03.322Z",
-  "overallSelfScore": 5.6,
+  "lastUpdated": "2026-05-14T22:44:02.698Z",
+  "overallSelfScore": 6,
   "harshComposite": 5,
   "selfComposite": 7.1,
   "annualCost": {
@@ -140,7 +140,7 @@
       "category": "market_data",
       "frequency": "high",
       "scores": {
-        "self": 5,
+        "self": 7,
         "bloomberg": 9,
         "capiq": 3,
         "factset": 7,
@@ -151,9 +151,9 @@
         "qlib": 3,
         "vectorbt": 3
       },
-      "gap_to_leader": 4,
+      "gap_to_leader": 2,
       "leader": "bloomberg",
-      "gap_to_closed_source_leader": 4,
+      "gap_to_closed_source_leader": 2,
       "closed_source_leader": "bloomberg",
       "gap_to_oss_leader": 0,
       "oss_leader": "openbb",
@@ -163,6 +163,12 @@
           "dimensionId": "dim_003",
           "before": 3,
           "after": 5,
+          "date": "2026-05-14"
+        },
+        {
+          "dimensionId": "dim_003",
+          "before": 5,
+          "after": 7,
           "date": "2026-05-14"
         }
       ],
@@ -238,7 +244,7 @@
       "category": "market_data",
       "frequency": "high",
       "scores": {
-        "self": 5,
+        "self": 7,
         "bloomberg": 10,
         "capiq": 3,
         "factset": 7,
@@ -249,14 +255,21 @@
         "qlib": 1,
         "vectorbt": 0
       },
-      "gap_to_leader": 5,
+      "gap_to_leader": 3,
       "leader": "bloomberg",
-      "gap_to_closed_source_leader": 5,
+      "gap_to_closed_source_leader": 3,
       "closed_source_leader": "bloomberg",
-      "gap_to_oss_leader": 1,
+      "gap_to_oss_leader": 0,
       "oss_leader": "openbb",
       "status": "in-progress",
-      "sprint_history": [],
+      "sprint_history": [
+        {
+          "dimensionId": "dim_006",
+          "before": 5,
+          "after": 7,
+          "date": "2026-05-14"
+        }
+      ],
       "next_sprint_target": 7
     },
     {
@@ -301,7 +314,7 @@
       "category": "market_data",
       "frequency": "high",
       "scores": {
-        "self": 5,
+        "self": 7,
         "bloomberg": 10,
         "capiq": 9,
         "factset": 10,
@@ -312,14 +325,21 @@
         "qlib": 3,
         "vectorbt": 3
       },
-      "gap_to_leader": 5,
+      "gap_to_leader": 3,
       "leader": "bloomberg",
-      "gap_to_closed_source_leader": 5,
+      "gap_to_closed_source_leader": 3,
       "closed_source_leader": "bloomberg",
       "gap_to_oss_leader": 0,
-      "oss_leader": "sentinel",
+      "oss_leader": "openbb",
       "status": "in-progress",
-      "sprint_history": [],
+      "sprint_history": [
+        {
+          "dimensionId": "dim_008",
+          "before": 5,
+          "after": 7,
+          "date": "2026-05-14"
+        }
+      ],
       "next_sprint_target": 7
     },
     {
@@ -650,7 +670,7 @@
       "category": "fundamentals",
       "frequency": "high",
       "scores": {
-        "self": 5,
+        "self": 8,
         "bloomberg": 10,
         "capiq": 9,
         "factset": 10,
@@ -661,14 +681,21 @@
         "qlib": 3,
         "vectorbt": 0
       },
-      "gap_to_leader": 5,
+      "gap_to_leader": 2,
       "leader": "bloomberg",
-      "gap_to_closed_source_leader": 5,
+      "gap_to_closed_source_leader": 2,
       "closed_source_leader": "bloomberg",
       "gap_to_oss_leader": 0,
-      "oss_leader": "sentinel",
+      "oss_leader": "openbb",
       "status": "in-progress",
-      "sprint_history": [],
+      "sprint_history": [
+        {
+          "dimensionId": "dim_020",
+          "before": 5,
+          "after": 8,
+          "date": "2026-05-14"
+        }
+      ],
       "next_sprint_target": 7
     },
     {
@@ -713,7 +740,7 @@
       "category": "fundamentals",
       "frequency": "high",
       "scores": {
-        "self": 5,
+        "self": 8,
         "bloomberg": 10,
         "capiq": 9,
         "factset": 7,
@@ -724,14 +751,21 @@
         "qlib": 5,
         "vectorbt": 3
       },
-      "gap_to_leader": 5,
+      "gap_to_leader": 2,
       "leader": "bloomberg",
-      "gap_to_closed_source_leader": 5,
+      "gap_to_closed_source_leader": 2,
       "closed_source_leader": "bloomberg",
       "gap_to_oss_leader": 0,
-      "oss_leader": "sentinel",
+      "oss_leader": "qlib",
       "status": "in-progress",
-      "sprint_history": [],
+      "sprint_history": [
+        {
+          "dimensionId": "dim_022",
+          "before": 5,
+          "after": 8,
+          "date": "2026-05-14"
+        }
+      ],
       "next_sprint_target": 7
     },
     {
@@ -853,7 +887,7 @@
       "category": "ownership_sec",
       "frequency": "medium",
       "scores": {
-        "self": 5,
+        "self": 8,
         "bloomberg": 9,
         "capiq": 9,
         "factset": 7,
@@ -864,14 +898,21 @@
         "qlib": 0,
         "vectorbt": 0
       },
-      "gap_to_leader": 4,
+      "gap_to_leader": 1,
       "leader": "bloomberg",
-      "gap_to_closed_source_leader": 4,
+      "gap_to_closed_source_leader": 1,
       "closed_source_leader": "bloomberg",
       "gap_to_oss_leader": 0,
-      "oss_leader": "sentinel",
+      "oss_leader": "openbb",
       "status": "in-progress",
-      "sprint_history": [],
+      "sprint_history": [
+        {
+          "dimensionId": "dim_027",
+          "before": 5,
+          "after": 8,
+          "date": "2026-05-14"
+        }
+      ],
       "next_sprint_target": 7
     },
     {
@@ -1042,7 +1083,7 @@
       "category": "ownership_sec",
       "frequency": "medium",
       "scores": {
-        "self": 5,
+        "self": 8,
         "bloomberg": 7,
         "capiq": 7,
         "factset": 7,
@@ -1053,14 +1094,21 @@
         "qlib": 0,
         "vectorbt": 0
       },
-      "gap_to_leader": 4,
+      "gap_to_leader": 1,
       "leader": "alphasense",
-      "gap_to_closed_source_leader": 4,
+      "gap_to_closed_source_leader": 1,
       "closed_source_leader": "alphasense",
       "gap_to_oss_leader": 0,
-      "oss_leader": "sentinel",
+      "oss_leader": "openbb",
       "status": "in-progress",
-      "sprint_history": [],
+      "sprint_history": [
+        {
+          "dimensionId": "dim_033",
+          "before": 5,
+          "after": 8,
+          "date": "2026-05-14"
+        }
+      ],
       "next_sprint_target": 7
     },
     {
@@ -2214,7 +2262,7 @@
       "category": "screening",
       "frequency": "high",
       "scores": {
-        "self": 4,
+        "self": 8,
         "bloomberg": 9,
         "capiq": 9,
         "factset": 7,
@@ -2225,14 +2273,21 @@
         "qlib": 0,
         "vectorbt": 0
       },
-      "gap_to_leader": 5,
+      "gap_to_leader": 1,
       "leader": "bloomberg",
-      "gap_to_closed_source_leader": 5,
+      "gap_to_closed_source_leader": 1,
       "closed_source_leader": "bloomberg",
       "gap_to_oss_leader": 0,
-      "oss_leader": "sentinel",
+      "oss_leader": "openbb",
       "status": "started",
-      "sprint_history": [],
+      "sprint_history": [
+        {
+          "dimensionId": "dim_074",
+          "before": 4,
+          "after": 8,
+          "date": "2026-05-14"
+        }
+      ],
       "next_sprint_target": 6
     },
     {
@@ -2729,7 +2784,7 @@
       "category": "terminal_ux",
       "frequency": "medium",
       "scores": {
-        "self": 3,
+        "self": 6,
         "bloomberg": 9,
         "capiq": 7,
         "factset": 9,
@@ -2740,14 +2795,21 @@
         "qlib": 0,
         "vectorbt": 2
       },
-      "gap_to_leader": 6,
+      "gap_to_leader": 3,
       "leader": "bloomberg",
-      "gap_to_closed_source_leader": 6,
+      "gap_to_closed_source_leader": 3,
       "closed_source_leader": "bloomberg",
-      "gap_to_oss_leader": 4,
+      "gap_to_oss_leader": 1,
       "oss_leader": "openbb",
       "status": "started",
-      "sprint_history": [],
+      "sprint_history": [
+        {
+          "dimensionId": "dim_092",
+          "before": 3,
+          "after": 6,
+          "date": "2026-05-14"
+        }
+      ],
       "next_sprint_target": 5
     },
     {
@@ -2757,7 +2819,7 @@
       "category": "terminal_ux",
       "frequency": "medium",
       "scores": {
-        "self": 4,
+        "self": 7,
         "bloomberg": 10,
         "capiq": 9,
         "factset": 9,
@@ -2768,14 +2830,21 @@
         "qlib": 0,
         "vectorbt": 0
       },
-      "gap_to_leader": 6,
+      "gap_to_leader": 3,
       "leader": "bloomberg",
-      "gap_to_closed_source_leader": 6,
+      "gap_to_closed_source_leader": 3,
       "closed_source_leader": "bloomberg",
       "gap_to_oss_leader": 0,
-      "oss_leader": "sentinel",
+      "oss_leader": "openbb",
       "status": "started",
-      "sprint_history": [],
+      "sprint_history": [
+        {
+          "dimensionId": "dim_093",
+          "before": 4,
+          "after": 7,
+          "date": "2026-05-14"
+        }
+      ],
       "next_sprint_target": 6
     },
     {
@@ -2871,7 +2940,7 @@
       "category": "private_markets",
       "frequency": "low",
       "scores": {
-        "self": 4,
+        "self": 7,
         "bloomberg": 3,
         "capiq": 10,
         "factset": 7,
@@ -2882,14 +2951,21 @@
         "qlib": 0,
         "vectorbt": 0
       },
-      "gap_to_leader": 6,
+      "gap_to_leader": 3,
       "leader": "capiq",
-      "gap_to_closed_source_leader": 6,
+      "gap_to_closed_source_leader": 3,
       "closed_source_leader": "capiq",
       "gap_to_oss_leader": 0,
-      "oss_leader": "sentinel",
+      "oss_leader": "openbb",
       "status": "started",
-      "sprint_history": [],
+      "sprint_history": [
+        {
+          "dimensionId": "dim_097",
+          "before": 4,
+          "after": 7,
+          "date": "2026-05-14"
+        }
+      ],
       "next_sprint_target": 6
     },
     {
@@ -3020,7 +3096,7 @@
       "category": "esg",
       "frequency": "low",
       "scores": {
-        "self": 4,
+        "self": 7,
         "bloomberg": 9,
         "capiq": 6,
         "factset": 6,
@@ -3031,14 +3107,21 @@
         "qlib": 0,
         "vectorbt": 0
       },
-      "gap_to_leader": 6,
+      "gap_to_leader": 3,
       "leader": "lseg",
-      "gap_to_closed_source_leader": 6,
+      "gap_to_closed_source_leader": 3,
       "closed_source_leader": "lseg",
       "gap_to_oss_leader": 0,
-      "oss_leader": "sentinel",
+      "oss_leader": "openbb",
       "status": "started",
-      "sprint_history": [],
+      "sprint_history": [
+        {
+          "dimensionId": "dim_102",
+          "before": 4,
+          "after": 7,
+          "date": "2026-05-14"
+        }
+      ],
       "next_sprint_target": 6
     },
     {
@@ -3048,7 +3131,7 @@
       "category": "esg",
       "frequency": "low",
       "scores": {
-        "self": 4,
+        "self": 7,
         "bloomberg": 7,
         "capiq": 7,
         "factset": 7,
@@ -3059,14 +3142,21 @@
         "qlib": 0,
         "vectorbt": 0
       },
-      "gap_to_leader": 3,
+      "gap_to_leader": 0,
       "leader": "bloomberg",
-      "gap_to_closed_source_leader": 3,
+      "gap_to_closed_source_leader": 0,
       "closed_source_leader": "bloomberg",
       "gap_to_oss_leader": 0,
-      "oss_leader": "sentinel",
-      "status": "started",
-      "sprint_history": [],
+      "oss_leader": "openbb",
+      "status": "closed",
+      "sprint_history": [
+        {
+          "dimensionId": "dim_103",
+          "before": 4,
+          "after": 7,
+          "date": "2026-05-14"
+        }
+      ],
       "next_sprint_target": 6
     },
     {
@@ -3223,7 +3313,7 @@
       "category": "crypto_defi",
       "frequency": "medium",
       "scores": {
-        "self": 4,
+        "self": 7,
         "bloomberg": 0,
         "capiq": 0,
         "factset": 0,
@@ -3235,13 +3325,20 @@
         "vectorbt": 0
       },
       "gap_to_leader": 0,
-      "leader": "sentinel",
+      "leader": "openbb",
       "gap_to_closed_source_leader": 0,
-      "closed_source_leader": "sentinel",
+      "closed_source_leader": "unknown",
       "gap_to_oss_leader": 0,
-      "oss_leader": "sentinel",
-      "status": "started",
-      "sprint_history": [],
+      "oss_leader": "openbb",
+      "status": "closed",
+      "sprint_history": [
+        {
+          "dimensionId": "dim_109",
+          "before": 4,
+          "after": 7,
+          "date": "2026-05-14"
+        }
+      ],
       "next_sprint_target": 6
     },
     {
@@ -3251,7 +3348,7 @@
       "category": "crypto_defi",
       "frequency": "medium",
       "scores": {
-        "self": 4,
+        "self": 7,
         "bloomberg": 0,
         "capiq": 0,
         "factset": 0,
@@ -3262,14 +3359,21 @@
         "qlib": 0,
         "vectorbt": 0
       },
-      "gap_to_leader": 1,
+      "gap_to_leader": 0,
       "leader": "openbb",
       "gap_to_closed_source_leader": 0,
-      "closed_source_leader": "sentinel",
-      "gap_to_oss_leader": 1,
+      "closed_source_leader": "unknown",
+      "gap_to_oss_leader": 0,
       "oss_leader": "openbb",
-      "status": "started",
-      "sprint_history": [],
+      "status": "closed",
+      "sprint_history": [
+        {
+          "dimensionId": "dim_110",
+          "before": 4,
+          "after": 7,
+          "date": "2026-05-14"
+        }
+      ],
       "next_sprint_target": 6
     }
   ],

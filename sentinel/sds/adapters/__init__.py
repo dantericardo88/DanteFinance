@@ -40,3 +40,8 @@ try:
     from sentinel.sds.adapters import short_interest_adapter  # noqa: F401
 except Exception:
     pass
+
+try:
+    from sentinel.sds.adapters import onchain_adapter  # noqa: F401
+except Exception:
+    pass
