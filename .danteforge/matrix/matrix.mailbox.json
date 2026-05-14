@@ -1,0 +1,206 @@
+{
+  "generatedAt": "2026-05-14T18:46:19.153Z",
+  "messages": [
+    {
+      "messageId": "msg.lease.dim_001.2026-05-14T17-49-23.embedded.2026-05-14T18-06-44.2026-05-14T18-07-17.6772",
+      "type": "human_decision_required",
+      "fromLease": "lease.dim_001.2026-05-14T17-49-23.embedded.2026-05-14T18-06-44",
+      "toLease": "broadcast",
+      "summary": "Lease lease.dim_001.2026-05-14T17-49-23.embedded.2026-05-14T18-06-44 finished wave 1 as awaiting_input (0 file change(s)).",
+      "impact": "informational",
+      "requiresAck": false,
+      "status": "pending_ack",
+      "createdAt": "2026-05-14T18:07:17.541Z",
+      "metadata": {
+        "provider": "embedded",
+        "waveNumber": "1",
+        "filesChanged": []
+      }
+    },
+    {
+      "messageId": "msg.lease.dim_001.2026-05-14T17-49-23.embedded.2026-05-14T18-06-44.2026-05-14T18-32-29.9214",
+      "type": "merge_ready",
+      "fromLease": "lease.dim_001.2026-05-14T17-49-23.embedded.2026-05-14T18-06-44",
+      "toLease": "broadcast",
+      "summary": "Embedded host completed lease lease.dim_001.2026-05-14T17-49-23.embedded.2026-05-14T18-06-44 with 1 file change(s). Verify-court can review.",
+      "impact": "consumer_update_required",
+      "requiresAck": false,
+      "status": "pending_ack",
+      "createdAt": "2026-05-14T18:32:29.073Z",
+      "metadata": {
+        "workPacketId": "work.dim_001.2026-05-14T17-49-23",
+        "filesChanged": [
+          "sentinel\\sds\\adapters\\__init__.py"
+        ]
+      }
+    },
+    {
+      "messageId": "msg.lease.dim_002.2026-05-14T17-49-23.embedded.2026-05-14T18-06-50.2026-05-14T18-07-17.8605",
+      "type": "human_decision_required",
+      "fromLease": "lease.dim_002.2026-05-14T17-49-23.embedded.2026-05-14T18-06-50",
+      "toLease": "broadcast",
+      "summary": "Lease lease.dim_002.2026-05-14T17-49-23.embedded.2026-05-14T18-06-50 finished wave 1 as awaiting_input (0 file change(s)).",
+      "impact": "informational",
+      "requiresAck": false,
+      "status": "pending_ack",
+      "createdAt": "2026-05-14T18:07:17.546Z",
+      "metadata": {
+        "provider": "embedded",
+        "waveNumber": "1",
+        "filesChanged": []
+      }
+    },
+    {
+      "messageId": "msg.lease.dim_002.2026-05-14T17-49-23.embedded.2026-05-14T18-06-50.2026-05-14T18-36-00.2276",
+      "type": "merge_ready",
+      "fromLease": "lease.dim_002.2026-05-14T17-49-23.embedded.2026-05-14T18-06-50",
+      "toLease": "broadcast",
+      "summary": "Embedded host completed lease lease.dim_002.2026-05-14T17-49-23.embedded.2026-05-14T18-06-50 with 1 file change(s). Verify-court can review.",
+      "impact": "consumer_update_required",
+      "requiresAck": false,
+      "status": "pending_ack",
+      "createdAt": "2026-05-14T18:36:00.252Z",
+      "metadata": {
+        "workPacketId": "work.dim_002.2026-05-14T17-49-23",
+        "filesChanged": [
+          "sentinel\\sds\\adapters\\yfinance_adapter.py"
+        ]
+      }
+    },
+    {
+      "messageId": "msg.lease.dim_003.2026-05-14T17-49-23.embedded.2026-05-14T18-06-54.2026-05-14T18-07-17.2558",
+      "type": "human_decision_required",
+      "fromLease": "lease.dim_003.2026-05-14T17-49-23.embedded.2026-05-14T18-06-54",
+      "toLease": "broadcast",
+      "summary": "Lease lease.dim_003.2026-05-14T17-49-23.embedded.2026-05-14T18-06-54 finished wave 1 as awaiting_input (0 file change(s)).",
+      "impact": "informational",
+      "requiresAck": false,
+      "status": "pending_ack",
+      "createdAt": "2026-05-14T18:07:17.758Z",
+      "metadata": {
+        "provider": "embedded",
+        "waveNumber": "1",
+        "filesChanged": []
+      }
+    },
+    {
+      "messageId": "msg.lease.dim_003.2026-05-14T17-49-23.embedded.2026-05-14T18-06-54.2026-05-14T18-36-29.6492",
+      "type": "merge_ready",
+      "fromLease": "lease.dim_003.2026-05-14T17-49-23.embedded.2026-05-14T18-06-54",
+      "toLease": "broadcast",
+      "summary": "Embedded host completed lease lease.dim_003.2026-05-14T17-49-23.embedded.2026-05-14T18-06-54 with 1 file change(s). Verify-court can review.",
+      "impact": "consumer_update_required",
+      "requiresAck": false,
+      "status": "pending_ack",
+      "createdAt": "2026-05-14T18:36:29.878Z",
+      "metadata": {
+        "workPacketId": "work.dim_003.2026-05-14T17-49-23",
+        "filesChanged": [
+          "sentinel\\sds\\adapters\\__init__.py"
+        ]
+      }
+    },
+    {
+      "messageId": "msg.lease.dim_004.2026-05-14T17-49-23.embedded.2026-05-14T18-07-03.2026-05-14T18-07-17.4183",
+      "type": "human_decision_required",
+      "fromLease": "lease.dim_004.2026-05-14T17-49-23.embedded.2026-05-14T18-07-03",
+      "toLease": "broadcast",
+      "summary": "Lease lease.dim_004.2026-05-14T17-49-23.embedded.2026-05-14T18-07-03 finished wave 1 as awaiting_input (0 file change(s)).",
+      "impact": "informational",
+      "requiresAck": false,
+      "status": "pending_ack",
+      "createdAt": "2026-05-14T18:07:17.850Z",
+      "metadata": {
+        "provider": "embedded",
+        "waveNumber": "1",
+        "filesChanged": []
+      }
+    },
+    {
+      "messageId": "msg.lease.dim_004.2026-05-14T17-49-23.embedded.2026-05-14T18-07-03.2026-05-14T18-45-29.2828",
+      "type": "merge_ready",
+      "fromLease": "lease.dim_004.2026-05-14T17-49-23.embedded.2026-05-14T18-07-03",
+      "toLease": "broadcast",
+      "summary": "Embedded host completed lease lease.dim_004.2026-05-14T17-49-23.embedded.2026-05-14T18-07-03 with 4 file change(s). Verify-court can review.",
+      "impact": "consumer_update_required",
+      "requiresAck": false,
+      "status": "pending_ack",
+      "createdAt": "2026-05-14T18:45:29.686Z",
+      "metadata": {
+        "workPacketId": "work.dim_004.2026-05-14T17-49-23",
+        "filesChanged": [
+          "sentinel\\sbx\\__pycache__\\options_analytics.cpython-311.pyc",
+          "sentinel\\sbx\\options_analytics.py",
+          "sentinel\\sbx\\options_flow.py",
+          "sentinel\\sbx\\vol_term_structure.py"
+        ]
+      }
+    },
+    {
+      "messageId": "msg.lease.dim_005.2026-05-14T17-49-23.embedded.2026-05-14T18-07-08.2026-05-14T18-07-17.5876",
+      "type": "human_decision_required",
+      "fromLease": "lease.dim_005.2026-05-14T17-49-23.embedded.2026-05-14T18-07-08",
+      "toLease": "broadcast",
+      "summary": "Lease lease.dim_005.2026-05-14T17-49-23.embedded.2026-05-14T18-07-08 finished wave 1 as awaiting_input (0 file change(s)).",
+      "impact": "informational",
+      "requiresAck": false,
+      "status": "pending_ack",
+      "createdAt": "2026-05-14T18:07:17.884Z",
+      "metadata": {
+        "provider": "embedded",
+        "waveNumber": "1",
+        "filesChanged": []
+      }
+    },
+    {
+      "messageId": "msg.lease.dim_005.2026-05-14T17-49-23.embedded.2026-05-14T18-07-08.2026-05-14T18-45-50.7501",
+      "type": "merge_ready",
+      "fromLease": "lease.dim_005.2026-05-14T17-49-23.embedded.2026-05-14T18-07-08",
+      "toLease": "broadcast",
+      "summary": "Embedded host completed lease lease.dim_005.2026-05-14T17-49-23.embedded.2026-05-14T18-07-08 with 1 file change(s). Verify-court can review.",
+      "impact": "consumer_update_required",
+      "requiresAck": false,
+      "status": "pending_ack",
+      "createdAt": "2026-05-14T18:45:50.662Z",
+      "metadata": {
+        "workPacketId": "work.dim_005.2026-05-14T17-49-23",
+        "filesChanged": [
+          "sentinel\\sma\\commodity_analytics.py"
+        ]
+      }
+    },
+    {
+      "messageId": "msg.lease.dim_006.2026-05-14T17-49-23.embedded.2026-05-14T18-07-12.2026-05-14T18-07-17.2918",
+      "type": "human_decision_required",
+      "fromLease": "lease.dim_006.2026-05-14T17-49-23.embedded.2026-05-14T18-07-12",
+      "toLease": "broadcast",
+      "summary": "Lease lease.dim_006.2026-05-14T17-49-23.embedded.2026-05-14T18-07-12 finished wave 1 as awaiting_input (0 file change(s)).",
+      "impact": "informational",
+      "requiresAck": false,
+      "status": "pending_ack",
+      "createdAt": "2026-05-14T18:07:17.933Z",
+      "metadata": {
+        "provider": "embedded",
+        "waveNumber": "1",
+        "filesChanged": []
+      }
+    },
+    {
+      "messageId": "msg.lease.dim_006.2026-05-14T17-49-23.embedded.2026-05-14T18-07-12.2026-05-14T18-46-19.1150",
+      "type": "merge_ready",
+      "fromLease": "lease.dim_006.2026-05-14T17-49-23.embedded.2026-05-14T18-07-12",
+      "toLease": "broadcast",
+      "summary": "Embedded host completed lease lease.dim_006.2026-05-14T17-49-23.embedded.2026-05-14T18-07-12 with 1 file change(s). Verify-court can review.",
+      "impact": "consumer_update_required",
+      "requiresAck": false,
+      "status": "pending_ack",
+      "createdAt": "2026-05-14T18:46:19.106Z",
+      "metadata": {
+        "workPacketId": "work.dim_006.2026-05-14T17-49-23",
+        "filesChanged": [
+          "sentinel\\sfe\\fx_analytics.py"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,86 @@
+{
+  "generatedAt": "2026-05-14T18:46:19.069Z",
+  "runs": [
+    {
+      "runId": "embedded-complete.lease.dim_001.2026-05-14T17-49-23.embedded.2026-05-14T18-06-44.1778783549044",
+      "leaseId": "lease.dim_001.2026-05-14T17-49-23.embedded.2026-05-14T18-06-44",
+      "status": "completed",
+      "filesChanged": [
+        "sentinel\\sds\\adapters\\__init__.py"
+      ],
+      "commandsExecuted": [],
+      "startedAt": "2026-05-14T18:07:17.408Z",
+      "completedAt": "2026-05-14T18:32:29.036Z",
+      "finalMessage": "Host AI completed embedded execution. 1 file(s) changed.",
+      "provider": "embedded"
+    },
+    {
+      "runId": "embedded-complete.lease.dim_002.2026-05-14T17-49-23.embedded.2026-05-14T18-06-50.1778783760211",
+      "leaseId": "lease.dim_002.2026-05-14T17-49-23.embedded.2026-05-14T18-06-50",
+      "status": "completed",
+      "filesChanged": [
+        "sentinel\\sds\\adapters\\yfinance_adapter.py"
+      ],
+      "commandsExecuted": [],
+      "startedAt": "2026-05-14T18:07:17.405Z",
+      "completedAt": "2026-05-14T18:36:00.207Z",
+      "finalMessage": "Host AI completed embedded execution. 1 file(s) changed.",
+      "provider": "embedded"
+    },
+    {
+      "runId": "embedded-complete.lease.dim_003.2026-05-14T17-49-23.embedded.2026-05-14T18-06-54.1778783789841",
+      "leaseId": "lease.dim_003.2026-05-14T17-49-23.embedded.2026-05-14T18-06-54",
+      "status": "completed",
+      "filesChanged": [
+        "sentinel\\sds\\adapters\\__init__.py"
+      ],
+      "commandsExecuted": [],
+      "startedAt": "2026-05-14T18:07:17.407Z",
+      "completedAt": "2026-05-14T18:36:29.836Z",
+      "finalMessage": "Host AI completed embedded execution. 1 file(s) changed.",
+      "provider": "embedded"
+    },
+    {
+      "runId": "embedded-complete.lease.dim_004.2026-05-14T17-49-23.embedded.2026-05-14T18-07-03.1778784329632",
+      "leaseId": "lease.dim_004.2026-05-14T17-49-23.embedded.2026-05-14T18-07-03",
+      "status": "completed",
+      "filesChanged": [
+        "sentinel\\sbx\\__pycache__\\options_analytics.cpython-311.pyc",
+        "sentinel\\sbx\\options_analytics.py",
+        "sentinel\\sbx\\options_flow.py",
+        "sentinel\\sbx\\vol_term_structure.py"
+      ],
+      "commandsExecuted": [],
+      "startedAt": "2026-05-14T18:07:17.407Z",
+      "completedAt": "2026-05-14T18:45:29.604Z",
+      "finalMessage": "Host AI completed embedded execution. 4 file(s) changed.",
+      "provider": "embedded"
+    },
+    {
+      "runId": "embedded-complete.lease.dim_005.2026-05-14T17-49-23.embedded.2026-05-14T18-07-08.1778784350564",
+      "leaseId": "lease.dim_005.2026-05-14T17-49-23.embedded.2026-05-14T18-07-08",
+      "status": "completed",
+      "filesChanged": [
+        "sentinel\\sma\\commodity_analytics.py"
+      ],
+      "commandsExecuted": [],
+      "startedAt": "2026-05-14T18:07:17.408Z",
+      "completedAt": "2026-05-14T18:45:50.556Z",
+      "finalMessage": "Host AI completed embedded execution. 1 file(s) changed.",
+      "provider": "embedded"
+    },
+    {
+      "runId": "embedded-complete.lease.dim_006.2026-05-14T17-49-23.embedded.2026-05-14T18-07-12.1778784379074",
+      "leaseId": "lease.dim_006.2026-05-14T17-49-23.embedded.2026-05-14T18-07-12",
+      "status": "completed",
+      "filesChanged": [
+        "sentinel\\sfe\\fx_analytics.py"
+      ],
+      "commandsExecuted": [],
+      "startedAt": "2026-05-14T18:07:17.409Z",
+      "completedAt": "2026-05-14T18:46:19.069Z",
+      "finalMessage": "Host AI completed embedded execution. 1 file(s) changed.",
+      "provider": "embedded"
+    }
+  ]
+}

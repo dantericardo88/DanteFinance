@@ -1,0 +1,65 @@
+{
+  "generatedAt": "2026-05-14T18:48:55.137Z",
+  "decisions": [
+    {
+      "id": "merge.cand.lease.dim_001.2026-05-14T17-49-23.embedded.2026-05-14T18-06-44.2026-05-14T18-48-55",
+      "candidateId": "cand.lease.dim_001.2026-05-14T17-49-23.embedded.2026-05-14T18-06-44",
+      "leaseId": "lease.dim_001.2026-05-14T17-49-23.embedded.2026-05-14T18-06-44",
+      "branch": "matrix/dim_001/embedded-18-06-44",
+      "decision": "REJECTED",
+      "reason": "Gate report status: failed",
+      "createdAt": "2026-05-14T18:48:55.136Z",
+      "decidedBy": "merge-court"
+    },
+    {
+      "id": "merge.cand.lease.dim_002.2026-05-14T17-49-23.embedded.2026-05-14T18-06-50.2026-05-14T18-48-55",
+      "candidateId": "cand.lease.dim_002.2026-05-14T17-49-23.embedded.2026-05-14T18-06-50",
+      "leaseId": "lease.dim_002.2026-05-14T17-49-23.embedded.2026-05-14T18-06-50",
+      "branch": "matrix/dim_002/embedded-18-06-50",
+      "decision": "REJECTED",
+      "reason": "Gate report status: failed",
+      "createdAt": "2026-05-14T18:48:55.136Z",
+      "decidedBy": "merge-court"
+    },
+    {
+      "id": "merge.cand.lease.dim_003.2026-05-14T17-49-23.embedded.2026-05-14T18-06-54.2026-05-14T18-48-55",
+      "candidateId": "cand.lease.dim_003.2026-05-14T17-49-23.embedded.2026-05-14T18-06-54",
+      "leaseId": "lease.dim_003.2026-05-14T17-49-23.embedded.2026-05-14T18-06-54",
+      "branch": "matrix/dim_003/embedded-18-06-54",
+      "decision": "REJECTED",
+      "reason": "Gate report status: failed",
+      "createdAt": "2026-05-14T18:48:55.136Z",
+      "decidedBy": "merge-court"
+    },
+    {
+      "id": "merge.cand.lease.dim_004.2026-05-14T17-49-23.embedded.2026-05-14T18-07-03.2026-05-14T18-48-55",
+      "candidateId": "cand.lease.dim_004.2026-05-14T17-49-23.embedded.2026-05-14T18-07-03",
+      "leaseId": "lease.dim_004.2026-05-14T17-49-23.embedded.2026-05-14T18-07-03",
+      "branch": "matrix/dim_004/embedded-18-07-03",
+      "decision": "REJECTED",
+      "reason": "Gate report status: failed",
+      "createdAt": "2026-05-14T18:48:55.136Z",
+      "decidedBy": "merge-court"
+    },
+    {
+      "id": "merge.cand.lease.dim_005.2026-05-14T17-49-23.embedded.2026-05-14T18-07-08.2026-05-14T18-48-55",
+      "candidateId": "cand.lease.dim_005.2026-05-14T17-49-23.embedded.2026-05-14T18-07-08",
+      "leaseId": "lease.dim_005.2026-05-14T17-49-23.embedded.2026-05-14T18-07-08",
+      "branch": "matrix/dim_005/embedded-18-07-08",
+      "decision": "REJECTED",
+      "reason": "Gate report status: failed",
+      "createdAt": "2026-05-14T18:48:55.136Z",
+      "decidedBy": "merge-court"
+    },
+    {
+      "id": "merge.cand.lease.dim_006.2026-05-14T17-49-23.embedded.2026-05-14T18-07-12.2026-05-14T18-48-55",
+      "candidateId": "cand.lease.dim_006.2026-05-14T17-49-23.embedded.2026-05-14T18-07-12",
+      "leaseId": "lease.dim_006.2026-05-14T17-49-23.embedded.2026-05-14T18-07-12",
+      "branch": "matrix/dim_006/embedded-18-07-12",
+      "decision": "REJECTED",
+      "reason": "Gate report status: failed",
+      "createdAt": "2026-05-14T18:48:55.136Z",
+      "decidedBy": "merge-court"
+    }
+  ]
+}

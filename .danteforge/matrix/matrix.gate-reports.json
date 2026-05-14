@@ -1,0 +1,313 @@
+{
+  "generatedAt": "2026-05-14T18:47:35.208Z",
+  "reports": [
+    {
+      "id": "gate.lease.dim_001.2026-05-14T17-49-23.embedded.2026-05-14T18-06-44.2026-05-14T18-46-58",
+      "leaseId": "lease.dim_001.2026-05-14T17-49-23.embedded.2026-05-14T18-06-44",
+      "workPacketId": "work.dim_001.2026-05-14T17-49-23",
+      "status": "failed",
+      "checks": [
+        {
+          "name": "forbidden_paths",
+          "status": "passed",
+          "details": "no forbidden paths edited"
+        },
+        {
+          "name": "protected_paths",
+          "status": "passed",
+          "details": "no frozen paths edited"
+        },
+        {
+          "name": "lease_compliance",
+          "status": "failed",
+          "details": "changed file sentinel\\sds\\adapters\\__init__.py is OUTSIDE lease's allowed write paths"
+        },
+        {
+          "name": "required_command:npm run typecheck",
+          "status": "failed",
+          "details": "exit 4294963238: npm error code ENOENT\nnpm error syscall open\nnpm error path C:\\Projects\\DanteFinance\\.danteforge-worktrees\\lease.dim_001.2026-05-14T17-49-23.embedded.2026-05-14T18-06-44\\package.json\nnpm error errno -"
+        },
+        {
+          "name": "required_command:npm test",
+          "status": "failed",
+          "details": "exit 4294963238: npm error code ENOENT\nnpm error syscall open\nnpm error path C:\\Projects\\DanteFinance\\.danteforge-worktrees\\lease.dim_001.2026-05-14T17-49-23.embedded.2026-05-14T18-06-44\\package.json\nnpm error errno -"
+        },
+        {
+          "name": "no_stub_scan",
+          "status": "passed",
+          "details": "no stubs detected"
+        },
+        {
+          "name": "dimension_score",
+          "status": "passed",
+          "details": "pending merge-court arbitration for dim_001"
+        }
+      ],
+      "generatedAt": "2026-05-14T18:46:58.233Z"
+    },
+    {
+      "id": "gate.lease.dim_002.2026-05-14T17-49-23.embedded.2026-05-14T18-06-50.2026-05-14T18-47-00",
+      "leaseId": "lease.dim_002.2026-05-14T17-49-23.embedded.2026-05-14T18-06-50",
+      "workPacketId": "work.dim_002.2026-05-14T17-49-23",
+      "status": "failed",
+      "checks": [
+        {
+          "name": "forbidden_paths",
+          "status": "passed",
+          "details": "no forbidden paths edited"
+        },
+        {
+          "name": "protected_paths",
+          "status": "passed",
+          "details": "no frozen paths edited"
+        },
+        {
+          "name": "lease_compliance",
+          "status": "failed",
+          "details": "changed file sentinel\\sds\\adapters\\yfinance_adapter.py is OUTSIDE lease's allowed write paths"
+        },
+        {
+          "name": "required_command:npm run typecheck",
+          "status": "failed",
+          "details": "exit 4294963238: npm error code ENOENT\nnpm error syscall open\nnpm error path C:\\Projects\\DanteFinance\\.danteforge-worktrees\\lease.dim_002.2026-05-14T17-49-23.embedded.2026-05-14T18-06-50\\package.json\nnpm error errno -"
+        },
+        {
+          "name": "required_command:npm test",
+          "status": "failed",
+          "details": "exit 4294963238: npm error code ENOENT\nnpm error syscall open\nnpm error path C:\\Projects\\DanteFinance\\.danteforge-worktrees\\lease.dim_002.2026-05-14T17-49-23.embedded.2026-05-14T18-06-50\\package.json\nnpm error errno -"
+        },
+        {
+          "name": "no_stub_scan",
+          "status": "passed",
+          "details": "no stubs detected"
+        },
+        {
+          "name": "dimension_score",
+          "status": "passed",
+          "details": "pending merge-court arbitration for dim_002"
+        }
+      ],
+      "generatedAt": "2026-05-14T18:47:00.969Z"
+    },
+    {
+      "id": "gate.lease.dim_003.2026-05-14T17-49-23.embedded.2026-05-14T18-06-54.2026-05-14T18-47-06",
+      "leaseId": "lease.dim_003.2026-05-14T17-49-23.embedded.2026-05-14T18-06-54",
+      "workPacketId": "work.dim_003.2026-05-14T17-49-23",
+      "status": "failed",
+      "checks": [
+        {
+          "name": "forbidden_paths",
+          "status": "passed",
+          "details": "no forbidden paths edited"
+        },
+        {
+          "name": "protected_paths",
+          "status": "passed",
+          "details": "no frozen paths edited"
+        },
+        {
+          "name": "lease_compliance",
+          "status": "failed",
+          "details": "changed file sentinel\\sds\\adapters\\__init__.py is OUTSIDE lease's allowed write paths"
+        },
+        {
+          "name": "required_command:npm run typecheck",
+          "status": "failed",
+          "details": "exit 4294963238: npm error code ENOENT\nnpm error syscall open\nnpm error path C:\\Projects\\DanteFinance\\.danteforge-worktrees\\lease.dim_003.2026-05-14T17-49-23.embedded.2026-05-14T18-06-54\\package.json\nnpm error errno -"
+        },
+        {
+          "name": "required_command:npm test",
+          "status": "failed",
+          "details": "exit 4294963238: npm error code ENOENT\nnpm error syscall open\nnpm error path C:\\Projects\\DanteFinance\\.danteforge-worktrees\\lease.dim_003.2026-05-14T17-49-23.embedded.2026-05-14T18-06-54\\package.json\nnpm error errno -"
+        },
+        {
+          "name": "no_stub_scan",
+          "status": "passed",
+          "details": "no stubs detected"
+        },
+        {
+          "name": "dimension_score",
+          "status": "passed",
+          "details": "pending merge-court arbitration for dim_003"
+        }
+      ],
+      "generatedAt": "2026-05-14T18:47:06.165Z"
+    },
+    {
+      "id": "gate.lease.dim_004.2026-05-14T17-49-23.embedded.2026-05-14T18-07-03.2026-05-14T18-47-09",
+      "leaseId": "lease.dim_004.2026-05-14T17-49-23.embedded.2026-05-14T18-07-03",
+      "workPacketId": "work.dim_004.2026-05-14T17-49-23",
+      "status": "failed",
+      "checks": [
+        {
+          "name": "forbidden_paths",
+          "status": "passed",
+          "details": "no forbidden paths edited"
+        },
+        {
+          "name": "protected_paths",
+          "status": "passed",
+          "details": "no frozen paths edited"
+        },
+        {
+          "name": "lease_compliance",
+          "status": "failed",
+          "details": "changed file sentinel\\sbx\\__pycache__\\options_analytics.cpython-311.pyc is OUTSIDE lease's allowed write paths; changed file sentinel\\sbx\\options_analytics.py is OUTSIDE lease's allowed write paths; changed file sentinel\\sbx\\options_flow.py is OUTSIDE lease's allowed write paths"
+        },
+        {
+          "name": "required_command:npm run typecheck",
+          "status": "failed",
+          "details": "exit 4294963238: npm error code ENOENT\nnpm error syscall open\nnpm error path C:\\Projects\\DanteFinance\\.danteforge-worktrees\\lease.dim_004.2026-05-14T17-49-23.embedded.2026-05-14T18-07-03\\package.json\nnpm error errno -"
+        },
+        {
+          "name": "required_command:npm test",
+          "status": "failed",
+          "details": "exit 4294963238: npm error code ENOENT\nnpm error syscall open\nnpm error path C:\\Projects\\DanteFinance\\.danteforge-worktrees\\lease.dim_004.2026-05-14T17-49-23.embedded.2026-05-14T18-07-03\\package.json\nnpm error errno -"
+        },
+        {
+          "name": "no_stub_scan",
+          "status": "passed",
+          "details": "no stubs detected"
+        },
+        {
+          "name": "dimension_score",
+          "status": "passed",
+          "details": "pending merge-court arbitration for dim_004"
+        }
+      ],
+      "generatedAt": "2026-05-14T18:47:09.435Z"
+    },
+    {
+      "id": "gate.lease.dim_005.2026-05-14T17-49-23.embedded.2026-05-14T18-07-08.2026-05-14T18-47-12",
+      "leaseId": "lease.dim_005.2026-05-14T17-49-23.embedded.2026-05-14T18-07-08",
+      "workPacketId": "work.dim_005.2026-05-14T17-49-23",
+      "status": "failed",
+      "checks": [
+        {
+          "name": "forbidden_paths",
+          "status": "passed",
+          "details": "no forbidden paths edited"
+        },
+        {
+          "name": "protected_paths",
+          "status": "passed",
+          "details": "no frozen paths edited"
+        },
+        {
+          "name": "lease_compliance",
+          "status": "failed",
+          "details": "changed file sentinel\\sma\\commodity_analytics.py is OUTSIDE lease's allowed write paths"
+        },
+        {
+          "name": "required_command:npm run typecheck",
+          "status": "failed",
+          "details": "exit 4294963238: npm error code ENOENT\nnpm error syscall open\nnpm error path C:\\Projects\\DanteFinance\\.danteforge-worktrees\\lease.dim_005.2026-05-14T17-49-23.embedded.2026-05-14T18-07-08\\package.json\nnpm error errno -"
+        },
+        {
+          "name": "required_command:npm test",
+          "status": "failed",
+          "details": "exit 4294963238: npm error code ENOENT\nnpm error syscall open\nnpm error path C:\\Projects\\DanteFinance\\.danteforge-worktrees\\lease.dim_005.2026-05-14T17-49-23.embedded.2026-05-14T18-07-08\\package.json\nnpm error errno -"
+        },
+        {
+          "name": "no_stub_scan",
+          "status": "passed",
+          "details": "no stubs detected"
+        },
+        {
+          "name": "dimension_score",
+          "status": "passed",
+          "details": "pending merge-court arbitration for dim_005"
+        }
+      ],
+      "generatedAt": "2026-05-14T18:47:12.521Z"
+    },
+    {
+      "id": "gate.lease.dim_006.2026-05-14T17-49-23.embedded.2026-05-14T18-07-12.2026-05-14T18-47-14",
+      "leaseId": "lease.dim_006.2026-05-14T17-49-23.embedded.2026-05-14T18-07-12",
+      "workPacketId": "work.dim_006.2026-05-14T17-49-23",
+      "status": "failed",
+      "checks": [
+        {
+          "name": "forbidden_paths",
+          "status": "passed",
+          "details": "no forbidden paths edited"
+        },
+        {
+          "name": "protected_paths",
+          "status": "passed",
+          "details": "no frozen paths edited"
+        },
+        {
+          "name": "lease_compliance",
+          "status": "failed",
+          "details": "changed file sentinel\\sfe\\fx_analytics.py is OUTSIDE lease's allowed write paths"
+        },
+        {
+          "name": "required_command:npm run typecheck",
+          "status": "failed",
+          "details": "exit 4294963238: npm error code ENOENT\nnpm error syscall open\nnpm error path C:\\Projects\\DanteFinance\\.danteforge-worktrees\\lease.dim_006.2026-05-14T17-49-23.embedded.2026-05-14T18-07-12\\package.json\nnpm error errno -"
+        },
+        {
+          "name": "required_command:npm test",
+          "status": "failed",
+          "details": "exit 4294963238: npm error code ENOENT\nnpm error syscall open\nnpm error path C:\\Projects\\DanteFinance\\.danteforge-worktrees\\lease.dim_006.2026-05-14T17-49-23.embedded.2026-05-14T18-07-12\\package.json\nnpm error errno -"
+        },
+        {
+          "name": "no_stub_scan",
+          "status": "passed",
+          "details": "no stubs detected"
+        },
+        {
+          "name": "dimension_score",
+          "status": "passed",
+          "details": "pending merge-court arbitration for dim_006"
+        }
+      ],
+      "generatedAt": "2026-05-14T18:47:14.910Z"
+    },
+    {
+      "id": "gate.lease.dim_002.2026-05-14T17-49-23.embedded.2026-05-14T18-06-50.2026-05-14T18-47-35",
+      "leaseId": "lease.dim_002.2026-05-14T17-49-23.embedded.2026-05-14T18-06-50",
+      "workPacketId": "work.dim_002.2026-05-14T17-49-23",
+      "status": "failed",
+      "checks": [
+        {
+          "name": "forbidden_paths",
+          "status": "passed",
+          "details": "no forbidden paths edited"
+        },
+        {
+          "name": "protected_paths",
+          "status": "passed",
+          "details": "no frozen paths edited"
+        },
+        {
+          "name": "lease_compliance",
+          "status": "failed",
+          "details": "changed file sentinel\\sds\\adapters\\yfinance_adapter.py is OUTSIDE lease's allowed write paths"
+        },
+        {
+          "name": "required_command:npm run typecheck",
+          "status": "failed",
+          "details": "exit 4294963238: npm error code ENOENT\nnpm error syscall open\nnpm error path C:\\Projects\\DanteFinance\\.danteforge-worktrees\\lease.dim_002.2026-05-14T17-49-23.embedded.2026-05-14T18-06-50\\package.json\nnpm error errno -"
+        },
+        {
+          "name": "required_command:npm test",
+          "status": "failed",
+          "details": "exit 4294963238: npm error code ENOENT\nnpm error syscall open\nnpm error path C:\\Projects\\DanteFinance\\.danteforge-worktrees\\lease.dim_002.2026-05-14T17-49-23.embedded.2026-05-14T18-06-50\\package.json\nnpm error errno -"
+        },
+        {
+          "name": "no_stub_scan",
+          "status": "passed",
+          "details": "no stubs detected"
+        },
+        {
+          "name": "dimension_score",
+          "status": "passed",
+          "details": "pending merge-court arbitration for dim_002"
+        }
+      ],
+      "generatedAt": "2026-05-14T18:47:35.206Z"
+    }
+  ]
+}
