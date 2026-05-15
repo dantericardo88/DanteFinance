@@ -25,8 +25,8 @@
     "qlib",
     "vectorbt"
   ],
-  "lastUpdated": "2026-05-14T22:44:02.698Z",
-  "overallSelfScore": 6,
+  "lastUpdated": "2026-05-14T23:32:36.102Z",
+  "overallSelfScore": 6.1,
   "harshComposite": 5,
   "selfComposite": 7.1,
   "annualCost": {
@@ -1181,7 +1181,7 @@
       "category": "fixed_income",
       "frequency": "medium",
       "scores": {
-        "self": 5,
+        "self": 8,
         "bloomberg": 10,
         "capiq": 10,
         "factset": 9,
@@ -1192,14 +1192,21 @@
         "qlib": 0,
         "vectorbt": 0
       },
-      "gap_to_leader": 5,
+      "gap_to_leader": 2,
       "leader": "bloomberg",
-      "gap_to_closed_source_leader": 5,
+      "gap_to_closed_source_leader": 2,
       "closed_source_leader": "bloomberg",
       "gap_to_oss_leader": 0,
-      "oss_leader": "sentinel",
+      "oss_leader": "openbb",
       "status": "in-progress",
-      "sprint_history": [],
+      "sprint_history": [
+        {
+          "dimensionId": "dim_036",
+          "before": 5,
+          "after": 8,
+          "date": "2026-05-14"
+        }
+      ],
       "next_sprint_target": 7
     },
     {
@@ -1418,7 +1425,7 @@
       "category": "macro_economics",
       "frequency": "medium",
       "scores": {
-        "self": 5,
+        "self": 7,
         "bloomberg": 9,
         "capiq": 7,
         "factset": 6,
@@ -1429,14 +1436,21 @@
         "qlib": 1,
         "vectorbt": 0
       },
-      "gap_to_leader": 4,
+      "gap_to_leader": 2,
       "leader": "bloomberg",
-      "gap_to_closed_source_leader": 4,
+      "gap_to_closed_source_leader": 2,
       "closed_source_leader": "bloomberg",
-      "gap_to_oss_leader": 1,
+      "gap_to_oss_leader": 0,
       "oss_leader": "openbb",
       "status": "in-progress",
-      "sprint_history": [],
+      "sprint_history": [
+        {
+          "dimensionId": "dim_044",
+          "before": 5,
+          "after": 7,
+          "date": "2026-05-14"
+        }
+      ],
       "next_sprint_target": 7
     },
     {
@@ -1446,7 +1460,7 @@
       "category": "macro_economics",
       "frequency": "medium",
       "scores": {
-        "self": 5,
+        "self": 7,
         "bloomberg": 7,
         "capiq": 3,
         "factset": 4,
@@ -1457,14 +1471,21 @@
         "qlib": 0,
         "vectorbt": 0
       },
-      "gap_to_leader": 2,
+      "gap_to_leader": 0,
       "leader": "bloomberg",
-      "gap_to_closed_source_leader": 2,
+      "gap_to_closed_source_leader": 0,
       "closed_source_leader": "bloomberg",
       "gap_to_oss_leader": 0,
-      "oss_leader": "sentinel",
-      "status": "in-progress",
-      "sprint_history": [],
+      "oss_leader": "openbb",
+      "status": "closed",
+      "sprint_history": [
+        {
+          "dimensionId": "dim_045",
+          "before": 5,
+          "after": 7,
+          "date": "2026-05-14"
+        }
+      ],
       "next_sprint_target": 7
     },
     {
@@ -1642,7 +1663,7 @@
       "category": "ai_nlp",
       "frequency": "medium",
       "scores": {
-        "self": 5,
+        "self": 7,
         "bloomberg": 3,
         "capiq": 2,
         "factset": 2,
@@ -1653,14 +1674,21 @@
         "qlib": 5,
         "vectorbt": 0
       },
-      "gap_to_leader": 2,
+      "gap_to_leader": 0,
       "leader": "alphasense",
-      "gap_to_closed_source_leader": 2,
+      "gap_to_closed_source_leader": 0,
       "closed_source_leader": "alphasense",
       "gap_to_oss_leader": 0,
-      "oss_leader": "sentinel",
-      "status": "in-progress",
-      "sprint_history": [],
+      "oss_leader": "qlib",
+      "status": "closed",
+      "sprint_history": [
+        {
+          "dimensionId": "dim_052",
+          "before": 5,
+          "after": 7,
+          "date": "2026-05-14"
+        }
+      ],
       "next_sprint_target": 7
     },
     {
@@ -2036,7 +2064,7 @@
       "category": "backtesting",
       "frequency": "medium",
       "scores": {
-        "self": 5,
+        "self": 7,
         "bloomberg": 3,
         "capiq": 0,
         "factset": 0,
@@ -2047,14 +2075,21 @@
         "qlib": 2,
         "vectorbt": 6
       },
-      "gap_to_leader": 1,
+      "gap_to_leader": 0,
       "leader": "vectorbt",
       "gap_to_closed_source_leader": 0,
-      "closed_source_leader": "sentinel",
-      "gap_to_oss_leader": 1,
+      "closed_source_leader": "bloomberg",
+      "gap_to_oss_leader": 0,
       "oss_leader": "vectorbt",
-      "status": "in-progress",
-      "sprint_history": [],
+      "status": "closed",
+      "sprint_history": [
+        {
+          "dimensionId": "dim_066",
+          "before": 5,
+          "after": 7,
+          "date": "2026-05-14"
+        }
+      ],
       "next_sprint_target": 7
     },
     {
@@ -2206,7 +2241,7 @@
       "category": "screening",
       "frequency": "high",
       "scores": {
-        "self": 5,
+        "self": 7,
         "bloomberg": 9,
         "capiq": 9,
         "factset": 9,
@@ -2217,14 +2252,21 @@
         "qlib": 0,
         "vectorbt": 0
       },
-      "gap_to_leader": 4,
+      "gap_to_leader": 2,
       "leader": "bloomberg",
-      "gap_to_closed_source_leader": 4,
+      "gap_to_closed_source_leader": 2,
       "closed_source_leader": "bloomberg",
       "gap_to_oss_leader": 0,
-      "oss_leader": "sentinel",
+      "oss_leader": "openbb",
       "status": "in-progress",
-      "sprint_history": [],
+      "sprint_history": [
+        {
+          "dimensionId": "dim_072",
+          "before": 5,
+          "after": 7,
+          "date": "2026-05-14"
+        }
+      ],
       "next_sprint_target": 7
     },
     {
@@ -2297,7 +2339,7 @@
       "category": "screening",
       "frequency": "high",
       "scores": {
-        "self": 5,
+        "self": 7,
         "bloomberg": 3,
         "capiq": 0,
         "factset": 0,
@@ -2308,14 +2350,21 @@
         "qlib": 0,
         "vectorbt": 4
       },
-      "gap_to_leader": 1,
+      "gap_to_leader": 0,
       "leader": "openbb",
       "gap_to_closed_source_leader": 0,
-      "closed_source_leader": "sentinel",
-      "gap_to_oss_leader": 1,
+      "closed_source_leader": "bloomberg",
+      "gap_to_oss_leader": 0,
       "oss_leader": "openbb",
-      "status": "in-progress",
-      "sprint_history": [],
+      "status": "closed",
+      "sprint_history": [
+        {
+          "dimensionId": "dim_075",
+          "before": 5,
+          "after": 7,
+          "date": "2026-05-14"
+        }
+      ],
       "next_sprint_target": 7
     },
     {
@@ -2577,7 +2626,7 @@
       "category": "alt_data",
       "frequency": "medium",
       "scores": {
-        "self": 5,
+        "self": 7,
         "bloomberg": 3,
         "capiq": 1,
         "factset": 1,
@@ -2589,13 +2638,20 @@
         "vectorbt": 0
       },
       "gap_to_leader": 0,
-      "leader": "sentinel",
+      "leader": "bloomberg",
       "gap_to_closed_source_leader": 0,
-      "closed_source_leader": "sentinel",
+      "closed_source_leader": "bloomberg",
       "gap_to_oss_leader": 0,
-      "oss_leader": "sentinel",
-      "status": "in-progress",
-      "sprint_history": [],
+      "oss_leader": "openbb",
+      "status": "closed",
+      "sprint_history": [
+        {
+          "dimensionId": "dim_085",
+          "before": 5,
+          "after": 7,
+          "date": "2026-05-14"
+        }
+      ],
       "next_sprint_target": 7
     },
     {
