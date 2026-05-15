@@ -1,5 +1,8 @@
 {
   "permissions": {
-    "defaultMode": "bypassPermissions"
+    "defaultMode": "bypassPermissions",
+    "allow": [
+      "Bash(powershell -Command \"\\(Get-Content 'C:\\\\Projects\\\\DanteFinance\\\\sentinel\\\\sbx\\\\fundamental_screener.py'\\).Count; \\(Get-Content 'C:\\\\Projects\\\\DanteFinance\\\\sentinel\\\\sbx\\\\technical_screener_enhanced.py'\\).Count\")"
+    ]
   }
 }

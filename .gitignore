@@ -13,3 +13,11 @@ test_output.*
 test-output.*
 test-run*.log
 # DanteForge agent hygiene end
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Local Claude settings
+.claude/settings.local.json
