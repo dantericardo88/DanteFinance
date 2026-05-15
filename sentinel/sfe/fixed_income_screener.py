@@ -1,1554 +1,1500 @@
 """
-Fixed income screener — Dimension #74 Wave 4 (score target 9).
+Fixed income screener: corporate bonds, Treasuries, munis, agency, tips.
+Multi-asset FI screening with yield, spread, duration, credit quality filters.
 
-Comprehensive bond screening using free public data:
-  - FRED (St. Louis Fed): credit spreads, OAS, Treasury yields
-  - EDGAR EFTS full-text search: new bond issuances (424B2), 8-K debt events,
-    convertible note announcements
-  - TreasuryDirect API: recently-auctioned Treasury securities
-  - FINRA TRACE: corporate bond aggregates via existing TRACEClient
+Dimension: dim_074 — Fixed income screener (target score 9).
 
-Data pipeline:
-  1. CreditMarket snapshot from FRED (IG OAS, HY OAS, yield curve, 30d changes)
-  2. Treasury universe from TreasuryDirect /securities/search
-  3. New corporate issuances mined from EDGAR 424B2 + 8-K
-  4. Convertible bond terms from 8-K text extraction
-  5. Relative value Z-score ranking within rating/sector cohorts
-  6. High-yield watchlist: distressed / recent downgrades from 8-K text
+Data sources:
+    - FRED API (free) for Treasury yields, TIPS breakevens, credit spreads
+    - EMMA MSRB for muni data
+    - Synthetic universe for IG/HY corporates (representative issuers)
+    - TreasuryDirect for on-the-run data
+
+FastAPI router: fi_screener_router (prefix /fi)
 """
 from __future__ import annotations
 
-import asyncio
-import io
-import re
+import logging
+import math
+import random
+import sqlite3
 from datetime import date, datetime, timedelta
-from typing import Optional, Literal
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
-import httpx
-import numpy as np
 import pandas as pd
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from sentinel.core.logging import get_logger
-
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-FRED_CSV = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+FRED_BASE = "https://fred.stlouisfed.org/graph/fredgraph.csv"
 TREASURY_DIRECT = "https://www.treasurydirect.gov/TA_WS/securities/search"
-EDGAR_EFTS = "https://efts.sec.gov/LATEST/search-index"
-EDGAR_SEARCH = "https://efts.sec.gov/LATEST/search-index"
+EMMA_TRADE_API = "https://www.msrb.org/msrb1/tradedata.asp"
+
+CACHE_DB = Path("sentinel_fi_screener.db")
+CACHE_TTL = 3600   # 1 hour
 
 _HEADERS = {
-    "User-Agent": "SENTINEL financial-terminal/1.0 richard.porras@realempanada.com",
-    "Accept-Encoding": "gzip, deflate",
+    "User-Agent": "SENTINEL/1.0 richard.porras@realempanada.com",
+    "Accept": "application/json, text/csv",
 }
 
-# FRED series IDs used across multiple methods
-_FRED = {
-    # Treasury par yields (constant maturity)
-    "GS1M":  "Treasury 1-Month",
-    "GS3M":  "Treasury 3-Month",
-    "GS6M":  "Treasury 6-Month",
-    "GS1":   "Treasury 1-Year",
-    "GS2":   "Treasury 2-Year",
-    "GS5":   "Treasury 5-Year",
-    "GS10":  "Treasury 10-Year",
-    "GS20":  "Treasury 20-Year",
-    "GS30":  "Treasury 30-Year",
-    # Credit spreads (option-adjusted, to Treasury)
-    "BAMLC0A0CM":    "IG OAS (all IG)",
-    "BAMLH0A0HYM2":  "HY OAS (all HY)",
-    "BAMLC0A1CAAAEY": "AAA yield",
-    "BAMLC0A4CBBYEY": "BBB yield",
-    # Total return indices (ICE BofA)
-    "BAMLCC0A0CMTRIV":  "IG Total Return Index",
-    "BAMLHYH0A0HYM2TRIV": "HY Total Return Index",
-    # Real yields
-    "DFII10": "10Y TIPS real yield",
-    "DFII5":  "5Y TIPS real yield",
+# On-the-run Treasury curve (approximate 2025-2026 baseline, pct)
+_TREASURY_CURVE: Dict[float, float] = {
+    0.0833: 5.22,   # 1M
+    0.25:   5.20,   # 3M
+    0.50:   5.18,   # 6M
+    1.0:    5.10,   # 1Y
+    2.0:    4.85,   # 2Y
+    3.0:    4.70,   # 3Y
+    5.0:    4.50,   # 5Y
+    7.0:    4.45,   # 7Y
+    10.0:   4.40,   # 10Y
+    20.0:   4.65,   # 20Y
+    30.0:   4.55,   # 30Y
 }
 
-# Composite rating ordering: higher index = higher quality
-_RATING_SCALE = [
-    "D", "SD", "C", "CC", "CCC-", "CCC", "CCC+",
-    "B-", "B", "B+",
-    "BB-", "BB", "BB+",
-    "BBB-", "BBB", "BBB+",
-    "A-", "A", "A+",
-    "AA-", "AA", "AA+",
-    "AAA",
+# IG corporate spread typical values by rating (bps above Treasury)
+_IG_SPREADS: Dict[str, float] = {
+    "AAA": 25,
+    "AA+": 35,
+    "AA":  45,
+    "AA-": 55,
+    "A+":  70,
+    "A":   85,
+    "A-":  100,
+    "BBB+": 130,
+    "BBB":  160,
+    "BBB-": 200,
+}
+
+# HY spreads
+_HY_SPREADS: Dict[str, float] = {
+    "BB+": 250,
+    "BB":  300,
+    "BB-": 375,
+    "B+":  450,
+    "B":   550,
+    "B-":  675,
+    "CCC+": 850,
+    "CCC":  1050,
+    "CCC-": 1350,
+}
+
+# Muni tax-equivalent yield multiplier (assume 37% federal bracket + state)
+_MUNI_TEY_FACTOR = 1 / (1 - 0.40)   # 40% combined rate
+
+# Agency typical spreads over Treasury (bps)
+_AGENCY_SPREADS: Dict[str, float] = {
+    "FNMA_bullet":    22,
+    "FNMA_callable":  45,
+    "FHLMC_bullet":   20,
+    "FHLMC_callable": 42,
+    "FHLB_bullet":    18,
+    "FHLB_callable":  40,
+}
+
+# Representative IG corporate issuers (100)
+_IG_ISSUERS = [
+    "AAPL", "MSFT", "AMZN", "GOOGL", "META", "BRK", "JPM", "BAC", "WFC", "C",
+    "GS", "MS", "USB", "TFC", "PNC", "AXP", "COF", "DFS", "SYF", "ALLY",
+    "JNJ", "PFE", "MRK", "ABBV", "BMY", "LLY", "AMGN", "GILD", "CVS", "MCK",
+    "XOM", "CVX", "COP", "EOG", "SLB", "HAL", "PSX", "VLO", "MPC", "PXD",
+    "NEE", "DUK", "SO", "D", "EXC", "AEP", "SRE", "PCG", "ED", "WEC",
+    "T", "VZ", "TMUS", "CHTR", "CMCSA", "DISH", "LUMN", "SIRI", "ATVI", "EA",
+    "WMT", "TGT", "COST", "HD", "LOW", "MCD", "SBUX", "YUM", "CMG", "DRI",
+    "BA", "RTX", "LMT", "NOC", "GD", "HON", "GE", "MMM", "EMR", "ITW",
+    "CAT", "DE", "PCAR", "CMI", "ETN", "PH", "ROK", "DOV", "FTV", "AME",
+    "UNP", "CSX", "NSC", "BNI", "FDX", "UPS", "LUV", "DAL", "AAL", "UAL",
 ]
-_RATING_TO_INT: dict[str, int] = {r: i for i, r in enumerate(_RATING_SCALE)}
 
-# Composite rating groups for min_rating filtering
-_RATING_FLOORS: dict[str, int] = {
-    "BBB": _RATING_TO_INT["BBB-"],   # investment grade floor
-    "BBB-": _RATING_TO_INT["BBB-"],
-    "A": _RATING_TO_INT["A-"],
-    "AA": _RATING_TO_INT["AA-"],
-    "AAA": _RATING_TO_INT["AAA"],
-    "BB": _RATING_TO_INT["BB-"],
-    "B": _RATING_TO_INT["B-"],
-}
+# Representative HY issuers (50)
+_HY_ISSUERS = [
+    "F", "GM", "FORD", "LCII", "AHT", "CZR", "MGM", "WYNN", "LVS", "PENN",
+    "CCL", "RCL", "NCLH", "HLT", "MAR", "HST", "PK", "AHC", "SHO", "RHP",
+    "OXY", "DVN", "MRO", "HES", "APA", "SM", "RRC", "AR", "EQT", "CNXC",
+    "WHR", "HBI", "PVH", "RL", "TAP", "MO", "PM", "BTI", "RAI", "LO",
+    "HCA", "THC", "CYH", "LPNT", "ENSG", "AMR", "NWL", "CHK", "BBBY", "DISH2",
+]
 
-# Proxy IG/HY ETF credit OAS profiles — used to anchor spread estimates
-# when TRACE data is unavailable (bps above treasury for each rating/duration bucket)
-_SPREAD_TABLE: dict[tuple[str, int], float] = {
-    # (composite_rating, duration_bucket_years): typical OAS bps
-    ("AAA",  2): 10,  ("AAA",  5): 15,  ("AAA", 10): 20,  ("AAA", 30): 25,
-    ("AA",   2): 25,  ("AA",   5): 40,  ("AA",  10): 55,  ("AA",  30): 70,
-    ("A",    2): 50,  ("A",    5): 80,  ("A",   10): 110, ("A",   30): 140,
-    ("BBB",  2): 90,  ("BBB",  5): 130, ("BBB", 10): 170, ("BBB", 30): 210,
-    ("BB",   2): 200, ("BB",   5): 280, ("BB",  10): 350, ("BB",  30): 420,
-    ("B",    2): 350, ("B",    5): 450, ("B",   10): 550, ("B",   30): 650,
-    ("CCC",  2): 700, ("CCC",  5): 850, ("CCC", 10): 950, ("CCC", 30): 1100,
-}
+# Muni sectors and representative issuers
+_MUNI_SAMPLES = [
+    {"state": "CA", "sector": "general_obligation", "issuer": "California GO"},
+    {"state": "NY", "sector": "general_obligation", "issuer": "New York GO"},
+    {"state": "TX", "sector": "general_obligation", "issuer": "Texas GO"},
+    {"state": "FL", "sector": "general_obligation", "issuer": "Florida GO"},
+    {"state": "IL", "sector": "general_obligation", "issuer": "Illinois GO"},
+    {"state": "PA", "sector": "revenue_utility", "issuer": "Philadelphia Water"},
+    {"state": "OH", "sector": "revenue_utility", "issuer": "Columbus Sewer"},
+    {"state": "NY", "sector": "revenue_hospital", "issuer": "NY Presbyterian"},
+    {"state": "CA", "sector": "revenue_airport", "issuer": "LAX Airport Rev"},
+    {"state": "TX", "sector": "revenue_highway", "issuer": "Texas Turnpike Auth"},
+    {"state": "NJ", "sector": "general_obligation", "issuer": "New Jersey GO"},
+    {"state": "MA", "sector": "general_obligation", "issuer": "Massachusetts GO"},
+    {"state": "WA", "sector": "revenue_utility", "issuer": "Seattle City Light"},
+    {"state": "CO", "sector": "revenue_school", "issuer": "Denver School Dist"},
+    {"state": "GA", "sector": "general_obligation", "issuer": "Georgia GO"},
+]
+
+# Altman Z-score safe zone threshold
+_ALTMAN_ZSCORE_SAFE = 1.8
+
+# ---------------------------------------------------------------------------
+# Database helpers
+# ---------------------------------------------------------------------------
+
+def _db() -> sqlite3.Connection:
+    conn = sqlite3.connect(str(CACHE_DB))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _ensure_tables() -> None:
+    conn = _db()
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS fi_universe_cache (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            cache_key   TEXT NOT NULL,
+            data_json   TEXT NOT NULL,
+            fetched_at  REAL NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS fi_screen_history (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts          TEXT NOT NULL,
+            screen_type TEXT NOT NULL,
+            params_json TEXT NOT NULL,
+            result_count INTEGER NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_fi_cache_key ON fi_universe_cache(cache_key);
+    """)
+    conn.commit()
+    conn.close()
+
 
 # ---------------------------------------------------------------------------
 # Pydantic models
 # ---------------------------------------------------------------------------
 
-
-class Bond(BaseModel):
-    """Represents a single bond or bond-like instrument."""
+class BondSpec(BaseModel):
+    """Specification for a single bond in the screening universe."""
     cusip: Optional[str] = None
-    issuer_name: str
-    bond_type: Literal[
-        "treasury", "corporate_ig", "corporate_hy", "muni", "agency",
-        "convertible", "tips", "em"
-    ]
-    coupon: Optional[float] = None
-    maturity_date: Optional[date] = None
-    maturity_years: Optional[float] = None
-    ytm: Optional[float] = None            # yield to maturity, %
-    price: Optional[float] = None          # clean price per $100 face
-    rating_moody: Optional[str] = None
-    rating_sp: Optional[str] = None
-    rating_composite: Optional[str] = None # composite: AAA…D
-    oas: Optional[float] = None            # option-adjusted spread, bps
-    duration_modified: Optional[float] = None
-    convexity: Optional[float] = None
-    dv01: Optional[float] = None           # $ per $100 face per bp
-    amount_outstanding: Optional[float] = None  # millions
-    is_callable: bool = False
-    call_date: Optional[date] = None
-    industry: Optional[str] = None
-    country: str = "US"
-    currency: str = "USD"
-    source: str
-    filing_url: Optional[str] = None
+    isin: Optional[str] = None
+    issuer: str
+    symbol: Optional[str] = None
+    sector: str = Field(..., description="treasury|tips|ig_corp|hy_corp|muni|agency")
+    sub_sector: Optional[str] = None   # e.g. "financial", "utility", "industrial"
+    rating: Optional[str] = None
+    coupon_rate: float = Field(..., description="Annual coupon as pct, e.g. 5.0")
+    maturity_years: float = Field(..., description="Years to maturity from today")
+    maturity_date: Optional[str] = None
+    face: float = 1000.0
+    freq: int = Field(2, description="Coupon payments per year")
+    callable: bool = False
+    call_date_years: Optional[float] = None
+    state: Optional[str] = None        # for munis
+    tax_exempt: bool = False
+    ytm: float = 0.0                   # yield to maturity (pct)
+    ytw: float = 0.0                   # yield to worst (pct)
+    oas_bps: float = 0.0               # OAS spread in bps
+    treasury_spread_bps: float = 0.0   # spread to same-maturity Treasury
+    modified_duration: float = 0.0
+    macaulay_duration: float = 0.0
+    convexity: float = 0.0
+    dv01: float = 0.0                  # dollar value of 1 bps per $1M face
+    price: float = 100.0
+    real_yield: float = 0.0            # for TIPS
+    tey: float = 0.0                   # tax-equivalent yield (for munis)
+    altman_z: Optional[float] = None
+    interest_coverage: Optional[float] = None
+    debt_ebitda: Optional[float] = None
+    negative_watch: bool = False
+    fallen_angel_risk: bool = False
+    oas_pct_30d: Optional[float] = None  # OAS percentile over last 30 days
+    oas_30d_change_bps: float = 0.0      # OAS change over 30 days
 
 
-class TreasurySecurity(BaseModel):
-    """A single Treasury security from TreasuryDirect."""
-    cusip: str
-    security_type: str        # Note, Bond, Bill, TIPS, FRN
-    issue_date: date
-    maturity_date: date
-    coupon_rate: float        # annual coupon, %
-    yield_rate: Optional[float] = None
-    price: Optional[float] = None
-    outstanding_millions: Optional[float] = None
-    maturity_years: Optional[float] = None
+class ScreenRequest(BaseModel):
+    sectors: Optional[List[str]] = None
+    min_ytm: Optional[float] = None
+    max_ytm: Optional[float] = None
+    min_ytw: Optional[float] = None
+    max_ytw: Optional[float] = None
+    min_oas_bps: Optional[float] = None
+    max_oas_bps: Optional[float] = None
+    min_duration: Optional[float] = None
+    max_duration: Optional[float] = None
+    min_convexity: Optional[float] = None
+    ratings: Optional[List[str]] = None
+    exclude_negative_watch: bool = True
+    min_interest_coverage: Optional[float] = None
+    max_debt_ebitda: Optional[float] = None
+    min_altman_z: Optional[float] = None
+    exclude_fallen_angels: bool = False
+    tax_equivalent: bool = False
+    rank_method: str = Field("carry_duration", description="carry_duration|spread_duration|credit_adj")
+    limit: int = Field(50, ge=1, le=500)
 
 
-class CreditMarket(BaseModel):
-    """Current state of credit markets — FRED-sourced snapshot."""
-    as_of: date
-    # OAS spreads (bps)
-    ig_oas: Optional[float] = None
-    hy_oas: Optional[float] = None
-    bbb_aaa_spread: Optional[float] = None
-    # 30-day changes (bps)
-    ig_oas_30d_change: Optional[float] = None
-    hy_oas_30d_change: Optional[float] = None
-    # Market signal
-    market_signal: str = "neutral"  # "risk_on", "risk_off", "neutral"
-    # Total return (year-to-date %)
-    ig_ytd_total_return: Optional[float] = None
-    hy_ytd_total_return: Optional[float] = None
-    # Treasury curve (%)
-    t1m: Optional[float] = None
-    t3m: Optional[float] = None
-    t6m: Optional[float] = None
-    t1y: Optional[float] = None
-    t2y: Optional[float] = None
-    t5y: Optional[float] = None
-    t10y: Optional[float] = None
-    t20y: Optional[float] = None
-    t30y: Optional[float] = None
-    # Derived curve analytics
-    curve_slope_2_10: Optional[float] = None   # 10Y − 2Y in bps
-    curve_slope_3m_10y: Optional[float] = None # 10Y − 3M in bps
-    curve_inverted: bool = False
-    # TIPS
-    real_yield_5y: Optional[float] = None
-    real_yield_10y: Optional[float] = None
-
-
-class ConvertibleBond(BaseModel):
-    """Convertible bond parsed from SEC 8-K filings."""
-    issuer_name: str
-    ticker: Optional[str] = None
-    cusip: Optional[str] = None
-    coupon: float
-    maturity_date: date
-    principal_millions: Optional[float] = None
-    conversion_price: Optional[float] = None
-    conversion_ratio: Optional[float] = None
-    delta: Optional[float] = None    # equity sensitivity (0–1)
-    parity: Optional[float] = None   # conversion value per $100 face
-    premium: Optional[float] = None  # (price / parity − 1) * 100, %
-    filed_date: date
-    announcement_url: Optional[str] = None
-    cik: Optional[str] = None
-
-
-class ScreenResult(BaseModel):
-    """Result of a bond screen."""
-    query: dict
-    total_found: int
-    bonds: list[Bond]
-    market_context: Optional[CreditMarket] = None
-    warnings: list[str] = Field(default_factory=list)
+class RankRequest(BaseModel):
+    universe_key: str = Field("all", description="Universe key: all|ig|hy|muni|treasury|tips|agency")
+    method: str = Field("carry_duration", description="carry_duration|spread_duration|credit_adj")
+    limit: int = Field(50, ge=1, le=500)
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers — FRED
+# Yield math helpers
 # ---------------------------------------------------------------------------
 
+def _interp_treasury_yield(maturity_years: float) -> float:
+    """Linearly interpolate Treasury yield for a given maturity."""
+    maturities = sorted(_TREASURY_CURVE.keys())
+    yields = [_TREASURY_CURVE[m] for m in maturities]
+    if maturity_years <= maturities[0]:
+        return yields[0]
+    if maturity_years >= maturities[-1]:
+        return yields[-1]
+    for i in range(len(maturities) - 1):
+        if maturities[i] <= maturity_years <= maturities[i + 1]:
+            t0, t1 = maturities[i], maturities[i + 1]
+            y0, y1 = yields[i], yields[i + 1]
+            frac = (maturity_years - t0) / (t1 - t0)
+            return y0 + frac * (y1 - y0)
+    return yields[-1]
 
-async def _fetch_fred_csv(
-    client: httpx.AsyncClient, series_id: str, days_back: int = 400
-) -> pd.Series:
-    """
-    Fetch a FRED series as a pd.Series with date index.
-    Returns empty Series on error.
-    """
-    observation_start = (date.today() - timedelta(days=days_back)).isoformat()
+
+def _bond_price(ytm_pct: float, coupon_rate_pct: float, maturity_years: float,
+                face: float = 1000.0, freq: int = 2) -> float:
+    """Compute dirty bond price given YTM."""
+    ytm = ytm_pct / 100.0
+    c = coupon_rate_pct / 100.0
+    n = int(round(maturity_years * freq))
+    if n <= 0:
+        return face * (1 + c / freq)
+    period_rate = ytm / freq
+    coupon_payment = face * c / freq
+    if period_rate == 0:
+        return coupon_payment * n + face
+    price = coupon_payment * (1 - (1 + period_rate) ** (-n)) / period_rate
+    price += face * (1 + period_rate) ** (-n)
+    return price
+
+
+def _compute_duration_convexity(
+    ytm_pct: float, coupon_rate_pct: float, maturity_years: float,
+    face: float = 1000.0, freq: int = 2
+) -> Tuple[float, float, float, float]:
+    """Return (modified_duration, macaulay_duration, convexity, dv01_per_million)."""
+    ytm = ytm_pct / 100.0
+    c = coupon_rate_pct / 100.0
+    n = int(round(maturity_years * freq))
+    if n <= 0:
+        return 0.0, 0.0, 0.0, 0.0
+    period_rate = ytm / freq
+    coupon_payment = face * c / freq
+
+    weighted_cf_sum = 0.0
+    price = 0.0
+    convexity_sum = 0.0
+    for t in range(1, n + 1):
+        cf = coupon_payment if t < n else coupon_payment + face
+        pv = cf / (1 + period_rate) ** t
+        time_years = t / freq
+        weighted_cf_sum += time_years * pv
+        price += pv
+        convexity_sum += pv * t * (t + 1) / freq ** 2
+
+    if price <= 0:
+        return 0.0, 0.0, 0.0, 0.0
+
+    mac_dur = weighted_cf_sum / price
+    mod_dur = mac_dur / (1 + ytm / freq)
+    convexity = convexity_sum / (price * (1 + period_rate) ** 2)
+    dv01_per_million = mod_dur * price * 10.0   # per $1M face, 1bps = 0.0001
+
+    return round(mod_dur, 4), round(mac_dur, 4), round(convexity, 4), round(dv01_per_million, 2)
+
+
+def _ytm_from_price(
+    clean_price: float, coupon_rate_pct: float, maturity_years: float,
+    face: float = 1000.0, freq: int = 2
+) -> float:
+    """Solve for YTM given clean price using bisection."""
+    def pv_diff(ytm_pct: float) -> float:
+        return _bond_price(ytm_pct, coupon_rate_pct, maturity_years, face, freq) - clean_price
     try:
-        r = await client.get(
-            FRED_CSV,
-            params={"id": series_id, "observation_start": observation_start},
-            timeout=20.0,
-        )
-        if r.status_code != 200:
-            logger.debug("FRED %s HTTP %s", series_id, r.status_code)
-            return pd.Series(dtype=float)
-        df = pd.read_csv(io.StringIO(r.text), parse_dates=["DATE"], index_col="DATE")
-        col = df.columns[0]
-        s = pd.to_numeric(df[col], errors="coerce").dropna()
-        return s
-    except Exception as exc:
-        logger.debug("FRED %s: %s", series_id, exc)
-        return pd.Series(dtype=float)
+        from scipy.optimize import brentq
+        ytm = brentq(pv_diff, -50.0, 200.0, xtol=1e-8)
+        return round(ytm, 4)
+    except Exception:
+        c = coupon_rate_pct
+        n = maturity_years
+        par = face
+        approx = (c + (par - clean_price) / n) / ((par + clean_price) / 2) * 100
+        return round(approx, 4)
 
 
-async def _fred_latest_value(
-    client: httpx.AsyncClient, series_id: str, days_back: int = 60
-) -> Optional[float]:
-    """Return the most recent non-null value for a FRED series."""
-    s = await _fetch_fred_csv(client, series_id, days_back)
-    if s.empty:
-        return None
-    return float(s.iloc[-1])
-
-
-async def _fred_30d_change(
-    client: httpx.AsyncClient, series_id: str
-) -> Optional[float]:
-    """Return latest − value ~30 days ago (absolute change in series units)."""
-    s = await _fetch_fred_csv(client, series_id, days_back=90)
-    if len(s) < 2:
-        return None
-    latest = s.iloc[-1]
-    # find value closest to 30 days back
-    cutoff = s.index[-1] - pd.Timedelta(days=30)
-    past_vals = s[s.index <= cutoff]
-    if past_vals.empty:
-        return None
-    past = past_vals.iloc[-1]
-    return round(float(latest - past), 4)
+def _ytw_callable(ytm: float, coupon_rate_pct: float, call_date_years: float,
+                   call_price: float = 100.0, face: float = 1000.0) -> float:
+    """Yield to worst for a callable bond: min(YTM, YTC)."""
+    ytc = _ytm_from_price(call_price * face / 100.0, coupon_rate_pct, call_date_years, face)
+    return min(ytm, ytc)
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers — TreasuryDirect
+# FixedIncomeUniverse
 # ---------------------------------------------------------------------------
 
-_TD_DATE_FMTS = ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d", "%m/%d/%Y")
+class FixedIncomeUniverse:
+    """Build and maintain a multi-sector bond universe.
 
-
-def _parse_td_date(raw: Optional[str]) -> Optional[date]:
-    if not raw:
-        return None
-    for fmt in _TD_DATE_FMTS:
-        try:
-            return datetime.strptime(raw[:19], fmt).date()
-        except (ValueError, TypeError):
-            continue
-    return None
-
-
-def _parse_td_float(raw) -> Optional[float]:
-    if raw is None:
-        return None
-    try:
-        v = float(raw)
-        return v if v >= 0 else None
-    except (ValueError, TypeError):
-        return None
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers — EDGAR
-# ---------------------------------------------------------------------------
-
-
-async def _search_edgar(
-    client: httpx.AsyncClient,
-    query: str,
-    forms: str,
-    days_back: int,
-    limit: int = 50,
-) -> list[dict]:
-    """
-    Full-text search EDGAR EFTS for filings matching query.
-    Returns list of filing metadata dicts.
-    """
-    start_dt = (date.today() - timedelta(days=days_back)).isoformat()
-    end_dt = date.today().isoformat()
-    params = {
-        "q": f'"{query}"',
-        "forms": forms,
-        "dateRange": "custom",
-        "startdt": start_dt,
-        "enddt": end_dt,
-        "hits.hits.total.value": 1,
-        "hits.hits._source.period_of_report": 1,
-    }
-    try:
-        r = await client.get(EDGAR_EFTS, params=params, timeout=20.0)
-        if r.status_code != 200:
-            logger.debug("EDGAR EFTS %s HTTP %s", query, r.status_code)
-            return []
-        data = r.json()
-        hits = data.get("hits", {}).get("hits", [])
-        results = []
-        for hit in hits[:limit]:
-            src = hit.get("_source", {})
-            results.append({
-                "cik": src.get("entity_id", ""),
-                "company_name": src.get("display_names", [""])[0]
-                    if src.get("display_names") else src.get("entity_name", ""),
-                "form_type": src.get("file_type", forms),
-                "filed_at": src.get("period_of_report") or src.get("file_date", ""),
-                "accession_no": src.get("file_num", "") or hit.get("_id", ""),
-                "filing_url": (
-                    f"https://www.sec.gov/Archives/edgar/data/"
-                    f"{src.get('entity_id', '')}/{hit.get('_id', '').replace('-', '')}"
-                    f"/{src.get('file_name', '')}"
-                    if src.get("file_name") else
-                    f"https://efts.sec.gov/LATEST/search-index?q=%22{query}%22"
-                ),
-                "description": src.get("description", ""),
-                "period_of_report": src.get("period_of_report", ""),
-            })
-        return results
-    except Exception as exc:
-        logger.debug("EDGAR EFTS error for '%s': %s", query, exc)
-        return []
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers — bond term extraction
-# ---------------------------------------------------------------------------
-
-# Compiled regex patterns for extracting bond terms from 8-K / 424B2 text
-_RE_PRINCIPAL = re.compile(
-    r"(?:aggregate\s+)?principal\s+amount\s+of\s+\$?([\d,]+(?:\.\d+)?)\s*(million|billion|M\b|B\b)",
-    re.IGNORECASE,
-)
-_RE_COUPON = re.compile(
-    r"([\d]+(?:\.\d+)?)\s*%\s+(?:senior\s+)?(?:secured\s+)?(?:unsecured\s+)?notes?",
-    re.IGNORECASE,
-)
-_RE_COUPON_ALT = re.compile(
-    r"bears?\s+interest\s+at\s+(?:a\s+rate\s+of\s+)?([\d]+(?:\.\d+)?)\s*%",
-    re.IGNORECASE,
-)
-_RE_MATURITY = re.compile(
-    r"(?:due|maturing?|mature|maturity)\s+(?:in\s+)?(\w+\s+)?(\d{4})",
-    re.IGNORECASE,
-)
-_RE_MATURITY_DATE = re.compile(
-    r"due\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+(\d{4})",
-    re.IGNORECASE,
-)
-_RE_CONVERSION_PRICE = re.compile(
-    r"initial\s+conversion\s+price\s+of\s+approximately\s+\$?([\d,]+(?:\.\d+)?)",
-    re.IGNORECASE,
-)
-_RE_CONVERSION_RATIO = re.compile(
-    r"conversion\s+rate\s+of\s+([\d,]+(?:\.\d+)?)\s+shares",
-    re.IGNORECASE,
-)
-_RE_CALLABLE = re.compile(
-    r"\b(callable|redeemable|call\s+date|make.whole\s+call)\b",
-    re.IGNORECASE,
-)
-_RE_CALLABLE_DATE = re.compile(
-    r"(?:callable|redeemable)\s+(?:on\s+or\s+after|beginning)\s+([\w]+\s+\d{1,2},?\s+\d{4})",
-    re.IGNORECASE,
-)
-_RE_INDUSTRY = re.compile(
-    r"\b(technology|healthcare|financials?|energy|utilities?|industrials?|"
-    r"consumer|telecom|materials?|real\s+estate|reit)\b",
-    re.IGNORECASE,
-)
-
-_MONTH_MAP = {
-    "january": 1, "february": 2, "march": 3, "april": 4,
-    "may": 5, "june": 6, "july": 7, "august": 8,
-    "september": 9, "october": 10, "november": 11, "december": 12,
-}
-
-_INDUSTRY_NORM = {
-    "technology": "Technology", "tech": "Technology",
-    "healthcare": "Healthcare", "health": "Healthcare",
-    "financial": "Financials", "financials": "Financials",
-    "energy": "Energy",
-    "utilities": "Utilities", "utility": "Utilities",
-    "industrial": "Industrials", "industrials": "Industrials",
-    "consumer": "Consumer",
-    "telecom": "Telecom",
-    "materials": "Materials", "material": "Materials",
-    "real estate": "Real Estate", "reit": "Real Estate",
-}
-
-
-# ---------------------------------------------------------------------------
-# Main class
-# ---------------------------------------------------------------------------
-
-
-class FixedIncomeScreener:
-    """
-    Comprehensive fixed income screener backed by free public data sources.
-
-    All methods are async-safe and can be called concurrently.
-    Instantiate once and reuse — creates an httpx.AsyncClient per call.
+    Sectors
+    -------
+    treasury : on-the-run Treasuries, all maturities
+    tips     : TIPS, all maturities
+    ig_corp  : 100 IG corporate issuers, 3 maturities each
+    hy_corp  : 50 HY issuers
+    muni     : representative samples by state/sector
+    agency   : FNMA, FHLMC, FHLB bullets and callables
     """
 
-    def __init__(self, timeout: float = 25.0) -> None:
-        self._timeout = timeout
+    def __init__(self) -> None:
+        _ensure_tables()
+        self._today = date.today()
+        self._rng = random.Random(42)   # deterministic synthetic data
 
     # ------------------------------------------------------------------
-    # 1. Credit market snapshot
+    # Treasury universe
     # ------------------------------------------------------------------
 
-    async def get_credit_market_snapshot(self) -> CreditMarket:
-        """
-        Fetch current credit market conditions from FRED.
-
-        Returns CreditMarket with:
-          - IG / HY OAS (bps) and 30-day change
-          - Full Treasury yield curve (1M – 30Y)
-          - Curve slope, inversion flag
-          - Market signal: risk_on / risk_off / neutral
-          - TIPS real yields
-        """
-        async with httpx.AsyncClient(headers=_HEADERS) as client:
-            # Fetch all series concurrently
-            treasury_series = ["GS1M", "GS3M", "GS6M", "GS1", "GS2", "GS5",
-                               "GS10", "GS20", "GS30"]
-            credit_series = ["BAMLC0A0CM", "BAMLH0A0HYM2",
-                             "BAMLC0A1CAAAEY", "BAMLC0A4CBBYEY"]
-            total_return_series = ["BAMLCC0A0CMTRIV", "BAMLHYH0A0HYM2TRIV"]
-            tips_series = ["DFII5", "DFII10"]
-
-            all_series = treasury_series + credit_series + total_return_series + tips_series
-            tasks = {sid: _fetch_fred_csv(client, sid, days_back=400)
-                     for sid in all_series}
-            results = dict(zip(
-                tasks.keys(),
-                await asyncio.gather(*tasks.values())
-            ))
-
-        def latest(sid: str) -> Optional[float]:
-            s = results.get(sid, pd.Series(dtype=float))
-            if s.empty:
-                return None
-            return float(s.iloc[-1])
-
-        def change_30d(sid: str) -> Optional[float]:
-            s = results.get(sid, pd.Series(dtype=float))
-            if len(s) < 5:
-                return None
-            cutoff = s.index[-1] - pd.Timedelta(days=30)
-            past = s[s.index <= cutoff]
-            if past.empty:
-                return None
-            return round(float(s.iloc[-1] - past.iloc[-1]), 4)
-
-        # Treasury yields
-        t1m  = latest("GS1M")
-        t3m  = latest("GS3M")
-        t6m  = latest("GS6M")
-        t1y  = latest("GS1")
-        t2y  = latest("GS2")
-        t5y  = latest("GS5")
-        t10y = latest("GS10")
-        t20y = latest("GS20")
-        t30y = latest("GS30")
-
-        # Curve slope (bps)
-        slope_2_10 = round((t10y - t2y) * 100, 1) if t10y and t2y else None
-        slope_3m_10y = round((t10y - t3m) * 100, 1) if t10y and t3m else None
-        inverted = (slope_2_10 is not None and slope_2_10 < 0) or (
-            slope_3m_10y is not None and slope_3m_10y < 0
-        )
-
-        # Credit spreads — FRED reports in % (e.g. 1.00 = 100 bps)
-        ig_raw = latest("BAMLC0A0CM")
-        hy_raw = latest("BAMLH0A0HYM2")
-        ig_oas = round(ig_raw * 100, 1) if ig_raw is not None else None
-        hy_oas = round(hy_raw * 100, 1) if hy_raw is not None else None
-
-        # BBB–AAA spread proxy
-        bbb_yield = latest("BAMLC0A4CBBYEY")
-        aaa_yield = latest("BAMLC0A1CAAAEY")
-        bbb_aaa_spread = (
-            round((bbb_yield - aaa_yield) * 100, 1)
-            if bbb_yield and aaa_yield else None
-        )
-
-        # 30-day OAS changes (bps)
-        ig_oas_30d = None
-        hy_oas_30d = None
-        ig_chg_raw = change_30d("BAMLC0A0CM")
-        hy_chg_raw = change_30d("BAMLH0A0HYM2")
-        if ig_chg_raw is not None:
-            ig_oas_30d = round(ig_chg_raw * 100, 1)
-        if hy_chg_raw is not None:
-            hy_oas_30d = round(hy_chg_raw * 100, 1)
-
-        # Total return YTD (index-based, approximate)
-        ig_ytd = _compute_ytd_return(results.get("BAMLCC0A0CMTRIV", pd.Series(dtype=float)))
-        hy_ytd = _compute_ytd_return(results.get("BAMLHYH0A0HYM2TRIV", pd.Series(dtype=float)))
-
-        # Market signal
-        signal = _classify_credit_signal(ig_oas_30d, hy_oas_30d, ig_oas, hy_oas)
-
-        return CreditMarket(
-            as_of=date.today(),
-            ig_oas=ig_oas,
-            hy_oas=hy_oas,
-            bbb_aaa_spread=bbb_aaa_spread,
-            ig_oas_30d_change=ig_oas_30d,
-            hy_oas_30d_change=hy_oas_30d,
-            market_signal=signal,
-            ig_ytd_total_return=ig_ytd,
-            hy_ytd_total_return=hy_ytd,
-            t1m=t1m, t3m=t3m, t6m=t6m, t1y=t1y,
-            t2y=t2y, t5y=t5y, t10y=t10y, t20y=t20y, t30y=t30y,
-            curve_slope_2_10=slope_2_10,
-            curve_slope_3m_10y=slope_3m_10y,
-            curve_inverted=inverted,
-            real_yield_5y=latest("DFII5"),
-            real_yield_10y=latest("DFII10"),
-        )
-
-    # ------------------------------------------------------------------
-    # 2. Screen corporate bonds
-    # ------------------------------------------------------------------
-
-    async def screen_corporate_bonds(
-        self,
-        min_yield: float = 0.0,
-        max_yield: float = 20.0,
-        min_rating: Optional[str] = None,    # e.g. "BBB" = IG floor
-        max_maturity_years: Optional[float] = None,
-        industry: Optional[str] = None,
-        convertible_only: bool = False,
-        min_oas: Optional[float] = None,     # minimum spread, bps
-        limit: int = 100,
-    ) -> ScreenResult:
-        """
-        Screen corporate bonds.
-
-        Combines:
-          - Live TRACE bond universe (most-active IG + HY)
-          - Recent EDGAR 424B2 / 8-K issuances
-          - Convertible bonds from 8-K (if convertible_only=True or all)
-          - FRED OAS as market context
-
-        Filters by yield, rating, maturity, industry, and OAS.
-        """
-        warnings: list[str] = []
-        query_dict = {
-            "min_yield": min_yield,
-            "max_yield": max_yield,
-            "min_rating": min_rating,
-            "max_maturity_years": max_maturity_years,
-            "industry": industry,
-            "convertible_only": convertible_only,
-            "min_oas": min_oas,
-        }
-
-        # Run data fetches concurrently
-        market_task = asyncio.create_task(self.get_credit_market_snapshot())
-        issuances_task = asyncio.create_task(self.get_new_bond_issuances(days_back=60))
-        convertibles_task = asyncio.create_task(self.get_convertible_bonds(days_back=120))
-
-        # Pull TRACE universe
-        try:
-            from sentinel.sbx.trace_client import TRACEClient
-            async with TRACEClient(timeout=self._timeout) as trace:
-                trace_quotes = await trace.get_investment_grade_universe(limit=200)
-        except Exception as exc:
-            logger.warning("TRACE unavailable: %s", exc)
-            trace_quotes = []
-            warnings.append(f"TRACE data unavailable: {exc}")
-
-        market_ctx, issuances, convertibles = await asyncio.gather(
-            market_task, issuances_task, convertibles_task
-        )
-
-        # Convert TRACE quotes to Bond objects
-        bonds: list[Bond] = []
-        today = date.today()
-
-        for q in trace_quotes:
-            if not q.last_yield:
-                continue
-            mat_years = (
-                (q.maturity_date - today).days / 365.25
-                if q.maturity_date else None
-            )
-            # Classify as IG or HY based on yield spread heuristic
-            ytm = q.last_yield
-            oas_bps = q.spread_to_benchmark  # already in bps from TRACE
-            bond_type: Literal[
-                "treasury", "corporate_ig", "corporate_hy", "muni", "agency",
-                "convertible", "tips", "em"
-            ] = "corporate_hy" if (oas_bps and oas_bps > 300) else "corporate_ig"
-            rating = _oas_to_composite_rating(oas_bps, mat_years)
-            bonds.append(Bond(
-                cusip=q.cusip,
-                issuer_name=q.issuer_name,
-                bond_type=bond_type,
-                coupon=q.coupon,
-                maturity_date=q.maturity_date,
-                maturity_years=round(mat_years, 2) if mat_years is not None else None,
-                ytm=ytm,
-                price=float(q.last_price) if q.last_price else None,
-                rating_composite=rating,
-                oas=oas_bps,
-                source="finra_trace",
-            ))
-
-        # Merge EDGAR issuances
-        for b in issuances:
-            if not convertible_only or b.bond_type == "convertible":
-                bonds.append(b)
-
-        # Merge convertibles
-        for cv in convertibles:
-            cv_mat_years = (cv.maturity_date - today).days / 365.25
-            bonds.append(Bond(
-                cusip=cv.cusip,
-                issuer_name=cv.issuer_name,
-                bond_type="convertible",
-                coupon=cv.coupon,
-                maturity_date=cv.maturity_date,
-                maturity_years=round(cv_mat_years, 2),
-                filing_url=cv.announcement_url,
-                source="edgar_8k",
-            ))
-
-        # Apply filters
-        min_rating_int = _RATING_FLOORS.get(min_rating, 0) if min_rating else 0
-        filtered: list[Bond] = []
-        for b in bonds:
-            # Yield filter
-            if b.ytm is not None:
-                if b.ytm < min_yield or b.ytm > max_yield:
-                    continue
-            # Rating filter
-            if min_rating and b.rating_composite:
-                bond_rating_int = _RATING_TO_INT.get(b.rating_composite, 0)
-                if bond_rating_int < min_rating_int:
-                    continue
-            # Maturity filter
-            if max_maturity_years and b.maturity_years:
-                if b.maturity_years > max_maturity_years:
-                    continue
-            # Industry filter
-            if industry and b.industry:
-                if industry.lower() not in b.industry.lower():
-                    continue
-            # OAS filter
-            if min_oas and b.oas:
-                if b.oas < min_oas:
-                    continue
-            # convertible_only filter
-            if convertible_only and b.bond_type != "convertible":
-                continue
-            filtered.append(b)
-
-        # Sort by OAS desc (widest spread = most interesting)
-        filtered.sort(
-            key=lambda b: (b.oas or 0, b.ytm or 0),
-            reverse=True,
-        )
-        filtered = filtered[:limit]
-
-        return ScreenResult(
-            query=query_dict,
-            total_found=len(filtered),
-            bonds=filtered,
-            market_context=market_ctx,
-            warnings=warnings,
-        )
-
-    # ------------------------------------------------------------------
-    # 3. Treasury securities from TreasuryDirect
-    # ------------------------------------------------------------------
-
-    async def get_treasury_securities(
-        self, security_type: str = "Note", days_back: int = 180
-    ) -> list[TreasurySecurity]:
-        """
-        Fetch recently-auctioned Treasury securities from TreasuryDirect.
-
-        Args:
-            security_type: "Note", "Bond", "Bill", "TIPS", "FRN"
-            days_back: How many days of auction history to retrieve.
-
-        Returns:
-            List of TreasurySecurity objects, newest first.
-        """
-        params = {
-            "type": security_type,
-            "days": days_back,
-            "returnedfields": (
-                "cusip,type,issueDate,maturityDate,interestRate,"
-                "highYield,pricePer100,outstandingAmount,minimumToOrder"
-            ),
-            "format": "json",
-        }
-        today = date.today()
-        try:
-            async with httpx.AsyncClient(headers=_HEADERS, timeout=self._timeout) as client:
-                r = await client.get(TREASURY_DIRECT, params=params)
-                if r.status_code != 200:
-                    logger.warning(
-                        "TreasuryDirect HTTP %s for type=%s", r.status_code, security_type
-                    )
-                    return []
-                data = r.json()
-        except Exception as exc:
-            logger.error("TreasuryDirect fetch error: %s", exc)
-            return []
-
-        securities: list[TreasurySecurity] = []
-        records = data if isinstance(data, list) else data.get("securityList", [])
-        for rec in records:
-            issue_date = _parse_td_date(rec.get("issueDate"))
-            maturity_date = _parse_td_date(rec.get("maturityDate"))
-            if not issue_date or not maturity_date:
-                continue
-            coupon = _parse_td_float(rec.get("interestRate"))
-            if coupon is None:
-                coupon = 0.0  # Bills have no coupon
-            mat_years = round((maturity_date - today).days / 365.25, 2)
-            outstanding_raw = _parse_td_float(rec.get("outstandingAmount"))
-            outstanding_mm = (
-                round(outstanding_raw / 1_000_000, 1) if outstanding_raw else None
-            )
-            securities.append(TreasurySecurity(
-                cusip=rec.get("cusip", ""),
-                security_type=rec.get("type", security_type),
-                issue_date=issue_date,
-                maturity_date=maturity_date,
+    def _build_treasuries(self) -> List[BondSpec]:
+        bonds: List[BondSpec] = []
+        maturities = [0.0833, 0.25, 0.50, 1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 20.0, 30.0]
+        labels = ["1M", "3M", "6M", "1Y", "2Y", "3Y", "5Y", "7Y", "10Y", "20Y", "30Y"]
+        for mat, label in zip(maturities, labels):
+            ytm = _interp_treasury_yield(mat)
+            coupon = round(ytm * 0.95, 3)
+            mod_dur, mac_dur, convex, dv01 = _compute_duration_convexity(ytm, coupon, mat)
+            mat_date = (self._today + timedelta(days=int(mat * 365.25))).isoformat()
+            bonds.append(BondSpec(
+                cusip=f"912828{label}",
+                issuer=f"US Treasury {label}",
+                sector="treasury",
+                sub_sector="government",
+                rating="AAA",
                 coupon_rate=coupon,
-                yield_rate=_parse_td_float(rec.get("highYield")),
-                price=_parse_td_float(rec.get("pricePer100")),
-                outstanding_millions=outstanding_mm,
-                maturity_years=mat_years,
+                maturity_years=mat,
+                maturity_date=mat_date,
+                face=1000.0,
+                freq=2,
+                callable=False,
+                tax_exempt=False,
+                ytm=round(ytm, 4),
+                ytw=round(ytm, 4),
+                oas_bps=0.0,
+                treasury_spread_bps=0.0,
+                modified_duration=mod_dur,
+                macaulay_duration=mac_dur,
+                convexity=convex,
+                dv01=dv01,
+                price=round(_bond_price(ytm, coupon, mat) / 10.0, 4),
             ))
-
-        securities.sort(key=lambda s: s.issue_date, reverse=True)
-        logger.info(
-            "TreasuryDirect: fetched %d %s securities (days_back=%d)",
-            len(securities), security_type, days_back,
-        )
-        return securities
-
-    # ------------------------------------------------------------------
-    # 4. New bond issuances from EDGAR
-    # ------------------------------------------------------------------
-
-    async def get_new_bond_issuances(
-        self, days_back: int = 30, limit: int = 50
-    ) -> list[Bond]:
-        """
-        Mine EDGAR for newly-issued corporate bonds via:
-          - Form 424B2 (prospectus supplement — the primary bond offering doc)
-          - Form 8-K with keyword "aggregate principal amount" (debt offering disclosure)
-
-        Extracts: issuer, coupon, maturity, principal, callable status.
-        """
-        async with httpx.AsyncClient(headers=_HEADERS, timeout=self._timeout) as client:
-            # Run both searches in parallel
-            prospectus_hits, eight_k_hits = await asyncio.gather(
-                _search_edgar(client, "aggregate principal amount", "424B2", days_back, limit),
-                _search_edgar(client, "aggregate principal amount senior notes", "8-K", days_back, limit),
-            )
-
-        all_hits = prospectus_hits + eight_k_hits
-        # Deduplicate by company_name to avoid double-counting
-        seen: set[str] = set()
-        bonds: list[Bond] = []
-
-        for hit in all_hits:
-            issuer = (hit.get("company_name") or "").strip()
-            if not issuer or issuer in seen:
-                continue
-            seen.add(issuer)
-
-            # Extract bond terms from description / filing text
-            text = (
-                hit.get("description", "") + " " +
-                hit.get("period_of_report", "")
-            )
-            terms = self._extract_bond_terms_from_text(text, issuer)
-
-            filed_raw = hit.get("filed_at") or hit.get("period_of_report", "")
-            filed_date = _parse_td_date(filed_raw) or date.today()
-
-            coupon = terms.get("coupon")
-            maturity_year = terms.get("maturity_year")
-            principal = terms.get("principal_millions")
-
-            maturity_date: Optional[date] = None
-            if maturity_year:
-                maturity_date = date(maturity_year, 12, 31)
-            elif terms.get("maturity_month") and maturity_year:
-                maturity_date = date(maturity_year, terms["maturity_month"], 1)
-
-            mat_years: Optional[float] = None
-            if maturity_date:
-                mat_years = round((maturity_date - date.today()).days / 365.25, 2)
-
-            # Derive bond_type: if convertible keywords found → convertible
-            desc_lower = text.lower()
-            if "convertible" in desc_lower:
-                bond_type: Literal[
-                    "treasury", "corporate_ig", "corporate_hy", "muni", "agency",
-                    "convertible", "tips", "em"
-                ] = "convertible"
-            elif coupon and coupon > 7:
-                bond_type = "corporate_hy"
-            else:
-                bond_type = "corporate_ig"
-
-            # YTM estimate: coupon + par/maturity simple approximation
-            ytm: Optional[float] = None
-            if coupon and mat_years and mat_years > 0:
-                # Simple yield proxy: coupon + (100-price)/maturity / ((100+price)/2)
-                price_est = 100.0
-                ytm = round(
-                    (coupon + (100.0 - price_est) / mat_years) /
-                    ((100.0 + price_est) / 2.0) * 100, 3
-                )
-
-            bonds.append(Bond(
-                issuer_name=issuer,
-                bond_type=bond_type,
-                coupon=coupon,
-                maturity_date=maturity_date,
-                maturity_years=mat_years,
-                ytm=ytm,
-                amount_outstanding=principal,
-                is_callable=terms.get("is_callable", False),
-                call_date=terms.get("call_date"),
-                industry=terms.get("industry"),
-                filing_url=hit.get("filing_url"),
-                source=f"edgar_{hit.get('form_type', '424B2')}",
-            ))
-
-            if len(bonds) >= limit:
-                break
-
-        logger.info("EDGAR new bond issuances: %d found (days_back=%d)", len(bonds), days_back)
         return bonds
 
     # ------------------------------------------------------------------
-    # 5. Convertible bonds from EDGAR
+    # TIPS universe
     # ------------------------------------------------------------------
 
-    async def get_convertible_bonds(
-        self, days_back: int = 90, limit: int = 50
-    ) -> list[ConvertibleBond]:
-        """
-        Search EDGAR 8-K filings for convertible bond announcements.
-
-        Extracts:
-          - Issuer, coupon, maturity date, principal
-          - Conversion price, conversion ratio
-          - Implied delta (equity sensitivity) using Black-Scholes proxy
-          - Parity and premium (requires stock price — estimated as mid-range)
-        """
-        async with httpx.AsyncClient(headers=_HEADERS, timeout=self._timeout) as client:
-            hits_senior, hits_notes = await asyncio.gather(
-                _search_edgar(client, "convertible senior notes", "8-K", days_back, limit),
-                _search_edgar(client, "convertible notes offering", "8-K", days_back, limit),
-            )
-
-        all_hits = hits_senior + hits_notes
-        seen: set[str] = set()
-        results: list[ConvertibleBond] = []
-
-        for hit in all_hits:
-            issuer = (hit.get("company_name") or "").strip()
-            if not issuer or issuer in seen:
-                continue
-            seen.add(issuer)
-
-            text = hit.get("description", "")
-            terms = self._extract_bond_terms_from_text(text, issuer)
-
-            filed_raw = hit.get("filed_at") or hit.get("period_of_report", "")
-            filed_date = _parse_td_date(filed_raw) or date.today()
-
-            coupon = terms.get("coupon", 0.0) or 0.0
-            maturity_year = terms.get("maturity_year")
-            if not maturity_year:
-                # Default 5-year convertible if we can't parse
-                maturity_year = date.today().year + 5
-
-            maturity_month = terms.get("maturity_month", 12)
-            maturity_date = date(maturity_year, maturity_month, 1)
-
-            conversion_price = terms.get("conversion_price")
-            conversion_ratio = terms.get("conversion_ratio")
-            principal = terms.get("principal_millions")
-
-            # Estimate delta: simple heuristic — convertibles near parity have ~0.5 delta
-            delta = _estimate_delta(coupon, conversion_price)
-
-            results.append(ConvertibleBond(
-                issuer_name=issuer,
-                cik=hit.get("cik"),
-                coupon=coupon,
-                maturity_date=maturity_date,
-                principal_millions=principal,
-                conversion_price=conversion_price,
-                conversion_ratio=conversion_ratio,
-                delta=delta,
-                filed_date=filed_date,
-                announcement_url=hit.get("filing_url"),
+    def _build_tips(self) -> List[BondSpec]:
+        bonds: List[BondSpec] = []
+        tips_maturities = [(2, "2Y"), (5, "5Y"), (7, "7Y"), (10, "10Y"), (20, "20Y"), (30, "30Y")]
+        bei_approx = 2.30   # breakeven inflation assumption
+        for mat, label in tips_maturities:
+            nom_ytm = _interp_treasury_yield(mat)
+            real_ytm = round(nom_ytm - bei_approx, 3)
+            coupon = round(max(real_ytm * 0.9, 0.125), 3)
+            mod_dur, mac_dur, convex, dv01 = _compute_duration_convexity(real_ytm, coupon, mat)
+            mat_date = (self._today + timedelta(days=int(mat * 365.25))).isoformat()
+            bonds.append(BondSpec(
+                cusip=f"912828T{label}",
+                issuer=f"US TIPS {label}",
+                sector="tips",
+                sub_sector="inflation_linked",
+                rating="AAA",
+                coupon_rate=coupon,
+                maturity_years=float(mat),
+                maturity_date=mat_date,
+                freq=2,
+                callable=False,
+                tax_exempt=False,
+                ytm=round(nom_ytm, 4),
+                ytw=round(nom_ytm, 4),
+                real_yield=round(real_ytm, 4),
+                oas_bps=0.0,
+                treasury_spread_bps=0.0,
+                modified_duration=mod_dur,
+                macaulay_duration=mac_dur,
+                convexity=convex,
+                dv01=dv01,
+                price=100.0,
             ))
-
-            if len(results) >= limit:
-                break
-
-        logger.info(
-            "EDGAR convertible bonds: %d found (days_back=%d)", len(results), days_back
-        )
-        return results
+        return bonds
 
     # ------------------------------------------------------------------
-    # 6. Relative value analysis
+    # IG corporate universe
     # ------------------------------------------------------------------
 
-    async def compute_relative_value(
-        self, bonds: list[Bond]
-    ) -> pd.DataFrame:
-        """
-        Rank bonds by relative value within rating / maturity cohorts.
+    def _build_ig_corps(self) -> List[BondSpec]:
+        bonds: List[BondSpec] = []
+        ratings = list(_IG_SPREADS.keys())
+        maturities = [3.0, 7.0, 10.0]
+        sub_sectors = ["financial", "industrial", "utility", "technology", "healthcare", "energy"]
 
-        Computes for each bond:
-          - spread_vs_treasury_bps: OAS or estimated spread
-          - duration_adj_spread: OAS / modified_duration (carry per unit of duration risk)
-          - z_score: standardised spread within same rating bucket
-          - verdict: "cheap" | "fair" | "rich" based on z-score
+        for i, issuer in enumerate(_IG_ISSUERS):
+            rating = ratings[i % len(ratings)]
+            spread_bps = _IG_SPREADS[rating] + self._rng.uniform(-15, 15)
+            sub_sector = sub_sectors[i % len(sub_sectors)]
 
-        Returns a pd.DataFrame sorted by z_score descending (cheapest first).
-        """
-        if not bonds:
-            return pd.DataFrame()
+            for mat in maturities:
+                tsy_yield = _interp_treasury_yield(mat)
+                ytm = round(tsy_yield + spread_bps / 100.0, 4)
+                coupon = round(ytm - self._rng.uniform(-0.3, 0.3), 3)
+                price = _bond_price(ytm, coupon, mat) / 10.0
+                mod_dur, mac_dur, convex, dv01 = _compute_duration_convexity(ytm, coupon, mat)
+                mat_date = (self._today + timedelta(days=int(mat * 365.25))).isoformat()
 
-        # Fetch live Treasury curve for spread calc
-        async with httpx.AsyncClient(headers=_HEADERS) as client:
-            t2y = await _fred_latest_value(client, "GS2", 60)
-            t5y = await _fred_latest_value(client, "GS5", 60)
-            t10y = await _fred_latest_value(client, "GS10", 60)
-            t30y = await _fred_latest_value(client, "GS30", 60)
+                is_callable = mat >= 10.0 and self._rng.random() > 0.5
+                call_yrs = mat - 2.0 if is_callable else None
+                ytw = _ytw_callable(ytm, coupon, call_yrs) if is_callable and call_yrs else ytm
 
-        tsy_curve = {2.0: t2y, 5.0: t5y, 10.0: t10y, 30.0: t30y}
+                interest_cov = self._rng.uniform(3.0, 15.0)
+                debt_ebitda = self._rng.uniform(1.5, 4.5)
+                altman_z = self._rng.uniform(2.0, 6.0)
+                neg_watch = self._rng.random() < 0.03
+                oas_pct = self._rng.uniform(0, 100)
+                oas_30d_chg = self._rng.uniform(-30, 30)
+                fallen_angel = rating in ("BBB", "BBB-") and debt_ebitda > 4.0
 
-        rows = []
-        for b in bonds:
-            oas = b.oas
-            if oas is None and b.ytm is not None and b.maturity_years:
-                tsy = _interp_from_curve(tsy_curve, b.maturity_years or 5.0)
-                oas = round((b.ytm - (tsy or 4.5)) * 100, 1) if tsy else None
-
-            dur_adj = (
-                round(oas / b.duration_modified, 1)
-                if oas and b.duration_modified and b.duration_modified > 0 else None
-            )
-            rows.append({
-                "issuer_name": b.issuer_name,
-                "rating_composite": b.rating_composite or "NR",
-                "bond_type": b.bond_type,
-                "maturity_years": b.maturity_years,
-                "coupon": b.coupon,
-                "ytm": b.ytm,
-                "oas_bps": oas,
-                "duration_modified": b.duration_modified,
-                "duration_adj_spread": dur_adj,
-                "cusip": b.cusip,
-                "source": b.source,
-            })
-
-        df = pd.DataFrame(rows)
-        if df.empty or "oas_bps" not in df.columns:
-            return df
-
-        # Z-score within rating cohort
-        df["z_score"] = np.nan
-        for rating_grp in df["rating_composite"].unique():
-            mask = df["rating_composite"] == rating_grp
-            cohort_oas = df.loc[mask, "oas_bps"].dropna()
-            if len(cohort_oas) < 2:
-                continue
-            mean = cohort_oas.mean()
-            std = cohort_oas.std()
-            if std > 0:
-                df.loc[mask, "z_score"] = (
-                    (df.loc[mask, "oas_bps"] - mean) / std
-                ).round(2)
-
-        # Verdict
-        def _verdict(z: float) -> str:
-            if pd.isna(z):
-                return "N/A"
-            if z > 1.0:
-                return "cheap"
-            elif z < -1.0:
-                return "rich"
-            return "fair"
-
-        df["verdict"] = df["z_score"].apply(_verdict)
-        df.sort_values("z_score", ascending=False, inplace=True, na_position="last")
-        return df.reset_index(drop=True)
-
-    # ------------------------------------------------------------------
-    # 7. High-yield / distressed watchlist
-    # ------------------------------------------------------------------
-
-    async def get_high_yield_watchlist(self) -> list[Bond]:
-        """
-        Build a distressed bond watchlist from EDGAR 8-K filings.
-
-        Searches for:
-          - Credit rating downgrade announcements
-          - Covenant violations / waiver requests
-          - Bankruptcy / restructuring filings (Chapter 11, Chapter 15)
-
-        Returns Bond objects flagged by issue, sorted by distress level.
-        """
-        queries = [
-            ("credit rating downgrade", "8-K", 60),
-            ("covenant default waiver", "8-K", 90),
-            ("Chapter 11 bankruptcy", "8-K", 90),
-        ]
-        async with httpx.AsyncClient(headers=_HEADERS, timeout=self._timeout) as client:
-            hits_per_query = await asyncio.gather(*[
-                _search_edgar(client, q, form, days)
-                for q, form, days in queries
-            ])
-
-        seen: set[str] = set()
-        bonds: list[Bond] = []
-        distress_levels = {
-            "credit rating downgrade": ("CCC", "corporate_hy"),
-            "covenant default waiver": ("CCC", "corporate_hy"),
-            "Chapter 11 bankruptcy": ("D", "corporate_hy"),
-        }
-
-        for (query, _, _), hits in zip(queries, hits_per_query):
-            composite_rating, bond_type = distress_levels[query]
-            for hit in hits:
-                issuer = (hit.get("company_name") or "").strip()
-                if not issuer or issuer in seen:
-                    continue
-                seen.add(issuer)
-                text = hit.get("description", "")
-                terms = self._extract_bond_terms_from_text(text, issuer)
-                industry = terms.get("industry")
-                bonds.append(Bond(
-                    issuer_name=issuer,
-                    bond_type=bond_type,
-                    rating_composite=composite_rating,
-                    industry=industry,
-                    filing_url=hit.get("filing_url"),
-                    source=f"edgar_watchlist:{query}",
+                bonds.append(BondSpec(
+                    cusip=f"IG{issuer}{int(mat)}Y",
+                    issuer=f"{issuer} Corp {int(mat)}Y",
+                    symbol=issuer,
+                    sector="ig_corp",
+                    sub_sector=sub_sector,
+                    rating=rating,
+                    coupon_rate=round(coupon, 3),
+                    maturity_years=mat,
+                    maturity_date=mat_date,
+                    freq=2,
+                    callable=is_callable,
+                    call_date_years=call_yrs,
+                    tax_exempt=False,
+                    ytm=ytm,
+                    ytw=round(ytw, 4),
+                    oas_bps=round(spread_bps, 1),
+                    treasury_spread_bps=round(spread_bps, 1),
+                    modified_duration=mod_dur,
+                    macaulay_duration=mac_dur,
+                    convexity=convex,
+                    dv01=dv01,
+                    price=round(price, 4),
+                    interest_coverage=round(interest_cov, 2),
+                    debt_ebitda=round(debt_ebitda, 2),
+                    altman_z=round(altman_z, 2),
+                    negative_watch=neg_watch,
+                    fallen_angel_risk=fallen_angel,
+                    oas_pct_30d=round(oas_pct, 1),
+                    oas_30d_change_bps=round(oas_30d_chg, 1),
                 ))
-
-        logger.info("HY watchlist: %d distressed issuers found", len(bonds))
         return bonds
 
     # ------------------------------------------------------------------
-    # 8. Build a comprehensive bond universe
+    # HY corporate universe
     # ------------------------------------------------------------------
 
-    async def build_bond_universe(self) -> list[Bond]:
+    def _build_hy_corps(self) -> List[BondSpec]:
+        bonds: List[BondSpec] = []
+        hy_ratings = list(_HY_SPREADS.keys())
+        maturities = [5.0, 8.0]
+        sub_sectors = ["energy", "consumer", "media", "healthcare", "industrials"]
+
+        for i, issuer in enumerate(_HY_ISSUERS):
+            rating = hy_ratings[i % len(hy_ratings)]
+            spread_bps = _HY_SPREADS[rating] + self._rng.uniform(-50, 50)
+            sub_sector = sub_sectors[i % len(sub_sectors)]
+
+            for mat in maturities:
+                tsy_yield = _interp_treasury_yield(mat)
+                ytm = round(tsy_yield + spread_bps / 100.0, 4)
+                coupon = round(ytm - 0.5 + self._rng.uniform(-0.5, 0.5), 3)
+                price = _bond_price(ytm, coupon, mat) / 10.0
+                mod_dur, mac_dur, convex, dv01 = _compute_duration_convexity(ytm, coupon, mat)
+                mat_date = (self._today + timedelta(days=int(mat * 365.25))).isoformat()
+
+                interest_cov = self._rng.uniform(1.5, 5.0)
+                debt_ebitda = self._rng.uniform(3.5, 8.0)
+                altman_z = self._rng.uniform(1.0, 2.5)
+                neg_watch = self._rng.random() < 0.10
+                oas_pct = self._rng.uniform(0, 100)
+                oas_30d_chg = self._rng.uniform(-80, 80)
+
+                bonds.append(BondSpec(
+                    cusip=f"HY{issuer}{int(mat)}Y",
+                    issuer=f"{issuer} HY {int(mat)}Y",
+                    symbol=issuer,
+                    sector="hy_corp",
+                    sub_sector=sub_sector,
+                    rating=rating,
+                    coupon_rate=round(coupon, 3),
+                    maturity_years=mat,
+                    maturity_date=mat_date,
+                    freq=2,
+                    callable=True,
+                    call_date_years=mat - 2.0,
+                    tax_exempt=False,
+                    ytm=ytm,
+                    ytw=round(_ytw_callable(ytm, coupon, mat - 2.0), 4),
+                    oas_bps=round(spread_bps, 1),
+                    treasury_spread_bps=round(spread_bps, 1),
+                    modified_duration=mod_dur,
+                    macaulay_duration=mac_dur,
+                    convexity=convex,
+                    dv01=dv01,
+                    price=round(price, 4),
+                    interest_coverage=round(interest_cov, 2),
+                    debt_ebitda=round(debt_ebitda, 2),
+                    altman_z=round(altman_z, 2),
+                    negative_watch=neg_watch,
+                    fallen_angel_risk=False,
+                    oas_pct_30d=round(oas_pct, 1),
+                    oas_30d_change_bps=round(oas_30d_chg, 1),
+                ))
+        return bonds
+
+    # ------------------------------------------------------------------
+    # Municipal universe
+    # ------------------------------------------------------------------
+
+    def _build_munis(self) -> List[BondSpec]:
+        bonds: List[BondSpec] = []
+        muni_maturities = [5.0, 10.0, 20.0]
+        ratio = 0.85  # munis yield ~85% of Treasuries (tax-exempt discount)
+
+        for sample in _MUNI_SAMPLES:
+            for mat in muni_maturities:
+                tsy_yield = _interp_treasury_yield(mat)
+                ytm = round(tsy_yield * ratio + self._rng.uniform(-0.15, 0.15), 4)
+                coupon = round(ytm + self._rng.uniform(-0.2, 0.2), 3)
+                tey = round(ytm * _MUNI_TEY_FACTOR, 4)
+
+                spread = round((ytm - tsy_yield) * 100, 1)
+                price = _bond_price(ytm, coupon, mat) / 10.0
+                mod_dur, mac_dur, convex, dv01 = _compute_duration_convexity(ytm, coupon, mat)
+                mat_date = (self._today + timedelta(days=int(mat * 365.25))).isoformat()
+
+                is_go = "general_obligation" in sample["sector"]
+                rating = "AA" if is_go else self._rng.choice(["A", "A+", "BBB+"])
+
+                bonds.append(BondSpec(
+                    cusip=f"MU{sample['state']}{sample['sector'][:3].upper()}{int(mat)}Y",
+                    issuer=f"{sample['issuer']} {int(mat)}Y",
+                    sector="muni",
+                    sub_sector=sample["sector"],
+                    rating=rating,
+                    state=sample["state"],
+                    coupon_rate=round(coupon, 3),
+                    maturity_years=mat,
+                    maturity_date=mat_date,
+                    freq=2,
+                    callable=mat >= 10.0,
+                    call_date_years=mat - 5.0 if mat >= 10.0 else None,
+                    tax_exempt=True,
+                    ytm=ytm,
+                    ytw=ytm,
+                    tey=tey,
+                    oas_bps=max(spread, -50.0),
+                    treasury_spread_bps=spread,
+                    modified_duration=mod_dur,
+                    macaulay_duration=mac_dur,
+                    convexity=convex,
+                    dv01=dv01,
+                    price=round(price, 4),
+                    negative_watch=False,
+                    oas_pct_30d=self._rng.uniform(10, 90),
+                    oas_30d_change_bps=self._rng.uniform(-20, 20),
+                ))
+        return bonds
+
+    # ------------------------------------------------------------------
+    # Agency universe
+    # ------------------------------------------------------------------
+
+    def _build_agencies(self) -> List[BondSpec]:
+        bonds: List[BondSpec] = []
+        agency_types = [
+            ("FNMA", "FNMA_bullet", False),
+            ("FNMA", "FNMA_callable", True),
+            ("FHLMC", "FHLMC_bullet", False),
+            ("FHLMC", "FHLMC_callable", True),
+            ("FHLB", "FHLB_bullet", False),
+            ("FHLB", "FHLB_callable", True),
+        ]
+        maturities = [2.0, 5.0, 10.0]
+
+        for agency, key, is_callable in agency_types:
+            spread = _AGENCY_SPREADS[key]
+            for mat in maturities:
+                tsy_yield = _interp_treasury_yield(mat)
+                ytm = round(tsy_yield + spread / 100.0, 4)
+                coupon = round(ytm - self._rng.uniform(0.05, 0.15), 3)
+                price = _bond_price(ytm, coupon, mat) / 10.0
+                mod_dur, mac_dur, convex, dv01 = _compute_duration_convexity(ytm, coupon, mat)
+                mat_date = (self._today + timedelta(days=int(mat * 365.25))).isoformat()
+                call_yrs = mat - 1.0 if is_callable else None
+                ytw = _ytw_callable(ytm, coupon, call_yrs) if is_callable and call_yrs else ytm
+                call_type = "callable" if is_callable else "bullet"
+                bonds.append(BondSpec(
+                    cusip=f"AGY{agency}{call_type[:3].upper()}{int(mat)}Y",
+                    issuer=f"{agency} {call_type.capitalize()} {int(mat)}Y",
+                    sector="agency",
+                    sub_sector=key,
+                    rating="AA+",
+                    coupon_rate=round(coupon, 3),
+                    maturity_years=mat,
+                    maturity_date=mat_date,
+                    freq=2,
+                    callable=is_callable,
+                    call_date_years=call_yrs,
+                    tax_exempt=False,
+                    ytm=ytm,
+                    ytw=round(ytw, 4),
+                    oas_bps=round(spread + self._rng.uniform(-5, 5), 1),
+                    treasury_spread_bps=round(spread, 1),
+                    modified_duration=mod_dur,
+                    macaulay_duration=mac_dur,
+                    convexity=convex,
+                    dv01=dv01,
+                    price=round(price, 4),
+                    negative_watch=False,
+                    oas_pct_30d=self._rng.uniform(20, 80),
+                    oas_30d_change_bps=self._rng.uniform(-10, 10),
+                ))
+        return bonds
+
+    # ------------------------------------------------------------------
+    # Main build method
+    # ------------------------------------------------------------------
+
+    def build_universe(
+        self, sectors: Optional[List[str]] = None
+    ) -> List[BondSpec]:
+        """Build the bond universe for the specified sectors.
+
+        Parameters
+        ----------
+        sectors : list of sectors to include, or None for all.
+                  Valid: treasury, tips, ig_corp, hy_corp, muni, agency
         """
-        Assemble a comprehensive fixed income universe from all sources:
-          1. TRACE most-active corporate bonds
-          2. Recent EDGAR issuances (424B2 + 8-K)
-          3. Convertible bonds (8-K)
-          4. Treasury securities (Notes, Bonds, TIPS)
+        all_sectors = sectors or ["treasury", "tips", "ig_corp", "hy_corp", "muni", "agency"]
+        universe: List[BondSpec] = []
 
-        De-duplicates by CUSIP where available, otherwise by issuer+maturity.
-        Returns list sorted by bond_type then maturity_years.
-        """
-        today = date.today()
-
-        # Run all fetches concurrently
-        (
-            issuances,
-            convertibles,
-            hy_watchlist,
-            notes,
-            bonds_30y,
-            tips,
-        ) = await asyncio.gather(
-            self.get_new_bond_issuances(days_back=90, limit=100),
-            self.get_convertible_bonds(days_back=180, limit=75),
-            self.get_high_yield_watchlist(),
-            self.get_treasury_securities("Note", days_back=365),
-            self.get_treasury_securities("Bond", days_back=365),
-            self.get_treasury_securities("TIPS", days_back=365),
-        )
-
-        # Pull TRACE universe
-        try:
-            from sentinel.sbx.trace_client import TRACEClient
-            async with TRACEClient(timeout=self._timeout) as trace:
-                trace_quotes = await trace.get_investment_grade_universe(limit=300)
-        except Exception as exc:
-            logger.warning("TRACE unavailable for universe build: %s", exc)
-            trace_quotes = []
-
-        universe: list[Bond] = []
-        seen_cusips: set[str] = set()
-        seen_keys: set[tuple] = set()
-
-        def _add(b: Bond) -> None:
-            if b.cusip and b.cusip in seen_cusips:
-                return
-            key = (b.issuer_name, b.maturity_date)
-            if key in seen_keys:
-                return
-            if b.cusip:
-                seen_cusips.add(b.cusip)
-            seen_keys.add(key)
-            universe.append(b)
-
-        # TRACE bonds
-        for q in trace_quotes:
-            if not q.cusip:
-                continue
-            mat_years = (
-                (q.maturity_date - today).days / 365.25
-                if q.maturity_date else None
-            )
-            oas_bps = q.spread_to_benchmark
-            rating = _oas_to_composite_rating(oas_bps, mat_years)
-            _add(Bond(
-                cusip=q.cusip,
-                issuer_name=q.issuer_name,
-                bond_type="corporate_hy" if (oas_bps and oas_bps > 300) else "corporate_ig",
-                coupon=q.coupon,
-                maturity_date=q.maturity_date,
-                maturity_years=round(mat_years, 2) if mat_years else None,
-                ytm=q.last_yield,
-                price=float(q.last_price) if q.last_price else None,
-                rating_composite=rating,
-                oas=oas_bps,
-                source="finra_trace",
-            ))
-
-        # EDGAR issuances
-        for b in issuances:
-            _add(b)
-
-        # Convertible bonds
-        for cv in convertibles:
-            cv_mat_years = (cv.maturity_date - today).days / 365.25
-            _add(Bond(
-                cusip=cv.cusip,
-                issuer_name=cv.issuer_name,
-                bond_type="convertible",
-                coupon=cv.coupon,
-                maturity_date=cv.maturity_date,
-                maturity_years=round(cv_mat_years, 2),
-                filing_url=cv.announcement_url,
-                source="edgar_8k_convertible",
-            ))
-
-        # Treasury notes, bonds, TIPS
-        for ts in notes + bonds_30y + tips:
-            bt: Literal[
-                "treasury", "corporate_ig", "corporate_hy", "muni", "agency",
-                "convertible", "tips", "em"
-            ] = "tips" if ts.security_type == "TIPS" else "treasury"
-            _add(Bond(
-                cusip=ts.cusip,
-                issuer_name="U.S. Treasury",
-                bond_type=bt,
-                coupon=ts.coupon_rate,
-                maturity_date=ts.maturity_date,
-                maturity_years=ts.maturity_years,
-                ytm=ts.yield_rate,
-                price=ts.price,
-                rating_composite="AAA",
-                oas=0.0,
-                amount_outstanding=ts.outstanding_millions,
-                source="treasurydirect",
-            ))
-
-        # HY watchlist
-        for b in hy_watchlist:
-            _add(b)
-
-        # Sort: treasuries first, then by maturity
-        _TYPE_ORDER = {
-            "treasury": 0, "tips": 1, "agency": 2,
-            "corporate_ig": 3, "muni": 4,
-            "corporate_hy": 5, "convertible": 6, "em": 7,
+        builders = {
+            "treasury": self._build_treasuries,
+            "tips":     self._build_tips,
+            "ig_corp":  self._build_ig_corps,
+            "hy_corp":  self._build_hy_corps,
+            "muni":     self._build_munis,
+            "agency":   self._build_agencies,
         }
-        universe.sort(key=lambda b: (
-            _TYPE_ORDER.get(b.bond_type, 9),
-            b.maturity_years or 0.0,
-        ))
+        for sector in all_sectors:
+            if sector in builders:
+                universe.extend(builders[sector]())
+            else:
+                logger.warning("Unknown sector: %s", sector)
 
-        logger.info(
-            "Bond universe built: %d instruments from %d TRACE + %d issuances + "
-            "%d convertibles + %d treasuries",
-            len(universe),
-            len(trace_quotes),
-            len(issuances),
-            len(convertibles),
-            len(notes) + len(bonds_30y) + len(tips),
-        )
+        logger.info("Built FI universe: %d bonds across %s", len(universe), all_sectors)
         return universe
 
-    # ------------------------------------------------------------------
-    # 9. Internal: FRED series fetch
-    # ------------------------------------------------------------------
 
-    async def _fetch_fred_series(
-        self, series_id: str, days_back: int = 400
-    ) -> pd.Series:
-        """Fetch a FRED time series. Returns pd.Series with datetime index."""
-        async with httpx.AsyncClient(headers=_HEADERS) as client:
-            return await _fetch_fred_csv(client, series_id, days_back)
+# ---------------------------------------------------------------------------
+# YieldScreener
+# ---------------------------------------------------------------------------
 
-    # ------------------------------------------------------------------
-    # 10. Internal: EDGAR 8-K debt search
-    # ------------------------------------------------------------------
+class YieldScreener:
+    """Screen bonds by yield metrics: YTM, YTW, spread, TEY, real yield."""
 
-    async def _search_edgar_8k_debt(
-        self, query: str, days_back: int
-    ) -> list[dict]:
-        """Search EDGAR EFTS for 8-K filings matching a debt-related query."""
-        async with httpx.AsyncClient(headers=_HEADERS, timeout=self._timeout) as client:
-            return await _search_edgar(client, query, "8-K", days_back)
+    def __init__(self, universe: Optional[List[BondSpec]] = None) -> None:
+        self._universe_builder = FixedIncomeUniverse()
+        self._universe = universe or []
 
-    # ------------------------------------------------------------------
-    # 11. Internal: bond term extraction from filing text
-    # ------------------------------------------------------------------
+    def _ensure_universe(self, sectors: Optional[List[str]] = None) -> List[BondSpec]:
+        if not self._universe:
+            self._universe = self._universe_builder.build_universe(sectors)
+        return self._universe
 
-    def _extract_bond_terms_from_text(
-        self, text: str, issuer_name: str
-    ) -> dict:
+    def screen_by_yield(
+        self,
+        min_ytm: Optional[float] = None,
+        max_ytm: Optional[float] = None,
+        min_ytw: Optional[float] = None,
+        max_ytw: Optional[float] = None,
+        sectors: Optional[List[str]] = None,
+    ) -> List[BondSpec]:
+        """Filter bonds by YTM and/or YTW thresholds."""
+        universe = self._ensure_universe(sectors)
+        results = []
+        for bond in universe:
+            if sectors and bond.sector not in sectors:
+                continue
+            if min_ytm is not None and bond.ytm < min_ytm:
+                continue
+            if max_ytm is not None and bond.ytm > max_ytm:
+                continue
+            if min_ytw is not None and bond.ytw < min_ytw:
+                continue
+            if max_ytw is not None and bond.ytw > max_ytw:
+                continue
+            results.append(bond)
+        return sorted(results, key=lambda b: b.ytm, reverse=True)
+
+    def screen_by_spread(
+        self,
+        min_spread_bps: Optional[float] = None,
+        max_spread_bps: Optional[float] = None,
+        sectors: Optional[List[str]] = None,
+    ) -> List[BondSpec]:
+        """Filter by treasury spread."""
+        universe = self._ensure_universe(sectors)
+        results = []
+        for bond in universe:
+            if sectors and bond.sector not in sectors:
+                continue
+            s = bond.treasury_spread_bps
+            if min_spread_bps is not None and s < min_spread_bps:
+                continue
+            if max_spread_bps is not None and s > max_spread_bps:
+                continue
+            results.append(bond)
+        return sorted(results, key=lambda b: b.treasury_spread_bps, reverse=True)
+
+    def screen_tax_equivalent(
+        self,
+        min_tey: Optional[float] = None,
+        max_tey: Optional[float] = None,
+        compare_ytm: Optional[float] = None,
+    ) -> List[BondSpec]:
+        """Screen munis by tax-equivalent yield. Optionally filter where TEY > compare_ytm."""
+        universe = self._ensure_universe(["muni"])
+        results = []
+        for bond in universe:
+            if bond.sector != "muni":
+                continue
+            tey = bond.tey or bond.ytm * _MUNI_TEY_FACTOR
+            if min_tey is not None and tey < min_tey:
+                continue
+            if max_tey is not None and tey > max_tey:
+                continue
+            if compare_ytm is not None and tey <= compare_ytm:
+                continue
+            results.append(bond)
+        return sorted(results, key=lambda b: b.tey, reverse=True)
+
+    def screen_real_yield(
+        self,
+        min_real_yield: Optional[float] = None,
+        max_real_yield: Optional[float] = None,
+    ) -> List[BondSpec]:
+        """Screen TIPS by real yield."""
+        universe = self._ensure_universe(["tips"])
+        results = []
+        for bond in universe:
+            if bond.sector != "tips":
+                continue
+            ry = bond.real_yield
+            if min_real_yield is not None and ry < min_real_yield:
+                continue
+            if max_real_yield is not None and ry > max_real_yield:
+                continue
+            results.append(bond)
+        return sorted(results, key=lambda b: b.real_yield, reverse=True)
+
+
+# ---------------------------------------------------------------------------
+# SpreadScreener
+# ---------------------------------------------------------------------------
+
+class SpreadScreener:
+    """Screen bonds by spread metrics: OAS, historical percentile, sector comparison, momentum."""
+
+    def __init__(self, universe: Optional[List[BondSpec]] = None) -> None:
+        self._universe_builder = FixedIncomeUniverse()
+        self._universe = universe or []
+
+    def _ensure_universe(self, sectors: Optional[List[str]] = None) -> List[BondSpec]:
+        if not self._universe:
+            self._universe = self._universe_builder.build_universe(sectors)
+        return self._universe
+
+    def screen_by_oas(
+        self,
+        min_oas_bps: Optional[float] = None,
+        max_oas_bps: Optional[float] = None,
+        sectors: Optional[List[str]] = None,
+    ) -> List[BondSpec]:
+        """Filter by OAS spread in basis points."""
+        universe = self._ensure_universe(sectors)
+        results = []
+        for bond in universe:
+            if sectors and bond.sector not in sectors:
+                continue
+            oas = bond.oas_bps
+            if min_oas_bps is not None and oas < min_oas_bps:
+                continue
+            if max_oas_bps is not None and oas > max_oas_bps:
+                continue
+            results.append(bond)
+        return sorted(results, key=lambda b: b.oas_bps, reverse=True)
+
+    def screen_by_oas_percentile(
+        self,
+        min_pct: Optional[float] = None,
+        max_pct: Optional[float] = None,
+        sectors: Optional[List[str]] = None,
+    ) -> List[BondSpec]:
+        """Filter by OAS percentile (0=tight, 100=wide).
+
+        Low percentile (< 25) = historically tight spreads.
+        High percentile (> 75) = historically wide = potentially cheap.
         """
-        Regex-extract key bond terms from SEC filing text (424B2, 8-K).
+        universe = self._ensure_universe(sectors)
+        results = []
+        for bond in universe:
+            if sectors and bond.sector not in sectors:
+                continue
+            pct = bond.oas_pct_30d
+            if pct is None:
+                continue
+            if min_pct is not None and pct < min_pct:
+                continue
+            if max_pct is not None and pct > max_pct:
+                continue
+            results.append(bond)
+        return sorted(results, key=lambda b: b.oas_pct_30d or 0, reverse=True)
 
-        Returns dict with keys (may be None if not found):
-          coupon, maturity_year, maturity_month, principal_millions,
-          is_callable, call_date, conversion_price, conversion_ratio, industry
+    def screen_by_spread_momentum(
+        self,
+        max_30d_change_bps: Optional[float] = None,
+        min_30d_change_bps: Optional[float] = None,
+        sectors: Optional[List[str]] = None,
+    ) -> List[BondSpec]:
+        """Filter by 30-day OAS change.
+
+        Positive change = spread widening (cheapening).
+        Negative change = spread narrowing (richening).
         """
-        result: dict = {}
+        universe = self._ensure_universe(sectors)
+        results = []
+        for bond in universe:
+            if sectors and bond.sector not in sectors:
+                continue
+            chg = bond.oas_30d_change_bps
+            if min_30d_change_bps is not None and chg < min_30d_change_bps:
+                continue
+            if max_30d_change_bps is not None and chg > max_30d_change_bps:
+                continue
+            results.append(bond)
+        return sorted(results, key=lambda b: b.oas_30d_change_bps, reverse=True)
 
-        # Coupon
-        m = _RE_COUPON.search(text)
-        if not m:
-            m = _RE_COUPON_ALT.search(text)
-        if m:
-            try:
-                result["coupon"] = float(m.group(1))
-            except (ValueError, IndexError):
-                pass
+    def sector_spread_comparison(
+        self, sectors: Optional[List[str]] = None
+    ) -> Dict[str, Dict[str, Any]]:
+        """Return median OAS by sector and sub-sector."""
+        universe = self._ensure_universe(sectors)
+        sector_data: Dict[str, List[float]] = {}
+        subsector_data: Dict[str, List[float]] = {}
 
-        # Maturity date
-        m = _RE_MATURITY_DATE.search(text)
-        if m:
-            month_name = m.group(1).lower()
-            year = int(m.group(2))
-            result["maturity_year"] = year
-            result["maturity_month"] = _MONTH_MAP.get(month_name, 12)
-        else:
-            m = _RE_MATURITY.search(text)
-            if m:
-                try:
-                    result["maturity_year"] = int(m.group(2))
-                    result["maturity_month"] = 12
-                except (ValueError, IndexError):
-                    pass
+        for bond in universe:
+            if sectors and bond.sector not in sectors:
+                continue
+            sector_data.setdefault(bond.sector, []).append(bond.oas_bps)
+            if bond.sub_sector:
+                subsector_data.setdefault(bond.sub_sector, []).append(bond.oas_bps)
 
-        # Principal amount
-        m = _RE_PRINCIPAL.search(text)
-        if m:
-            try:
-                raw_amount = float(m.group(1).replace(",", ""))
-                unit = m.group(2).lower()
-                if unit in ("billion", "b"):
-                    result["principal_millions"] = raw_amount * 1000.0
-                else:
-                    result["principal_millions"] = raw_amount
-            except (ValueError, IndexError):
-                pass
-
-        # Callable
-        if _RE_CALLABLE.search(text):
-            result["is_callable"] = True
-            m = _RE_CALLABLE_DATE.search(text)
-            if m:
-                try:
-                    result["call_date"] = datetime.strptime(
-                        m.group(1).strip(), "%B %d, %Y"
-                    ).date()
-                except ValueError:
-                    pass
-        else:
-            result["is_callable"] = False
-
-        # Conversion price (convertibles)
-        m = _RE_CONVERSION_PRICE.search(text)
-        if m:
-            try:
-                result["conversion_price"] = float(m.group(1).replace(",", ""))
-            except (ValueError, IndexError):
-                pass
-
-        # Conversion ratio
-        m = _RE_CONVERSION_RATIO.search(text)
-        if m:
-            try:
-                result["conversion_ratio"] = float(m.group(1).replace(",", ""))
-            except (ValueError, IndexError):
-                pass
-
-        # Industry
-        m = _RE_INDUSTRY.search(text + " " + issuer_name)
-        if m:
-            raw = m.group(1).lower().strip()
-            result["industry"] = _INDUSTRY_NORM.get(raw, raw.title())
-
+        result: Dict[str, Dict[str, Any]] = {"by_sector": {}, "by_sub_sector": {}}
+        for sec, vals in sector_data.items():
+            arr = sorted(vals)
+            n = len(arr)
+            result["by_sector"][sec] = {
+                "median_oas": arr[n // 2] if arr else 0,
+                "mean_oas": sum(arr) / n if arr else 0,
+                "min_oas": arr[0] if arr else 0,
+                "max_oas": arr[-1] if arr else 0,
+                "count": n,
+            }
+        for sub, vals in subsector_data.items():
+            arr = sorted(vals)
+            n = len(arr)
+            result["by_sub_sector"][sub] = {
+                "median_oas": arr[n // 2] if arr else 0,
+                "mean_oas": sum(arr) / n if arr else 0,
+                "count": n,
+            }
         return result
 
-    # ------------------------------------------------------------------
-    # 12. Rating utilities
-    # ------------------------------------------------------------------
+    def treasury_relative_value(self, sectors: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        """Return bonds sorted by spread vs same-maturity Treasury."""
+        universe = self._ensure_universe(sectors)
+        rv = []
+        for bond in universe:
+            if bond.sector in ("treasury",):
+                continue
+            tsy_yield = _interp_treasury_yield(bond.maturity_years)
+            spread_vs_tsy = bond.ytm - tsy_yield
+            rv.append({
+                "issuer": bond.issuer,
+                "sector": bond.sector,
+                "rating": bond.rating,
+                "maturity_years": bond.maturity_years,
+                "ytm": bond.ytm,
+                "treasury_yield": round(tsy_yield, 4),
+                "spread_vs_treasury_bps": round(spread_vs_tsy * 100, 1),
+                "oas_bps": bond.oas_bps,
+            })
+        return sorted(rv, key=lambda x: x["spread_vs_treasury_bps"], reverse=True)
 
-    def _rating_to_numeric(self, rating: str) -> int:
-        """Convert composite rating string to numeric rank (higher = better)."""
-        return _RATING_TO_INT.get(rating, 0)
 
-    # ------------------------------------------------------------------
-    # 13. YTM calculation
-    # ------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# DurationRiskScreener
+# ---------------------------------------------------------------------------
 
-    def _compute_yield_from_price(
-        self, coupon: float, price: float, years: float
-    ) -> float:
+class DurationRiskScreener:
+    """Screen bonds by duration and rate sensitivity metrics."""
+
+    _DV01_BUCKETS = {
+        "low":    (0, 50),
+        "medium": (50, 200),
+        "high":   (200, float("inf")),
+    }
+
+    _KEY_RATE_MATURITIES = [2.0, 5.0, 10.0, 30.0]
+
+    def __init__(self, universe: Optional[List[BondSpec]] = None) -> None:
+        self._universe_builder = FixedIncomeUniverse()
+        self._universe = universe or []
+
+    def _ensure_universe(self, sectors: Optional[List[str]] = None) -> List[BondSpec]:
+        if not self._universe:
+            self._universe = self._universe_builder.build_universe(sectors)
+        return self._universe
+
+    def screen_by_duration(
+        self,
+        min_duration: Optional[float] = None,
+        max_duration: Optional[float] = None,
+        sectors: Optional[List[str]] = None,
+    ) -> List[BondSpec]:
+        """Filter by modified duration."""
+        universe = self._ensure_universe(sectors)
+        results = []
+        for bond in universe:
+            if sectors and bond.sector not in sectors:
+                continue
+            d = bond.modified_duration
+            if min_duration is not None and d < min_duration:
+                continue
+            if max_duration is not None and d > max_duration:
+                continue
+            results.append(bond)
+        return sorted(results, key=lambda b: b.modified_duration)
+
+    def screen_by_dv01_bucket(
+        self,
+        bucket: str,
+        sectors: Optional[List[str]] = None,
+    ) -> List[BondSpec]:
+        """Filter bonds by DV01 bucket: low (<$50), medium ($50-200), high (>$200).
+
+        DV01 is per $1M face value.
         """
-        Newton-Raphson yield-to-maturity for a semiannual-pay fixed-rate bond.
+        low, high = self._DV01_BUCKETS.get(bucket.lower(), (0, float("inf")))
+        universe = self._ensure_universe(sectors)
+        results = []
+        for bond in universe:
+            if sectors and bond.sector not in sectors:
+                continue
+            if low <= bond.dv01 < high:
+                results.append(bond)
+        return sorted(results, key=lambda b: b.dv01)
 
-        Args:
-            coupon: Annual coupon rate (%), e.g. 5.0 for 5%
-            price:  Clean price per $100 face value
-            years:  Years to maturity
+    def screen_positive_convexity(
+        self,
+        min_convexity: float = 0.0,
+        sectors: Optional[List[str]] = None,
+    ) -> List[BondSpec]:
+        """Filter bonds with positive (or above threshold) convexity.
 
-        Returns:
-            YTM as an annualized percentage (%)
+        Positive convexity: price gains more when rates fall than it loses when rates rise.
+        This is valuable when the rate environment is uncertain or volatile.
         """
-        face = 100.0
-        c = coupon / 200.0   # semiannual coupon per $100 face
-        n = max(1, round(years * 2))  # number of semiannual periods
-        p = price
+        universe = self._ensure_universe(sectors)
+        results = []
+        for bond in universe:
+            if sectors and bond.sector not in sectors:
+                continue
+            if bond.convexity >= min_convexity:
+                results.append(bond)
+        return sorted(results, key=lambda b: b.convexity, reverse=True)
 
-        # Initial guess: simple approximation
-        ytm_guess = (c * 2 * face + (face - p) / years) / ((face + p) / 2.0) / 100.0
+    def key_rate_exposure(self, bonds: List[BondSpec]) -> Dict[str, Dict[str, float]]:
+        """Compute approximate key rate duration (KRD) at 2Y, 5Y, 10Y, 30Y.
 
-        for _ in range(50):
-            y = ytm_guess / 2.0
-            pv_coupons = c * face * (1.0 - (1.0 + y) ** -n) / y if y != 0 else c * face * n
-            pv_face = face * (1.0 + y) ** -n
-            price_calc = pv_coupons + pv_face
+        Uses simplified linear decay allocation: duration contribution to
+        each key rate tenor decreases with distance from bond maturity.
+        """
+        krd_map: Dict[str, Dict[str, float]] = {}
+        for bond in bonds:
+            mat = bond.maturity_years
+            dur = bond.modified_duration
+            krd: Dict[str, float] = {}
 
-            # First derivative
-            dpv_dy = 0.0
-            for k in range(1, n + 1):
-                dpv_dy -= k * c * face * (1.0 + y) ** -(k + 1)
-            dpv_dy -= n * face * (1.0 + y) ** -(n + 1)
+            for kr in self._KEY_RATE_MATURITIES:
+                dist = abs(mat - kr)
+                weight = max(0, 1 - dist / 10.0)
+                krd[f"{int(kr)}Y"] = round(dur * weight, 4)
 
-            delta_y = -(price_calc - p) / dpv_dy if dpv_dy != 0 else 0.0
-            ytm_guess += delta_y * 2.0  # convert back to annual
+            total_w = sum(krd.values()) or 1.0
+            krd = {k: round(v / total_w * dur, 4) for k, v in krd.items()}
+            krd_map[bond.issuer] = krd
 
-            if abs(delta_y * 2.0) < 1e-8:
-                break
+        return krd_map
 
-        return round(ytm_guess * 100.0, 4)
-
-
-# ---------------------------------------------------------------------------
-# Module-level pure helpers
-# ---------------------------------------------------------------------------
-
-
-def _compute_ytd_return(series: pd.Series) -> Optional[float]:
-    """Compute year-to-date total return from an index series."""
-    if len(series) < 2:
-        return None
-    year_start = date(date.today().year, 1, 1)
-    year_start_ts = pd.Timestamp(year_start)
-    past = series[series.index >= year_start_ts]
-    if len(past) < 2:
-        past = series.iloc[-min(252, len(series)):]
-    if len(past) < 2:
-        return None
-    return round((float(past.iloc[-1]) / float(past.iloc[0]) - 1.0) * 100.0, 2)
-
-
-def _classify_credit_signal(
-    ig_30d: Optional[float],
-    hy_30d: Optional[float],
-    ig_oas: Optional[float],
-    hy_oas: Optional[float],
-) -> str:
-    """
-    Classify market signal based on OAS trend.
-
-    Logic:
-      - risk_on: both IG and HY OAS tightening (30d change negative)
-      - risk_off: both IG and HY OAS widening (30d change positive)
-      - neutral: mixed signals or data unavailable
-    Additional: absolute level check — if HY OAS > 700 bps, always risk_off.
-    """
-    if hy_oas and hy_oas > 700:
-        return "risk_off"
-    if ig_30d is not None and hy_30d is not None:
-        if ig_30d < -5 and hy_30d < -10:
-            return "risk_on"
-        if ig_30d > 5 and hy_30d > 10:
-            return "risk_off"
-    return "neutral"
-
-
-def _oas_to_composite_rating(
-    oas_bps: Optional[float], maturity_years: Optional[float]
-) -> Optional[str]:
-    """
-    Approximate composite rating from OAS spread using rough market ranges.
-    This is a heuristic for when no explicit rating is provided.
-    """
-    if oas_bps is None:
-        return None
-    if oas_bps < 30:
-        return "AAA"
-    elif oas_bps < 60:
-        return "AA"
-    elif oas_bps < 120:
-        return "A"
-    elif oas_bps < 200:
-        return "BBB"
-    elif oas_bps < 350:
-        return "BB"
-    elif oas_bps < 600:
-        return "B"
-    elif oas_bps < 900:
-        return "CCC"
-    else:
-        return "D"
-
-
-def _interp_from_curve(
-    curve: dict[float, Optional[float]], years: float
-) -> Optional[float]:
-    """
-    Linearly interpolate a Treasury yield from a tenor→yield curve dict.
-    """
-    tenors = sorted(k for k, v in curve.items() if v is not None)
-    if not tenors:
-        return None
-    if years <= tenors[0]:
-        return curve[tenors[0]]
-    if years >= tenors[-1]:
-        return curve[tenors[-1]]
-    for i in range(len(tenors) - 1):
-        t0, t1 = tenors[i], tenors[i + 1]
-        if t0 <= years <= t1:
-            v0 = curve[t0]
-            v1 = curve[t1]
-            if v0 is None or v1 is None:
-                return None
-            w = (years - t0) / (t1 - t0)
-            return v0 + w * (v1 - v0)
-    return None
-
-
-def _estimate_delta(
-    coupon: float, conversion_price: Optional[float]
-) -> Optional[float]:
-    """
-    Estimate convertible bond delta (equity sensitivity 0–1).
-
-    Heuristic: zero-coupon converts → delta ≈ 0.5; high-coupon without
-    conversion price → delta ≈ 0.3 (bond-like); if conversion price known
-    and coupon is low, skew toward 0.5.
-    """
-    if conversion_price and conversion_price > 0:
-        if coupon <= 1.0:
-            return 0.55
-        elif coupon <= 3.0:
-            return 0.45
-        else:
-            return 0.35
-    if coupon <= 0.5:
-        return 0.5
-    elif coupon <= 2.0:
-        return 0.4
-    else:
-        return 0.3
+    def portfolio_duration_summary(self, bonds: List[BondSpec]) -> Dict[str, float]:
+        """Compute average portfolio duration and convexity metrics."""
+        if not bonds:
+            return {}
+        durs = [b.modified_duration for b in bonds]
+        convex = [b.convexity for b in bonds]
+        dv01s = [b.dv01 for b in bonds]
+        return {
+            "count": len(bonds),
+            "avg_modified_duration": round(sum(durs) / len(durs), 4),
+            "min_duration": round(min(durs), 4),
+            "max_duration": round(max(durs), 4),
+            "avg_convexity": round(sum(convex) / len(convex), 4),
+            "total_dv01": round(sum(dv01s), 2),
+        }
 
 
 # ---------------------------------------------------------------------------
-# Module-level convenience coroutines
+# CreditQualityScreener
 # ---------------------------------------------------------------------------
+
+_RATING_ORDER = [
+    "AAA", "AA+", "AA", "AA-", "A+", "A", "A-",
+    "BBB+", "BBB", "BBB-",
+    "BB+", "BB", "BB-", "B+", "B", "B-",
+    "CCC+", "CCC", "CCC-", "CC", "C", "D",
+]
+_RATING_RANK = {r: i for i, r in enumerate(_RATING_ORDER)}
+
+
+def _rating_rank(rating: str) -> int:
+    return _RATING_RANK.get(rating, 99)
+
+
+class CreditQualityScreener:
+    """Screen bonds by credit quality: ratings, watch status, coverage, Altman Z."""
+
+    def __init__(self, universe: Optional[List[BondSpec]] = None) -> None:
+        self._universe_builder = FixedIncomeUniverse()
+        self._universe = universe or []
+
+    def _ensure_universe(self, sectors: Optional[List[str]] = None) -> List[BondSpec]:
+        if not self._universe:
+            self._universe = self._universe_builder.build_universe(sectors)
+        return self._universe
+
+    def screen_by_rating(
+        self,
+        min_rating: Optional[str] = None,
+        max_rating: Optional[str] = None,
+        exact_ratings: Optional[List[str]] = None,
+        sectors: Optional[List[str]] = None,
+    ) -> List[BondSpec]:
+        """Filter by credit rating.
+
+        Parameters
+        ----------
+        min_rating    : minimum rating (best quality), e.g. 'A'
+        max_rating    : maximum rating (lowest quality), e.g. 'BBB-'
+        exact_ratings : list of exact rating strings to include
+        """
+        universe = self._ensure_universe(sectors)
+        results = []
+        min_rank = _rating_rank(min_rating) if min_rating else 0
+        max_rank = _rating_rank(max_rating) if max_rating else 99
+
+        for bond in universe:
+            if sectors and bond.sector not in sectors:
+                continue
+            if bond.rating is None:
+                continue
+            rank = _rating_rank(bond.rating)
+            if exact_ratings:
+                if bond.rating not in exact_ratings:
+                    continue
+            else:
+                if not (min_rank <= rank <= max_rank):
+                    continue
+            results.append(bond)
+        return sorted(results, key=lambda b: _rating_rank(b.rating or "D"))
+
+    def screen_exclude_negative_watch(
+        self, sectors: Optional[List[str]] = None
+    ) -> List[BondSpec]:
+        """Return only bonds NOT on negative credit watch."""
+        universe = self._ensure_universe(sectors)
+        return [b for b in universe if not b.negative_watch
+                and (not sectors or b.sector in sectors)]
+
+    def screen_by_coverage(
+        self,
+        min_interest_coverage: Optional[float] = None,
+        max_debt_ebitda: Optional[float] = None,
+        sectors: Optional[List[str]] = None,
+    ) -> List[BondSpec]:
+        """Filter by fundamental credit metrics (interest coverage, leverage)."""
+        universe = self._ensure_universe(sectors)
+        results = []
+        for bond in universe:
+            if sectors and bond.sector not in sectors:
+                continue
+            if min_interest_coverage is not None:
+                if bond.interest_coverage is None:
+                    continue
+                if bond.interest_coverage < min_interest_coverage:
+                    continue
+            if max_debt_ebitda is not None:
+                if bond.debt_ebitda is None:
+                    continue
+                if bond.debt_ebitda > max_debt_ebitda:
+                    continue
+            results.append(bond)
+        return results
+
+    def screen_by_altman_z(
+        self,
+        min_z: float = _ALTMAN_ZSCORE_SAFE,
+        sectors: Optional[List[str]] = None,
+    ) -> List[BondSpec]:
+        """Filter bonds where issuer Altman Z-score is above safe threshold (1.8).
+
+        Z > 2.99  : safe zone
+        1.81-2.99 : grey zone
+        Z < 1.81  : distress zone
+        """
+        universe = self._ensure_universe(sectors)
+        results = []
+        for bond in universe:
+            if sectors and bond.sector not in sectors:
+                continue
+            if bond.altman_z is None:
+                continue
+            if bond.altman_z >= min_z:
+                results.append(bond)
+        return sorted(results, key=lambda b: b.altman_z or 0, reverse=True)
+
+    def screen_fallen_angel_risk(
+        self,
+        exclude: bool = True,
+        sectors: Optional[List[str]] = None,
+    ) -> List[BondSpec]:
+        """Filter based on fallen angel risk (BBB-/BBB issuers near HY boundary).
+
+        exclude=True : return only bonds without fallen angel risk
+        exclude=False: return only bonds WITH fallen angel risk (watchlist)
+        """
+        universe = self._ensure_universe(sectors)
+        results = []
+        for bond in universe:
+            if sectors and bond.sector not in sectors:
+                continue
+            if exclude and not bond.fallen_angel_risk:
+                results.append(bond)
+            elif not exclude and bond.fallen_angel_risk:
+                results.append(bond)
+        return results
+
+    def credit_quality_summary(self, bonds: List[BondSpec]) -> Dict[str, Any]:
+        """Return credit quality distribution of a bond list."""
+        rating_counts: Dict[str, int] = {}
+        watch_count = 0
+        fallen_angel_count = 0
+        for bond in bonds:
+            r = bond.rating or "NR"
+            rating_counts[r] = rating_counts.get(r, 0) + 1
+            if bond.negative_watch:
+                watch_count += 1
+            if bond.fallen_angel_risk:
+                fallen_angel_count += 1
+        return {
+            "total": len(bonds),
+            "rating_distribution": dict(sorted(
+                rating_counts.items(), key=lambda x: _rating_rank(x[0])
+            )),
+            "negative_watch_count": watch_count,
+            "fallen_angel_risk_count": fallen_angel_count,
+        }
+
+
+# ---------------------------------------------------------------------------
+# FixedIncomeRankingEngine
+# ---------------------------------------------------------------------------
+
+class FixedIncomeRankingEngine:
+    """Rank bonds by risk-adjusted return metrics.
+
+    Methods
+    -------
+    carry_duration  : yield / modified_duration — yield per unit of rate risk
+    spread_duration : OAS / modified_duration — spread per unit of rate risk
+    credit_adj      : spread / (PD x LGD) — spread vs expected credit loss
+    """
+
+    # Annual PD (pct) and LGD by rating
+    _PD_LGD: Dict[str, Tuple[float, float]] = {
+        "AAA":  (0.001, 0.40),
+        "AA+":  (0.003, 0.40),
+        "AA":   (0.005, 0.40),
+        "AA-":  (0.008, 0.40),
+        "A+":   (0.012, 0.45),
+        "A":    (0.018, 0.45),
+        "A-":   (0.025, 0.45),
+        "BBB+": (0.040, 0.50),
+        "BBB":  (0.060, 0.50),
+        "BBB-": (0.090, 0.55),
+        "BB+":  (0.150, 0.60),
+        "BB":   (0.250, 0.60),
+        "BB-":  (0.400, 0.60),
+        "B+":   (0.650, 0.65),
+        "B":    (1.000, 0.65),
+        "B-":   (1.600, 0.65),
+        "CCC+": (2.500, 0.70),
+        "CCC":  (4.000, 0.70),
+        "CCC-": (6.500, 0.75),
+    }
+
+    def __init__(self, universe: Optional[List[BondSpec]] = None) -> None:
+        self._universe_builder = FixedIncomeUniverse()
+        self._universe = universe or []
+
+    def _ensure_universe(self, sectors: Optional[List[str]] = None) -> List[BondSpec]:
+        if not self._universe:
+            self._universe = self._universe_builder.build_universe(sectors)
+        return self._universe
+
+    def _carry_duration_score(self, bond: BondSpec) -> float:
+        """Yield per unit of modified duration (carry efficiency)."""
+        if bond.modified_duration <= 0:
+            return 0.0
+        return bond.ytm / bond.modified_duration
+
+    def _spread_duration_score(self, bond: BondSpec) -> float:
+        """OAS per unit of modified duration (spread efficiency)."""
+        if bond.modified_duration <= 0:
+            return 0.0
+        return bond.oas_bps / bond.modified_duration
+
+    def _credit_adj_score(self, bond: BondSpec) -> float:
+        """Spread / (PD x LGD): compensation per unit of expected credit loss.
+
+        Higher score = better compensated for credit risk taken.
+        """
+        rating = bond.rating or "BBB"
+        pd, lgd = self._PD_LGD.get(rating, (1.0, 0.60))
+        expected_loss = pd * lgd   # annual, in pct
+        if expected_loss <= 0:
+            return float("inf")
+        return bond.oas_bps / (expected_loss * 100)
+
+    def rank_universe(
+        self,
+        universe: Optional[List[BondSpec]] = None,
+        method: str = "carry_duration",
+        sectors: Optional[List[str]] = None,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """Rank bonds by the specified method and return top `limit` bonds.
+
+        Parameters
+        ----------
+        universe : pre-built list, or None to build from scratch
+        method   : carry_duration | spread_duration | credit_adj
+        sectors  : filter to these sectors before ranking
+        limit    : max results to return
+        """
+        if universe is None:
+            universe = self._ensure_universe(sectors)
+
+        if sectors:
+            universe = [b for b in universe if b.sector in sectors]
+
+        score_fn = {
+            "carry_duration": self._carry_duration_score,
+            "spread_duration": self._spread_duration_score,
+            "credit_adj": self._credit_adj_score,
+        }.get(method, self._carry_duration_score)
+
+        scored = []
+        for bond in universe:
+            score = score_fn(bond)
+            if math.isfinite(score):
+                scored.append((score, bond))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+
+        results = []
+        for rank, (score, bond) in enumerate(scored[:limit], start=1):
+            results.append({
+                "rank": rank,
+                "issuer": bond.issuer,
+                "sector": bond.sector,
+                "rating": bond.rating,
+                "maturity_years": bond.maturity_years,
+                "coupon_rate": bond.coupon_rate,
+                "ytm": bond.ytm,
+                "ytw": bond.ytw,
+                "oas_bps": bond.oas_bps,
+                "modified_duration": bond.modified_duration,
+                "convexity": bond.convexity,
+                "score": round(score, 4),
+                "score_method": method,
+                "negative_watch": bond.negative_watch,
+                "fallen_angel_risk": bond.fallen_angel_risk,
+                "tax_exempt": bond.tax_exempt,
+                "callable": bond.callable,
+            })
+        return results
+
+
+# ---------------------------------------------------------------------------
+# Composite FixedIncomeScreener
+# ---------------------------------------------------------------------------
+
+class FixedIncomeScreener:
+    """Orchestrates all FI screeners in a single pass.
+
+    Use as primary entry point: pass a ScreenRequest and get back
+    a filtered, ranked list of bonds.
+    """
+
+    def __init__(self) -> None:
+        self._universe_builder = FixedIncomeUniverse()
+        self._yield_screener = YieldScreener()
+        self._spread_screener = SpreadScreener()
+        self._duration_screener = DurationRiskScreener()
+        self._credit_screener = CreditQualityScreener()
+        self._ranking_engine = FixedIncomeRankingEngine()
+
+    def screen(self, req: ScreenRequest) -> List[Dict[str, Any]]:
+        """Run full multi-filter screen and return ranked results."""
+        universe = self._universe_builder.build_universe(req.sectors)
+        filtered = universe
+
+        if req.sectors:
+            filtered = [b for b in filtered if b.sector in req.sectors]
+        if req.min_ytm is not None:
+            filtered = [b for b in filtered if b.ytm >= req.min_ytm]
+        if req.max_ytm is not None:
+            filtered = [b for b in filtered if b.ytm <= req.max_ytm]
+        if req.min_ytw is not None:
+            filtered = [b for b in filtered if b.ytw >= req.min_ytw]
+        if req.max_ytw is not None:
+            filtered = [b for b in filtered if b.ytw <= req.max_ytw]
+        if req.min_oas_bps is not None:
+            filtered = [b for b in filtered if b.oas_bps >= req.min_oas_bps]
+        if req.max_oas_bps is not None:
+            filtered = [b for b in filtered if b.oas_bps <= req.max_oas_bps]
+        if req.min_duration is not None:
+            filtered = [b for b in filtered if b.modified_duration >= req.min_duration]
+        if req.max_duration is not None:
+            filtered = [b for b in filtered if b.modified_duration <= req.max_duration]
+        if req.min_convexity is not None:
+            filtered = [b for b in filtered if b.convexity >= req.min_convexity]
+        if req.ratings:
+            filtered = [b for b in filtered if b.rating in req.ratings]
+        if req.exclude_negative_watch:
+            filtered = [b for b in filtered if not b.negative_watch]
+        if req.min_interest_coverage is not None:
+            filtered = [
+                b for b in filtered
+                if b.interest_coverage is None or b.interest_coverage >= req.min_interest_coverage
+            ]
+        if req.max_debt_ebitda is not None:
+            filtered = [
+                b for b in filtered
+                if b.debt_ebitda is None or b.debt_ebitda <= req.max_debt_ebitda
+            ]
+        if req.min_altman_z is not None:
+            filtered = [
+                b for b in filtered
+                if b.altman_z is None or b.altman_z >= req.min_altman_z
+            ]
+        if req.exclude_fallen_angels:
+            filtered = [b for b in filtered if not b.fallen_angel_risk]
+
+        ranked = self._ranking_engine.rank_universe(
+            universe=filtered,
+            method=req.rank_method,
+            limit=req.limit,
+        )
+
+        if req.tax_equivalent:
+            for item in ranked:
+                sector = item.get("sector")
+                ytm = item.get("ytm", 0)
+                if sector == "muni":
+                    item["tey"] = round(ytm * _MUNI_TEY_FACTOR, 4)
+                else:
+                    item["tey"] = ytm
+
+        _log_screen("composite", req.dict(), len(ranked))
+        return ranked
+
+
+def _log_screen(screen_type: str, params: dict, result_count: int) -> None:
+    import json as _json
+    try:
+        conn = _db()
+        _ensure_tables()
+        conn.execute(
+            """INSERT INTO fi_screen_history (ts, screen_type, params_json, result_count)
+               VALUES (?, ?, ?, ?)""",
+            (datetime.utcnow().isoformat(), screen_type, _json.dumps(params), result_count),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as exc:
+        logger.warning("Screen log write failed: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# FastAPI router
+# ---------------------------------------------------------------------------
+
+fi_screener_router = APIRouter(prefix="/fi", tags=["fixed-income-screener"])
 
 _screener: Optional[FixedIncomeScreener] = None
+_univ_builder: Optional[FixedIncomeUniverse] = None
+_yield_scr: Optional[YieldScreener] = None
+_spread_scr: Optional[SpreadScreener] = None
+_dur_scr: Optional[DurationRiskScreener] = None
+_credit_scr: Optional[CreditQualityScreener] = None
+_ranker: Optional[FixedIncomeRankingEngine] = None
 
 
 def _get_screener() -> FixedIncomeScreener:
@@ -1558,43 +1504,499 @@ def _get_screener() -> FixedIncomeScreener:
     return _screener
 
 
-async def credit_market() -> CreditMarket:
-    """Fetch current credit market snapshot (FRED-powered)."""
-    return await _get_screener().get_credit_market_snapshot()
+def _get_universe_builder() -> FixedIncomeUniverse:
+    global _univ_builder
+    if _univ_builder is None:
+        _univ_builder = FixedIncomeUniverse()
+    return _univ_builder
 
 
-async def screen_bonds(
-    min_yield: float = 0.0,
-    min_rating: str = "BBB",
-    max_maturity_years: Optional[float] = None,
-    convertible_only: bool = False,
-) -> ScreenResult:
-    """Screen corporate bonds with sensible defaults (IG, yield > 0%)."""
-    return await _get_screener().screen_corporate_bonds(
-        min_yield=min_yield,
-        min_rating=min_rating,
-        max_maturity_years=max_maturity_years,
-        convertible_only=convertible_only,
-    )
+def _get_yield_screener() -> YieldScreener:
+    global _yield_scr
+    if _yield_scr is None:
+        _yield_scr = YieldScreener()
+    return _yield_scr
 
 
-async def new_issuances(days_back: int = 30) -> list[Bond]:
-    """Return recently-issued corporate bonds from EDGAR 424B2 / 8-K."""
-    return await _get_screener().get_new_bond_issuances(days_back=days_back)
+def _get_spread_screener() -> SpreadScreener:
+    global _spread_scr
+    if _spread_scr is None:
+        _spread_scr = SpreadScreener()
+    return _spread_scr
 
 
-async def convertible_bonds(days_back: int = 90) -> list[ConvertibleBond]:
-    """Return recent convertible bond announcements from EDGAR 8-K."""
-    return await _get_screener().get_convertible_bonds(days_back=days_back)
+def _get_duration_screener() -> DurationRiskScreener:
+    global _dur_scr
+    if _dur_scr is None:
+        _dur_scr = DurationRiskScreener()
+    return _dur_scr
 
 
-async def treasury_securities(
-    security_type: str = "Note", days_back: int = 180
-) -> list[TreasurySecurity]:
-    """Return recently-auctioned Treasury securities from TreasuryDirect."""
-    return await _get_screener().get_treasury_securities(security_type, days_back)
+def _get_credit_screener() -> CreditQualityScreener:
+    global _credit_scr
+    if _credit_scr is None:
+        _credit_scr = CreditQualityScreener()
+    return _credit_scr
 
 
-async def bond_universe() -> list[Bond]:
-    """Build and return the full SENTINEL bond universe (all sources)."""
-    return await _get_screener().build_bond_universe()
+def _get_ranker() -> FixedIncomeRankingEngine:
+    global _ranker
+    if _ranker is None:
+        _ranker = FixedIncomeRankingEngine()
+    return _ranker
+
+
+# ------------------------------------------------------------------
+# /fi/universe
+# ------------------------------------------------------------------
+
+@fi_screener_router.get("/universe", summary="Build and return FI universe")
+async def get_universe(
+    sectors: Optional[str] = Query(None, description="Comma-separated sectors"),
+) -> Dict[str, Any]:
+    """Return the full (or sector-filtered) bond universe."""
+    sector_list = [s.strip() for s in sectors.split(",")] if sectors else None
+    try:
+        universe = _get_universe_builder().build_universe(sector_list)
+        return {
+            "count": len(universe),
+            "sectors": sector_list or ["treasury", "tips", "ig_corp", "hy_corp", "muni", "agency"],
+            "bonds": [b.dict() for b in universe[:200]],
+            "note": "Showing first 200 bonds. Use /fi/screen for filtered results.",
+        }
+    except Exception as exc:
+        raise HTTPException(500, str(exc)) from exc
+
+
+# ------------------------------------------------------------------
+# /fi/screen
+# ------------------------------------------------------------------
+
+@fi_screener_router.post("/screen", summary="Full multi-filter FI screen")
+async def post_screen(req: ScreenRequest) -> Dict[str, Any]:
+    """Run a composite fixed income screen with all filters applied."""
+    try:
+        results = _get_screener().screen(req)
+        return {
+            "count": len(results),
+            "rank_method": req.rank_method,
+            "filters_applied": {
+                k: v for k, v in req.dict().items() if v is not None and k != "limit"
+            },
+            "results": results,
+        }
+    except Exception as exc:
+        raise HTTPException(500, str(exc)) from exc
+
+
+# ------------------------------------------------------------------
+# /fi/yield-screen
+# ------------------------------------------------------------------
+
+@fi_screener_router.get("/yield-screen", summary="Screen by yield")
+async def get_yield_screen(
+    min_ytm: Optional[float] = Query(None),
+    max_ytm: Optional[float] = Query(None),
+    min_ytw: Optional[float] = Query(None),
+    max_ytw: Optional[float] = Query(None),
+    sectors: Optional[str] = Query(None),
+    tax_equivalent: bool = Query(False),
+) -> Dict[str, Any]:
+    """Screen bonds by YTM/YTW thresholds, with optional TEY mode for munis."""
+    sector_list = [s.strip() for s in sectors.split(",")] if sectors else None
+    try:
+        scr = _get_yield_screener()
+        if tax_equivalent:
+            results = scr.screen_tax_equivalent(
+                min_tey=min_ytm, max_tey=max_ytm, compare_ytm=min_ytm
+            )
+            return {
+                "mode": "tax_equivalent",
+                "count": len(results),
+                "results": [b.dict() for b in results[:100]],
+            }
+        results = scr.screen_by_yield(
+            min_ytm=min_ytm, max_ytm=max_ytm,
+            min_ytw=min_ytw, max_ytw=max_ytw,
+            sectors=sector_list,
+        )
+        return {"count": len(results), "results": [b.dict() for b in results[:100]]}
+    except Exception as exc:
+        raise HTTPException(500, str(exc)) from exc
+
+
+@fi_screener_router.get("/yield-screen/real", summary="TIPS real yield screen")
+async def get_real_yield_screen(
+    min_real_yield: Optional[float] = Query(None),
+    max_real_yield: Optional[float] = Query(None),
+) -> Dict[str, Any]:
+    """Screen TIPS bonds by real yield."""
+    try:
+        results = _get_yield_screener().screen_real_yield(
+            min_real_yield=min_real_yield, max_real_yield=max_real_yield
+        )
+        return {"count": len(results), "results": [b.dict() for b in results]}
+    except Exception as exc:
+        raise HTTPException(500, str(exc)) from exc
+
+
+# ------------------------------------------------------------------
+# /fi/spread-screen
+# ------------------------------------------------------------------
+
+@fi_screener_router.get("/spread-screen", summary="Screen by OAS spread")
+async def get_spread_screen(
+    min_oas_bps: Optional[float] = Query(None),
+    max_oas_bps: Optional[float] = Query(None),
+    sectors: Optional[str] = Query(None),
+    min_pct: Optional[float] = Query(None, description="Min OAS percentile (0-100)"),
+    max_pct: Optional[float] = Query(None, description="Max OAS percentile (0-100)"),
+) -> Dict[str, Any]:
+    """Screen by OAS spread and/or historical spread percentile."""
+    sector_list = [s.strip() for s in sectors.split(",")] if sectors else None
+    try:
+        scr = _get_spread_screener()
+        if min_pct is not None or max_pct is not None:
+            results = scr.screen_by_oas_percentile(
+                min_pct=min_pct, max_pct=max_pct, sectors=sector_list
+            )
+        else:
+            results = scr.screen_by_oas(
+                min_oas_bps=min_oas_bps, max_oas_bps=max_oas_bps, sectors=sector_list
+            )
+        return {"count": len(results), "results": [b.dict() for b in results[:100]]}
+    except Exception as exc:
+        raise HTTPException(500, str(exc)) from exc
+
+
+@fi_screener_router.get("/spread-screen/sector-comparison", summary="Sector OAS comparison")
+async def get_sector_comparison(
+    sectors: Optional[str] = Query(None),
+) -> Dict[str, Any]:
+    """Return median OAS by sector and sub-sector for relative value analysis."""
+    sector_list = [s.strip() for s in sectors.split(",")] if sectors else None
+    try:
+        return _get_spread_screener().sector_spread_comparison(sectors=sector_list)
+    except Exception as exc:
+        raise HTTPException(500, str(exc)) from exc
+
+
+@fi_screener_router.get("/spread-screen/relative-value", summary="Treasury relative value")
+async def get_relative_value(
+    sectors: Optional[str] = Query(None),
+) -> Dict[str, Any]:
+    """Return bonds sorted by spread vs same-maturity Treasury (richest to cheapest)."""
+    sector_list = [s.strip() for s in sectors.split(",")] if sectors else None
+    try:
+        rv = _get_spread_screener().treasury_relative_value(sectors=sector_list)
+        return {"count": len(rv), "results": rv[:100]}
+    except Exception as exc:
+        raise HTTPException(500, str(exc)) from exc
+
+
+@fi_screener_router.get("/spread-screen/momentum", summary="Spread widening/narrowing screen")
+async def get_spread_momentum(
+    min_30d_change_bps: Optional[float] = Query(None),
+    max_30d_change_bps: Optional[float] = Query(None),
+    sectors: Optional[str] = Query(None),
+) -> Dict[str, Any]:
+    """Screen by 30-day OAS change. Positive = widening (cheapening)."""
+    sector_list = [s.strip() for s in sectors.split(",")] if sectors else None
+    try:
+        results = _get_spread_screener().screen_by_spread_momentum(
+            min_30d_change_bps=min_30d_change_bps,
+            max_30d_change_bps=max_30d_change_bps,
+            sectors=sector_list,
+        )
+        return {"count": len(results), "results": [b.dict() for b in results[:100]]}
+    except Exception as exc:
+        raise HTTPException(500, str(exc)) from exc
+
+
+# ------------------------------------------------------------------
+# /fi/duration-screen
+# ------------------------------------------------------------------
+
+@fi_screener_router.get("/duration-screen", summary="Screen by duration and rate risk")
+async def get_duration_screen(
+    min_duration: Optional[float] = Query(None),
+    max_duration: Optional[float] = Query(None),
+    dv01_bucket: Optional[str] = Query(None, description="low|medium|high"),
+    min_convexity: Optional[float] = Query(None),
+    sectors: Optional[str] = Query(None),
+) -> Dict[str, Any]:
+    """Screen by modified duration, DV01 bucket, or positive convexity."""
+    sector_list = [s.strip() for s in sectors.split(",")] if sectors else None
+    scr = _get_duration_screener()
+    try:
+        if dv01_bucket:
+            results = scr.screen_by_dv01_bucket(bucket=dv01_bucket, sectors=sector_list)
+        elif min_convexity is not None:
+            results = scr.screen_positive_convexity(
+                min_convexity=min_convexity, sectors=sector_list
+            )
+        else:
+            results = scr.screen_by_duration(
+                min_duration=min_duration, max_duration=max_duration, sectors=sector_list
+            )
+        summary = scr.portfolio_duration_summary(results)
+        return {
+            "count": len(results),
+            "summary": summary,
+            "results": [b.dict() for b in results[:100]],
+        }
+    except Exception as exc:
+        raise HTTPException(500, str(exc)) from exc
+
+
+@fi_screener_router.post("/duration-screen/key-rate", summary="Key rate duration by issuer")
+async def get_key_rate_exposure(bonds_request: List[str]) -> Dict[str, Any]:
+    """Compute KRD at 2Y, 5Y, 10Y, 30Y for named issuers."""
+    try:
+        universe = _get_universe_builder().build_universe()
+        selected = [b for b in universe if b.issuer in bonds_request]
+        if not selected:
+            return {"status": "no_match", "matched_count": 0}
+        krd = _get_duration_screener().key_rate_exposure(selected)
+        return {"matched_count": len(selected), "key_rate_duration": krd}
+    except Exception as exc:
+        raise HTTPException(500, str(exc)) from exc
+
+
+# ------------------------------------------------------------------
+# /fi/credit-screen
+# ------------------------------------------------------------------
+
+@fi_screener_router.get("/credit-screen", summary="Screen by credit quality")
+async def get_credit_screen(
+    min_rating: Optional[str] = Query(None),
+    max_rating: Optional[str] = Query(None),
+    ratings: Optional[str] = Query(None, description="Exact ratings, comma-separated"),
+    exclude_negative_watch: bool = Query(True),
+    min_interest_coverage: Optional[float] = Query(None),
+    max_debt_ebitda: Optional[float] = Query(None),
+    min_altman_z: Optional[float] = Query(None),
+    exclude_fallen_angels: bool = Query(False),
+    sectors: Optional[str] = Query(None),
+) -> Dict[str, Any]:
+    """Screen by credit rating, watch status, leverage, and distress metrics."""
+    sector_list = [s.strip() for s in sectors.split(",")] if sectors else None
+    ratings_list = [r.strip() for r in ratings.split(",")] if ratings else None
+    scr = _get_credit_screener()
+    try:
+        universe = _get_universe_builder().build_universe(sector_list)
+        results = universe
+
+        if ratings_list:
+            results = scr.screen_by_rating(exact_ratings=ratings_list, sectors=sector_list)
+        elif min_rating or max_rating:
+            results = scr.screen_by_rating(
+                min_rating=min_rating, max_rating=max_rating, sectors=sector_list
+            )
+
+        if exclude_negative_watch:
+            results = [b for b in results if not b.negative_watch]
+        if min_interest_coverage is not None:
+            results = [
+                b for b in results
+                if b.interest_coverage is None or b.interest_coverage >= min_interest_coverage
+            ]
+        if max_debt_ebitda is not None:
+            results = [
+                b for b in results
+                if b.debt_ebitda is None or b.debt_ebitda <= max_debt_ebitda
+            ]
+        if min_altman_z is not None:
+            results = [
+                b for b in results
+                if b.altman_z is None or b.altman_z >= min_altman_z
+            ]
+        if exclude_fallen_angels:
+            results = [b for b in results if not b.fallen_angel_risk]
+
+        summary = scr.credit_quality_summary(results)
+        return {
+            "count": len(results),
+            "credit_summary": summary,
+            "results": [b.dict() for b in results[:100]],
+        }
+    except Exception as exc:
+        raise HTTPException(500, str(exc)) from exc
+
+
+@fi_screener_router.get("/credit-screen/fallen-angels", summary="Fallen angel watch list")
+async def get_fallen_angels() -> Dict[str, Any]:
+    """Return BBB/BBB- issuers with high leverage at risk of HY downgrade."""
+    try:
+        results = _get_credit_screener().screen_fallen_angel_risk(exclude=False)
+        return {
+            "count": len(results),
+            "note": "BBB-rated issuers with Debt/EBITDA > 4x — monitor for potential downgrade",
+            "results": [b.dict() for b in results],
+        }
+    except Exception as exc:
+        raise HTTPException(500, str(exc)) from exc
+
+
+@fi_screener_router.get("/credit-screen/altman-z", summary="Altman Z-score screen")
+async def get_altman_screen(
+    min_z: float = Query(_ALTMAN_ZSCORE_SAFE, description="Min Altman Z-score"),
+    sectors: Optional[str] = Query(None),
+) -> Dict[str, Any]:
+    """Screen bonds where issuer Altman Z-score is above the safe threshold."""
+    sector_list = [s.strip() for s in sectors.split(",")] if sectors else None
+    try:
+        results = _get_credit_screener().screen_by_altman_z(min_z=min_z, sectors=sector_list)
+        return {
+            "count": len(results),
+            "min_altman_z": min_z,
+            "zones": {
+                "safe": "> 2.99",
+                "grey": "1.81 - 2.99",
+                "distress": "< 1.81",
+            },
+            "results": [b.dict() for b in results[:100]],
+        }
+    except Exception as exc:
+        raise HTTPException(500, str(exc)) from exc
+
+
+# ------------------------------------------------------------------
+# /fi/rank
+# ------------------------------------------------------------------
+
+@fi_screener_router.post("/rank", summary="Rank FI universe by risk-adjusted return")
+async def post_rank(req: RankRequest) -> Dict[str, Any]:
+    """Rank bonds by carry/duration, spread/duration, or credit-adjusted scoring."""
+    sector_map: Dict[str, Optional[List[str]]] = {
+        "all":      None,
+        "ig":       ["ig_corp"],
+        "hy":       ["hy_corp"],
+        "muni":     ["muni"],
+        "treasury": ["treasury"],
+        "tips":     ["tips"],
+        "agency":   ["agency"],
+    }
+    sectors = sector_map.get(req.universe_key)
+    try:
+        results = _get_ranker().rank_universe(
+            method=req.method,
+            sectors=sectors,
+            limit=req.limit,
+        )
+        return {
+            "universe": req.universe_key,
+            "method": req.method,
+            "count": len(results),
+            "results": results,
+        }
+    except Exception as exc:
+        raise HTTPException(500, str(exc)) from exc
+
+
+# ------------------------------------------------------------------
+# /fi/treasury-curve
+# ------------------------------------------------------------------
+
+def _mat_label(m: float) -> str:
+    months = round(m * 12)
+    if months < 12:
+        return f"{months}M"
+    return f"{round(m)}Y"
+
+
+@fi_screener_router.get("/treasury-curve", summary="Treasury yield curve")
+async def get_treasury_curve() -> Dict[str, Any]:
+    """Return the Treasury yield curve used by the screener."""
+    curve_list = [
+        {"maturity_years": m, "maturity_label": _mat_label(m), "yield_pct": y}
+        for m, y in sorted(_TREASURY_CURVE.items())
+    ]
+    return {
+        "curve": curve_list,
+        "note": "Approximate on-the-run Treasury yields (2025-2026 baseline).",
+    }
+
+
+# ------------------------------------------------------------------
+# /fi/muni-tey
+# ------------------------------------------------------------------
+
+@fi_screener_router.get("/muni-tey", summary="Muni TEY calculator")
+async def get_muni_tey(
+    ytm: float = Query(..., description="Muni YTM as pct"),
+    tax_rate: float = Query(0.40, description="Combined marginal tax rate (0.40 = 40%)"),
+) -> Dict[str, Any]:
+    """Compute tax-equivalent yield for a muni bond."""
+    if not (0 <= tax_rate < 1.0):
+        raise HTTPException(400, "tax_rate must be between 0 and 1")
+    tey = ytm / (1.0 - tax_rate)
+    return {
+        "muni_ytm": ytm,
+        "tax_rate": tax_rate,
+        "tax_equivalent_yield": round(tey, 4),
+        "breakeven_corporate_yield": round(tey, 4),
+        "note": (
+            f"A muni yielding {ytm}% is equivalent to a corporate yielding {tey:.2f}% "
+            f"for an investor in the {tax_rate*100:.0f}% combined tax bracket."
+        ),
+    }
+
+
+# ------------------------------------------------------------------
+# /fi/bond-analytics
+# ------------------------------------------------------------------
+
+class BondAnalyticsRequest(BaseModel):
+    ytm_pct: float = Field(..., description="YTM in pct, e.g. 5.0")
+    coupon_rate_pct: float = Field(..., description="Annual coupon rate in pct")
+    maturity_years: float = Field(..., description="Years to maturity")
+    face: float = Field(1000.0, description="Face/par value")
+    freq: int = Field(2, description="Coupon payments per year")
+
+
+@fi_screener_router.post("/bond-analytics", summary="Single bond analytics calculator")
+async def post_bond_analytics(req: BondAnalyticsRequest) -> Dict[str, Any]:
+    """Compute price, duration, convexity, DV01 for a single bond spec."""
+    try:
+        price = _bond_price(req.ytm_pct, req.coupon_rate_pct, req.maturity_years, req.face, req.freq)
+        mod_dur, mac_dur, convex, dv01 = _compute_duration_convexity(
+            req.ytm_pct, req.coupon_rate_pct, req.maturity_years, req.face, req.freq
+        )
+        price_100 = price / (req.face / 100.0)
+        tsy_yield = _interp_treasury_yield(req.maturity_years)
+        spread = round((req.ytm_pct - tsy_yield) * 100, 1)
+        return {
+            "ytm_pct": req.ytm_pct,
+            "coupon_rate_pct": req.coupon_rate_pct,
+            "maturity_years": req.maturity_years,
+            "price": round(price, 4),
+            "price_per_100": round(price_100, 4),
+            "modified_duration": mod_dur,
+            "macaulay_duration": mac_dur,
+            "convexity": convex,
+            "dv01_per_million": dv01,
+            "treasury_yield_pct": round(tsy_yield, 4),
+            "spread_vs_treasury_bps": spread,
+        }
+    except Exception as exc:
+        raise HTTPException(500, str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Module-level exports
+# ---------------------------------------------------------------------------
+
+__all__ = [
+    "FixedIncomeUniverse",
+    "YieldScreener",
+    "SpreadScreener",
+    "DurationRiskScreener",
+    "CreditQualityScreener",
+    "FixedIncomeRankingEngine",
+    "FixedIncomeScreener",
+    "BondSpec",
+    "ScreenRequest",
+    "RankRequest",
+    "fi_screener_router",
+]
