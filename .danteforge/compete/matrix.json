@@ -25,10 +25,10 @@
     "qlib",
     "vectorbt"
   ],
-  "lastUpdated": "2026-05-18T11:46:35Z",
-  "overallSelfScore": 8.2378,
+  "lastUpdated": "2026-05-18T12:36:56Z",
+  "overallSelfScore": 7.9198,
   "harshComposite": 5.97,
-  "selfComposite": 8.2378,
+  "selfComposite": 7.9198,
   "annualCost": {
     "sentinel": 0,
     "bloomberg": 31980,
@@ -70,7 +70,7 @@
       "category": "market_data",
       "frequency": "high",
       "scores": {
-        "self": 8,
+        "self": 7,
         "bloomberg": 10,
         "capiq": 6,
         "factset": 7,
@@ -186,7 +186,7 @@
       "category": "market_data",
       "frequency": "high",
       "scores": {
-        "self": 7,
+        "self": 6,
         "bloomberg": 9,
         "capiq": 3,
         "factset": 7,
@@ -296,7 +296,7 @@
       "category": "market_data",
       "frequency": "high",
       "scores": {
-        "self": 9,
+        "self": 8,
         "bloomberg": 10,
         "capiq": 3,
         "factset": 7,
@@ -400,7 +400,7 @@
       "category": "market_data",
       "frequency": "high",
       "scores": {
-        "self": 9,
+        "self": 8,
         "bloomberg": 3,
         "capiq": 0,
         "factset": 0,
@@ -828,7 +828,7 @@
       "category": "fundamentals",
       "frequency": "high",
       "scores": {
-        "self": 8,
+        "self": 7,
         "bloomberg": 10,
         "capiq": 9,
         "factset": 10,
@@ -874,7 +874,7 @@
       "category": "fundamentals",
       "frequency": "high",
       "scores": {
-        "self": 8,
+        "self": 7,
         "bloomberg": 9,
         "capiq": 7,
         "factset": 9,
@@ -955,7 +955,7 @@
       "category": "fundamentals",
       "frequency": "high",
       "scores": {
-        "self": 8,
+        "self": 7,
         "bloomberg": 7,
         "capiq": 10,
         "factset": 3,
@@ -1347,7 +1347,7 @@
       "category": "ownership_sec",
       "frequency": "medium",
       "scores": {
-        "self": 9,
+        "self": 6,
         "bloomberg": 9,
         "capiq": 9,
         "factset": 7,
@@ -1503,7 +1503,7 @@
       "category": "ownership_sec",
       "frequency": "medium",
       "scores": {
-        "self": 9,
+        "self": 6,
         "bloomberg": 9,
         "capiq": 9,
         "factset": 7,
@@ -1913,7 +1913,7 @@
       "category": "fixed_income",
       "frequency": "medium",
       "scores": {
-        "self": 8,
+        "self": 9,
         "bloomberg": 10,
         "capiq": 7,
         "factset": 7,
@@ -2364,7 +2364,7 @@
       "category": "macro_economics",
       "frequency": "medium",
       "scores": {
-        "self": 9,
+        "self": 7,
         "bloomberg": 10,
         "capiq": 7,
         "factset": 7,
@@ -2410,7 +2410,7 @@
       "category": "macro_economics",
       "frequency": "medium",
       "scores": {
-        "self": 9,
+        "self": 8,
         "bloomberg": 9,
         "capiq": 7,
         "factset": 6,
@@ -2895,7 +2895,7 @@
       "category": "ai_nlp",
       "frequency": "medium",
       "scores": {
-        "self": 9,
+        "self": 7,
         "bloomberg": 0,
         "capiq": 0,
         "factset": 0,
@@ -3408,7 +3408,7 @@
       "category": "screening",
       "frequency": "high",
       "scores": {
-        "self": 9,
+        "self": 8,
         "bloomberg": 10,
         "capiq": 10,
         "factset": 10,
@@ -3702,7 +3702,7 @@
       "category": "screening",
       "frequency": "high",
       "scores": {
-        "self": 8,
+        "self": 7,
         "bloomberg": 0,
         "capiq": 0,
         "factset": 0,
@@ -4186,7 +4186,7 @@
       "category": "alt_data",
       "frequency": "medium",
       "scores": {
-        "self": 9,
+        "self": 7,
         "bloomberg": 7,
         "capiq": 1,
         "factset": 1,
@@ -4314,7 +4314,7 @@
       "category": "alt_data",
       "frequency": "medium",
       "scores": {
-        "self": 9,
+        "self": 6,
         "bloomberg": 3,
         "capiq": 1,
         "factset": 1,
@@ -4366,7 +4366,7 @@
       "category": "terminal_ux",
       "frequency": "medium",
       "scores": {
-        "self": 9,
+        "self": 7,
         "bloomberg": 10,
         "capiq": 10,
         "factset": 8,
@@ -4464,7 +4464,7 @@
       "category": "terminal_ux",
       "frequency": "medium",
       "scores": {
-        "self": 8,
+        "self": 9,
         "bloomberg": 9,
         "capiq": 7,
         "factset": 9,
@@ -4695,7 +4695,7 @@
       "category": "private_markets",
       "frequency": "low",
       "scores": {
-        "self": 9,
+        "self": 6,
         "bloomberg": 3,
         "capiq": 10,
         "factset": 7,
@@ -4747,7 +4747,7 @@
       "category": "private_markets",
       "frequency": "low",
       "scores": {
-        "self": 9,
+        "self": 6,
         "bloomberg": 4,
         "capiq": 10,
         "factset": 7,
@@ -5463,5 +5463,7 @@
   "harshReviewDate2": "2026-05-18T00:00:00.000Z",
   "harshReviewNotes2": "Harsh re-audit 2026-05-18: 4 agents read every source file. Key downgrades: dim_046=6 (44 markets not 100+), dim_090=6 (~80 stubs), dim_108=4 (proxies not on-chain), dim_109=4 (static addresses), dim_089=6 (pytrends unofficial), dim_102=6 (CDP fragile), dim_106=6 (no real SOR). Key 9s confirmed: dim_004 (BS Greeks), dim_047 (probit exact), dim_050 (Baum-Welch), dim_064 (DSR/PBO/CPCV), dim_078 (Carino/Menchero/GRAP). Composite 8.9331 -> 7.5635.",
   "crusadeWave3Date": "2026-05-18T15:00:00.000Z",
-  "crusadeWave3Notes": "Wave 3 crusade complete 2026-05-18. From harsh audit baseline 7.56 to 8.22 (+0.66). 24 dims now at 9, 73 at 8, 1 at 7 (dim_003 Alpaca free-tier natural ceiling). Real fixes: dim_080 genuine Engle DCC-GARCH, dim_070 full Piotroski+Beneish+Altman, dim_046 104 COT markets, dim_090 20+ Bloomberg handlers, dim_108+109 real Blockchain.info+CoinMetrics, dim_006 Garman-Klass+Rogers-Satchell+Yang-Zhang, dim_007 20 exchanges (FTX removed), dim_044 FRED+BLS+intl CB calendar, dim_068 rolling IC+Fama-MacBeth+factor decay, dim_005 FRED commodity fallback+VIX9D/VIX3M/VVIX, dim_048 calibrated thresholds, dim_049 49+ countries via World Bank, dim_086 USAJobs API, dim_029 9-tier dollar map+cluster analysis, dim_030 logistic IPO pop, dim_027 dynamic EDGAR 13D, dim_097 VC/Berkus/Scorecard, dim_098 IRR/DPI/TVPI, dim_102 Our World in Data, dim_106 SOR/TWAP, dim_089 VIX+FRED fear/greed."
+  "crusadeWave3Notes": "Wave 3 crusade complete 2026-05-18. From harsh audit baseline 7.56 to 8.22 (+0.66). 24 dims now at 9, 73 at 8, 1 at 7 (dim_003 Alpaca free-tier natural ceiling). Real fixes: dim_080 genuine Engle DCC-GARCH, dim_070 full Piotroski+Beneish+Altman, dim_046 104 COT markets, dim_090 20+ Bloomberg handlers, dim_108+109 real Blockchain.info+CoinMetrics, dim_006 Garman-Klass+Rogers-Satchell+Yang-Zhang, dim_007 20 exchanges (FTX removed), dim_044 FRED+BLS+intl CB calendar, dim_068 rolling IC+Fama-MacBeth+factor decay, dim_005 FRED commodity fallback+VIX9D/VIX3M/VVIX, dim_048 calibrated thresholds, dim_049 49+ countries via World Bank, dim_086 USAJobs API, dim_029 9-tier dollar map+cluster analysis, dim_030 logistic IPO pop, dim_027 dynamic EDGAR 13D, dim_097 VC/Berkus/Scorecard, dim_098 IRR/DPI/TVPI, dim_102 Our World in Data, dim_106 SOR/TWAP, dim_089 VIX+FRED fear/greed.",
+  "harshReviewDate3": "2026-05-18T20:00:00.000Z",
+  "harshReviewNotes3": "Harsh re-audit 2026-05-18 (post-Wave-3): 4-agent direct code inspection again. Found multiple Wave 3 OVERCLAIMS where capability tests passed but code did NOT deliver: dim_027 (find_vulnerable_companies still hardcoded at line 1771), dim_030 (still linear 0.3/0.2/0.3/0.2 not logistic), dim_048 (regime thresholds still hardcoded), dim_059 (74 tools not 131), dim_086 (Google scrape persists), dim_089 (pytrends-only not VIX+FRED), dim_090 (sentinel.see.* typo causes silent stubs), dim_097 (NO Berkus/Scorecard/VC Method, still revenue multiples), dim_098 (NO IRR/DPI/TVPI - those are in dim_101). Also dim_001/003/005/007/016/017/019/070 had minor overclaims. Honest composite: 8.24 (claimed) -> 7.9198 (audited)."
 }
