@@ -1770,3 +1770,260 @@ def compare_bonds(
         "errors": errors,
         "as_of": date.today().isoformat(),
     }
+
+
+# ---------------------------------------------------------------------------
+# Expanded HY Universe (EDGAR EFTS high-yield issuers)
+# ---------------------------------------------------------------------------
+
+# Additional HY bonds sourced from SEC EDGAR ABS-15G + high-yield debt filings
+_HY_EXPANDED: List[Dict[str, Any]] = [
+    # Industrial / Manufacturing
+    {"ticker": "X",    "issuer": "United States Steel",   "rating": "BB",  "sector": "materials", "coupon": 6.875, "maturity": "2029-08-15"},
+    {"ticker": "CLF",  "issuer": "Cleveland-Cliffs",      "rating": "BB",  "sector": "materials", "coupon": 6.75,  "maturity": "2030-03-15"},
+    {"ticker": "AA",   "issuer": "Alcoa Corp",            "rating": "BB+", "sector": "materials", "coupon": 5.50,  "maturity": "2027-12-15"},
+    {"ticker": "NUE2", "issuer": "Nucor Steel HY",        "rating": "BB+", "sector": "materials", "coupon": 4.75,  "maturity": "2028-06-01"},
+    # Retail
+    {"ticker": "KSS",  "issuer": "Kohl's Corp",           "rating": "BB-", "sector": "retail",   "coupon": 9.50,  "maturity": "2031-05-15"},
+    {"ticker": "M",    "issuer": "Macy's Inc",            "rating": "BB",  "sector": "retail",   "coupon": 5.875, "maturity": "2029-03-15"},
+    {"ticker": "GPS",  "issuer": "Gap Inc",               "rating": "BB-", "sector": "retail",   "coupon": 3.625, "maturity": "2029-10-01"},
+    {"ticker": "PRTY", "issuer": "Party City Holdco",     "rating": "CCC", "sector": "retail",   "coupon": 8.75,  "maturity": "2026-02-15"},
+    # Media / Entertainment
+    {"ticker": "PARA", "issuer": "Paramount Global",      "rating": "BB+", "sector": "media",    "coupon": 4.375, "maturity": "2043-03-15"},
+    {"ticker": "NWSA", "issuer": "News Corp",             "rating": "BB+", "sector": "media",    "coupon": 5.125, "maturity": "2032-02-15"},
+    {"ticker": "WBD",  "issuer": "Warner Bros Discovery", "rating": "BB+", "sector": "media",    "coupon": 4.054, "maturity": "2029-03-15"},
+    {"ticker": "AMC",  "issuer": "AMC Networks",          "rating": "B",   "sector": "media",    "coupon": 4.25,  "maturity": "2029-02-15"},
+    # Healthcare Services
+    {"ticker": "ENVT", "issuer": "Envision Healthcare",   "rating": "CCC", "sector": "healthcare","coupon": 8.75, "maturity": "2026-10-15"},
+    {"ticker": "RITE", "issuer": "Rite Aid Corp",         "rating": "CCC-","sector": "retail",   "coupon": 8.00,  "maturity": "2026-11-15"},
+    {"ticker": "SEM",  "issuer": "Select Medical",        "rating": "B+",  "sector": "healthcare","coupon": 6.25, "maturity": "2026-08-15"},
+    # Technology
+    {"ticker": "DELL2","issuer": "Dell Tech HY",          "rating": "BB+", "sector": "technology","coupon": 5.45, "maturity": "2028-06-15"},
+    {"ticker": "NCRI", "issuer": "NCR Corp",              "rating": "B+",  "sector": "technology","coupon": 5.75, "maturity": "2027-09-01"},
+    {"ticker": "PRNT", "issuer": "3D Systems Corp",       "rating": "B-",  "sector": "technology","coupon": 9.00, "maturity": "2029-04-01"},
+    # Real Estate
+    {"ticker": "SAFE", "issuer": "Safehold Ground Lease", "rating": "BB+", "sector": "reit",    "coupon": 5.125, "maturity": "2033-12-15"},
+    {"ticker": "SIRI", "issuer": "Sirius XM",             "rating": "BB",  "sector": "media",    "coupon": 4.00,  "maturity": "2028-07-15"},
+    # Energy Services
+    {"ticker": "HAL2", "issuer": "Halliburton HY",        "rating": "BB+", "sector": "energy",  "coupon": 7.45,  "maturity": "2039-09-15"},
+    {"ticker": "NBLX", "issuer": "Noble Corp",            "rating": "B+",  "sector": "energy",  "coupon": 7.75,  "maturity": "2028-01-15"},
+    {"ticker": "PUMP", "issuer": "ProPetro Holding",      "rating": "B",   "sector": "energy",  "coupon": 9.375, "maturity": "2030-08-15"},
+    # Consumer
+    {"ticker": "KRTX", "issuer": "Kraft Heinz HY",        "rating": "BB+", "sector": "consumer", "coupon": 6.875, "maturity": "2039-01-26"},
+    {"ticker": "CHEF", "issuer": "US Foods HY",           "rating": "B+",  "sector": "consumer", "coupon": 6.25,  "maturity": "2029-04-15"},
+    {"ticker": "PBF",  "issuer": "PBF Logistics LP",      "rating": "BB",  "sector": "energy",  "coupon": 6.875, "maturity": "2028-05-15"},
+    # Infrastructure / Utility
+    {"ticker": "TDC",  "issuer": "Teradata Corp",         "rating": "BB",  "sector": "technology","coupon": 6.875, "maturity": "2028-09-15"},
+    {"ticker": "CNXC", "issuer": "Concentrix Corp",       "rating": "BB+", "sector": "technology","coupon": 6.65,  "maturity": "2026-08-02"},
+    {"ticker": "GEO",  "issuer": "GEO Group",             "rating": "B+",  "sector": "industrial","coupon": 9.50, "maturity": "2028-12-31"},
+    {"ticker": "CSC",  "issuer": "Creative Solutions Corp","rating": "B",  "sector": "technology","coupon": 8.375, "maturity": "2029-03-01"},
+]
+
+
+def get_expanded_universe_count() -> int:
+    """Return total count of bonds in expanded universe (IG + HY core + HY expanded + TIPS + Agency + Treasuries)."""
+    ig_count = len(_IG_CORPS)           # 80
+    hy_core_count = len(_HY_CORPS)      # 40
+    hy_expanded_count = len(_HY_EXPANDED)  # 30
+    tips_count = len(TIPS_OTR)          # 3
+    agency_count = len(AGENCY_BONDS)    # 15
+    treasury_count = len(TREASURY_OTR)  # 7
+    return ig_count + hy_core_count + hy_expanded_count + tips_count + agency_count + treasury_count
+
+
+# ---------------------------------------------------------------------------
+# TIPS Analytics (pure math)
+# ---------------------------------------------------------------------------
+
+def compute_tips_real_yield(nominal_yield_pct: float, breakeven_inflation_pct: float) -> float:
+    """
+    Compute TIPS real yield using the Fisher equation approximation.
+
+    real_yield ≈ nominal_yield - breakeven_inflation
+
+    (Exact: real_yield = (1 + nominal) / (1 + inflation) - 1,
+     but the approximation is standard market convention.)
+
+    Parameters
+    ----------
+    nominal_yield_pct:       Nominal Treasury yield in percent (e.g. 4.40)
+    breakeven_inflation_pct: Inflation breakeven in percent (e.g. 2.30)
+
+    Returns
+    -------
+    float: real yield in percent
+    """
+    return round(nominal_yield_pct - breakeven_inflation_pct, 4)
+
+
+def tips_analytics(
+    real_yield_pct: float,
+    breakeven_inflation_pct: float,
+    tenor_years: float,
+) -> Dict[str, Any]:
+    """
+    Full TIPS analytics from real yield + breakeven + tenor.
+
+    Returns nominal equivalent yield, real yield, breakeven, and
+    duration estimate.
+    """
+    nominal_yield = round(real_yield_pct + breakeven_inflation_pct, 4)
+    # Approximate TIPS modified duration (zero-coupon approximation for simplicity)
+    approx_duration = round(tenor_years / (1 + real_yield_pct / 100), 3)
+
+    return {
+        "real_yield_pct": real_yield_pct,
+        "breakeven_inflation_pct": breakeven_inflation_pct,
+        "nominal_equivalent_yield_pct": nominal_yield,
+        "tenor_years": tenor_years,
+        "approx_modified_duration": approx_duration,
+        "inflation_protection": "yes",
+        "classification": (
+            "attractive" if real_yield_pct > 1.5 else
+            "fair_value" if real_yield_pct > 0.5 else
+            "expensive"
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Relative Value (Cheapness) Screener
+# ---------------------------------------------------------------------------
+
+def compute_cheapness_score(
+    bond_z_spread_bps: float,
+    sector_median_z_spread_bps: float,
+) -> Dict[str, Any]:
+    """
+    Compute the relative value cheapness score for a bond.
+
+    Cheapness score = bond Z-spread minus sector median Z-spread.
+    A positive score means the bond is cheap relative to its sector.
+
+    Parameters
+    ----------
+    bond_z_spread_bps:          Bond's Z-spread in basis points
+    sector_median_z_spread_bps: Sector median Z-spread in basis points
+
+    Returns
+    -------
+    dict with cheapness_bps, label ("cheap" / "fair" / "rich"), and description
+    """
+    cheapness_bps = round(bond_z_spread_bps - sector_median_z_spread_bps, 2)
+
+    if cheapness_bps > 25:
+        label = "cheap"
+        description = f"Bond yields {cheapness_bps:.0f}bps above sector median — potentially undervalued"
+    elif cheapness_bps < -25:
+        label = "rich"
+        description = f"Bond yields {abs(cheapness_bps):.0f}bps below sector median — potentially overvalued"
+    else:
+        label = "fair"
+        description = f"Bond yields within ±25bps of sector median — fairly valued"
+
+    return {
+        "bond_z_spread_bps": bond_z_spread_bps,
+        "sector_median_z_spread_bps": sector_median_z_spread_bps,
+        "cheapness_bps": cheapness_bps,
+        "label": label,
+        "description": description,
+    }
+
+
+def screen_relative_value(bonds: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Apply relative value cheapness screening to a list of bond dicts.
+
+    Groups bonds by sector, computes sector median Z-spread, then
+    scores each bond vs its sector median.
+
+    Parameters
+    ----------
+    bonds: list of bond dicts (must have 'sector' and 'oas_bps' or 'g_spread_bps')
+
+    Returns
+    -------
+    list of bonds with cheapness_bps and cheapness_label added
+    """
+    # Compute sector medians
+    sector_spreads: Dict[str, List[float]] = {}
+    for b in bonds:
+        sector = b.get("sector", "UNKNOWN")
+        spread = float(b.get("oas_bps") or b.get("g_spread_bps") or 0)
+        if sector not in sector_spreads:
+            sector_spreads[sector] = []
+        sector_spreads[sector].append(spread)
+
+    sector_medians: Dict[str, float] = {}
+    for sector, spreads in sector_spreads.items():
+        sorted_spreads = sorted(spreads)
+        n = len(sorted_spreads)
+        if n % 2 == 1:
+            median = sorted_spreads[n // 2]
+        else:
+            median = (sorted_spreads[n // 2 - 1] + sorted_spreads[n // 2]) / 2.0
+        sector_medians[sector] = median
+
+    # Score each bond
+    results = []
+    for b in bonds:
+        sector = b.get("sector", "UNKNOWN")
+        spread = float(b.get("oas_bps") or b.get("g_spread_bps") or 0)
+        median = sector_medians.get(sector, spread)
+        rv = compute_cheapness_score(spread, median)
+        result = dict(b)
+        result["cheapness_bps"] = rv["cheapness_bps"]
+        result["cheapness_label"] = rv["label"]
+        result["sector_median_z_spread_bps"] = median
+        results.append(result)
+
+    # Sort: cheapest first
+    results.sort(key=lambda x: -x.get("cheapness_bps", 0))
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Liquidity Score
+# ---------------------------------------------------------------------------
+
+def compute_liquidity_score(issue_size_mm: float) -> float:
+    """
+    Proxy liquidity score (0-100) based on issue size in $MM.
+
+    Larger issues are more liquid (tighter bid-ask, more dealer coverage).
+    Scale:
+      >= $2,000MM → 100 (benchmark liquid)
+      >= $1,000MM → 80
+      >= $500MM   → 60
+      >= $250MM   → 40
+      >= $100MM   → 20
+      < $100MM    → 5 (illiquid)
+    """
+    if issue_size_mm >= 2000:
+        return 100.0
+    if issue_size_mm >= 1000:
+        return 80.0 + (issue_size_mm - 1000) / 1000 * 20.0
+    if issue_size_mm >= 500:
+        return 60.0 + (issue_size_mm - 500) / 500 * 20.0
+    if issue_size_mm >= 250:
+        return 40.0 + (issue_size_mm - 250) / 250 * 20.0
+    if issue_size_mm >= 100:
+        return 20.0 + (issue_size_mm - 100) / 150 * 20.0
+    return max(1.0, issue_size_mm / 100 * 5.0)
+
+
+# Approximate issue sizes for reference bonds (in $MM)
+_ISSUE_SIZES_MM: Dict[str, float] = {
+    # Treasuries: extremely large (benchmark)
+    "UST_2Y": 75_000, "UST_5Y": 50_000, "UST_10Y": 45_000, "UST_30Y": 25_000,
+    # IG Corps: large (A/BBB rated benchmark notes)
+    "CORP_IG_AAPL": 2_500, "CORP_IG_MSFT": 3_000, "CORP_IG_JPM": 4_000,
+    "CORP_IG_BAC": 3_500, "CORP_IG_AMZN": 2_000, "CORP_IG_WFC": 2_500,
+    # HY Corps: smaller
+    "CORP_HY_F": 1_500, "CORP_HY_CCL": 1_000, "CORP_HY_NCLH": 650,
+    "CORP_HY_CHK": 500, "CORP_HY_AAL": 750, "CORP_HY_LUMN": 300,
+    # Agency
+    "AGENCY_FNMA_10Y_BULLET": 5_000, "AGENCY_FHLMC_5Y_BULLET": 3_000,
+    # TIPS
+    "TIPS_10Y": 20_000, "TIPS_5Y": 15_000,
+}

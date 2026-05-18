@@ -1754,6 +1754,165 @@ def route_health():
     }
 
 
+# ── Pure-math hiring analytics (no DB / network required) ─────────────────────
+
+
+def compute_hiring_momentum_score(
+    jolts_openings_change: float,
+    jolts_prior_avg: float,
+    indeed_trend: float,
+    usajobs_count_delta: float,
+) -> dict:
+    """Compute a composite hiring momentum score on [-1, 1].
+
+    Formula (matches dim_086 specification):
+        score = (jolts_openings_change / prior_avg) * 0.5
+              + indeed_trend * 0.3
+              + usajobs_count_delta * 0.2
+
+    Parameters
+    ----------
+    jolts_openings_change : float
+        Absolute change in JOLTS openings vs prior period.
+    jolts_prior_avg : float
+        Prior-period average JOLTS openings (must be > 0).
+    indeed_trend : float
+        Indeed job-posting trend normalised to [-1, 1] (positive = growth).
+    usajobs_count_delta : float
+        USAJobs count change normalised to [-1, 1].
+
+    Returns
+    -------
+    dict with keys:
+        score              – composite score (float)
+        jolts_component    – weighted JOLTS contribution
+        indeed_component   – weighted Indeed contribution
+        usajobs_component  – weighted USAJobs contribution
+        signal             – "expanding" | "contracting" | "stable"
+    """
+    if jolts_prior_avg <= 0:
+        raise ValueError(f"jolts_prior_avg must be > 0, got {jolts_prior_avg}")
+
+    jolts_component   = (jolts_openings_change / jolts_prior_avg) * 0.5
+    indeed_component  = indeed_trend * 0.3
+    usajobs_component = usajobs_count_delta * 0.2
+
+    score = jolts_component + indeed_component + usajobs_component
+
+    if score > 0.10:
+        signal = "expanding"
+    elif score < -0.10:
+        signal = "contracting"
+    else:
+        signal = "stable"
+
+    return {
+        "score": round(score, 10),
+        "jolts_component":   round(jolts_component,   10),
+        "indeed_component":  round(indeed_component,  10),
+        "usajobs_component": round(usajobs_component, 10),
+        "signal": signal,
+    }
+
+
+def classify_labor_market_tightness(
+    jolts_openings: float,
+    unemployed_persons: float,
+) -> dict:
+    """Classify JOLTS openings-to-unemployed ratio into tightness buckets.
+
+    Thresholds:
+        ratio > 1.0  → "tight"
+        0.7 ≤ ratio ≤ 1.0 → "balanced"
+        ratio < 0.7  → "loose"
+
+    Parameters
+    ----------
+    jolts_openings : float
+        Total JOLTS job openings (thousands).
+    unemployed_persons : float
+        BLS unemployed persons count (thousands).  Must be > 0.
+
+    Returns
+    -------
+    dict with keys: ratio, tightness ("tight" | "balanced" | "loose"), openings, unemployed
+    """
+    if unemployed_persons <= 0:
+        raise ValueError(f"unemployed_persons must be > 0, got {unemployed_persons}")
+    if jolts_openings < 0:
+        raise ValueError(f"jolts_openings must be >= 0, got {jolts_openings}")
+
+    ratio = jolts_openings / unemployed_persons
+
+    if ratio > 1.0:
+        tightness = "tight"
+    elif ratio >= 0.7:
+        tightness = "balanced"
+    else:
+        tightness = "loose"
+
+    return {
+        "ratio":      round(ratio, 6),
+        "tightness":  tightness,
+        "openings":   jolts_openings,
+        "unemployed": unemployed_persons,
+    }
+
+
+def detect_sector_hiring_surge(
+    sector_growth_rates: "list[float]",
+    current_growth: float,
+    sigma_threshold: float = 2.0,
+) -> dict:
+    """Detect a sector hiring surge when posting growth exceeds mean + N*sigma.
+
+    A surge is flagged when current_growth > mean(history) + sigma_threshold * std(history).
+
+    Parameters
+    ----------
+    sector_growth_rates : list[float]
+        Historical 6-month sector job-posting growth rates (at least 2 values).
+    current_growth : float
+        Current-period sector job-posting growth rate.
+    sigma_threshold : float
+        Number of standard deviations above mean that constitutes a surge (default 2.0).
+
+    Returns
+    -------
+    dict with keys:
+        surge_flag      – True / False
+        z_score         – (current_growth - mean) / std
+        mean_growth     – historical mean
+        std_growth      – historical std
+        threshold       – mean + sigma_threshold * std
+        current_growth  – the value passed in
+    """
+    arr = np.asarray(sector_growth_rates, dtype=float)
+    if len(arr) < 2:
+        raise ValueError("sector_growth_rates must have at least 2 observations")
+
+    mean_g = float(arr.mean())
+    std_g  = float(arr.std(ddof=1))
+
+    if std_g == 0.0:
+        z_score = 0.0
+        surge_flag = False
+    else:
+        z_score = (current_growth - mean_g) / std_g
+        surge_flag = z_score > sigma_threshold
+
+    threshold = mean_g + sigma_threshold * std_g
+
+    return {
+        "surge_flag":     surge_flag,
+        "z_score":        round(z_score,      6),
+        "mean_growth":    round(mean_g,        6),
+        "std_growth":     round(std_g,         6),
+        "threshold":      round(threshold,     6),
+        "current_growth": round(current_growth, 6),
+    }
+
+
 # ── Module init ────────────────────────────────────────────────────────────────
 
 try:

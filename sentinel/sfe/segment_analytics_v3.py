@@ -596,26 +596,149 @@ _SECTION_RE = re.compile(
 )
 _NUMBER_RE = re.compile(r"^\s*\(?\s*[\d,]+(?:\.\d+)?\s*\)?\s*$")
 
+# Keywords triggering segment-table search in 10-K HTML
+_SEGMENT_HTML_KEYWORDS = [
+    "segment information", "business segments", "geographic areas",
+    "segment reporting", "reportable segment", "operating segment",
+]
+
+# Regex fallback for plain-text revenue tables (e.g. "North America $1,234,567")
+_REVENUE_ROW_RE = re.compile(
+    r"(\w[\w\s\-&,\.]+?)\s+\$?\s*([\d]{1,3}(?:,[\d]{3})*(?:\.\d+)?)",
+)
+
+
+def _validate_table(headers: list[str], body_rows: list[list[str]]) -> bool:
+    """
+    Validate that a table is a plausible segment revenue table:
+    - At least 3 body rows (minimum segments)
+    - At least 2 numeric columns in the first data row
+    Returns True if the table passes all checks.
+    """
+    if len(body_rows) < 3:
+        return False
+    if not body_rows:
+        return False
+    sample = body_rows[0]
+    # Count numeric cells (skip column 0 = segment names)
+    n_numeric = sum(
+        1 for c in sample[1:]
+        if _NUMBER_RE.match(c.replace(",", "").replace("(", "").replace(")", "").strip())
+    )
+    return n_numeric >= 2
+
+
+def _regex_fallback_parse(text: str) -> list[dict]:
+    """
+    Regex-based fallback parser for plain-text revenue tables.
+    Matches patterns like:
+        North America $1,234,567
+        Asia Pacific     2,345,678
+    Returns list of {segment_name, value} dicts.
+    """
+    results: list[dict] = []
+    seen_names: set[str] = set()
+    for match in _REVENUE_ROW_RE.finditer(text):
+        name = match.group(1).strip().rstrip(".,")
+        val_str = match.group(2).replace(",", "")
+        # Skip very short names (likely not segment names) or duplicates
+        if len(name) < 3 or name in seen_names:
+            continue
+        # Skip rows where name looks like a number itself
+        if _NUMBER_RE.match(name.replace(",", "")):
+            continue
+        try:
+            val = float(val_str)
+        except ValueError:
+            continue
+        if val <= 0:
+            continue
+        seen_names.add(name)
+        results.append({"segment_name": name, "value": val})
+    return results
+
+
+def _fuzzy_name_match(name_a: str, name_b: str, threshold: float = 0.60) -> bool:
+    """
+    Fuzzy match for segment name deduplication using two complementary signals:
+    1. Jaccard token overlap (handles "North America" vs "North American")
+    2. Prefix containment (handles "United States" vs "United States of America")
+
+    threshold: minimum Jaccard similarity (default 0.60 — tuned for geographic names).
+    Returns True if either signal fires.
+    """
+    def _normalize(s: str) -> str:
+        return re.sub(r"[^a-z0-9\s]", "", s.lower()).strip()
+
+    def _tokens(s: str) -> set[str]:
+        return set(_normalize(s).split())
+
+    na = _normalize(name_a)
+    nb = _normalize(name_b)
+
+    # Exact match after normalization
+    if na == nb:
+        return True
+
+    # Prefix/suffix containment: one name starts with the other (e.g. "North America" in "North American")
+    if na.startswith(nb) or nb.startswith(na):
+        return True
+
+    ta = _tokens(name_a)
+    tb = _tokens(name_b)
+    if not ta or not tb:
+        return False
+    intersection = len(ta & tb)
+    union = len(ta | tb)
+    return (intersection / union) >= threshold if union > 0 else False
+
+
+def _deduplicate_segments(
+    xbrl_segs: list[dict],
+    html_segs: list[dict],
+) -> list[dict]:
+    """
+    Merge XBRL and HTML segment lists by name similarity (fuzzy match).
+    XBRL takes precedence for values; HTML names are used if XBRL has generic names.
+    Segments appearing in both are deduplicated — HTML entry is dropped.
+    Returns merged list.
+    """
+    merged = list(xbrl_segs)
+    for html_seg in html_segs:
+        h_name = html_seg.get("segment_name", "")
+        is_dup = any(
+            _fuzzy_name_match(h_name, x.get("segment_name", ""))
+            for x in merged
+        )
+        if not is_dup:
+            merged.append(html_seg)
+    return merged
+
 
 def _extract_segment_tables_from_html(
     html: str,
     section_keywords: list[str],
 ) -> list[dict[str, list]]:
     """
-    Parse HTML filing, locate section header containing any keyword from
-    section_keywords, then find tables inside that section with >= 3 numeric
-    columns.
+    Parse HTML filing and extract ALL tables in 10-K text containing segment
+    keywords ("Segment Information", "Business Segments", "Geographic Areas").
+
+    Improvements over v2:
+    - Searches ALL matching section anchors (not just the first 3)
+    - Validates each table: minimum 3 rows, at least 2 numeric columns
+    - Rejects tables that fail validation (too sparse or non-revenue)
+    - Falls back to full-document table scan if no anchored tables pass validation
 
     Returns list of dicts:
         {headers: [...], rows: [[cell, ...], ...]}
     """
     soup = BeautifulSoup(html, "html.parser")
     results: list[dict] = []
+    kw_lower = [k.lower() for k in section_keywords]
 
-    # Find candidate section anchors: h2/h3/h4 or bold tags
+    # Step 1: Find candidate section anchors: h2/h3/h4 or bold tags
     header_tags = soup.find_all(["h2", "h3", "h4", "b", "strong"])
     target_elements = []
-    kw_lower = [k.lower() for k in section_keywords]
 
     for tag in header_tags:
         text = tag.get_text(" ", strip=True).lower()
@@ -623,55 +746,69 @@ def _extract_segment_tables_from_html(
             target_elements.append(tag)
 
     if not target_elements:
-        # Broader fallback: scan all text nodes
+        # Broader fallback: scan p/div/span text nodes
         for tag in soup.find_all(["p", "div", "span"]):
             text = tag.get_text(" ", strip=True).lower()
-            if any(kw in text for kw in kw_lower) and len(text) < 200:
+            if any(kw in text for kw in kw_lower) and len(text) < 300:
                 target_elements.append(tag)
 
-    for anchor in target_elements[:3]:
-        # Walk siblings/parents to find the next table within ~5000 chars
-        container = anchor.parent or anchor
+    # Step 2: For each anchor, collect ALL following tables until next section break
+    for anchor in target_elements:
         tables_found = []
-
-        # Look for tables in siblings after anchor
         sibling = anchor.find_next_sibling()
         walk_count = 0
-        while sibling and walk_count < 30:
+        while sibling and walk_count < 50:
             if sibling.name == "table":
                 tables_found.append(sibling)
-            # Stop if we hit another major section header
+            # Stop at next major section heading (not at our anchor itself)
             if sibling.name in ("h2", "h3") and sibling is not anchor:
                 break
             sibling = sibling.find_next_sibling()
             walk_count += 1
 
-        # Also search descendant tables in the parent container
+        # Also search descendant tables if no siblings found
         if not tables_found:
-            tables_found = container.find_all("table", limit=5)
+            container = anchor.parent or anchor
+            tables_found = container.find_all("table", limit=10)
 
-        for tbl in tables_found[:3]:
+        # Step 3: Parse and validate each table
+        for tbl in tables_found:
             rows = tbl.find_all("tr")
             if len(rows) < 2:
                 continue
 
-            # Extract header row
             header_cells = rows[0].find_all(["th", "td"])
             headers = [c.get_text(" ", strip=True) for c in header_cells]
 
-            # Extract body rows — detect numeric column count
             body_rows = []
             for tr in rows[1:]:
                 cells = [c.get_text(" ", strip=True) for c in tr.find_all(["td", "th"])]
-                body_rows.append(cells)
+                if cells:
+                    body_rows.append(cells)
 
             if not body_rows:
                 continue
 
-            # Count numeric columns (at least 3 required for multi-period segment table)
-            sample_row = body_rows[0]
-            n_numeric = sum(1 for c in sample_row[1:] if _NUMBER_RE.match(c.replace(",", "")))
-            if n_numeric >= 2 or len(sample_row) >= 3:
+            # Apply validation: minimum 3 rows, >= 2 numeric columns
+            if _validate_table(headers, body_rows):
+                results.append({"headers": headers, "rows": body_rows})
+
+    # Step 4: Full-document fallback — scan ALL tables if anchored search yielded nothing
+    if not results:
+        for tbl in soup.find_all("table"):
+            rows = tbl.find_all("tr")
+            if len(rows) < 4:
+                continue
+            header_cells = rows[0].find_all(["th", "td"])
+            headers = [c.get_text(" ", strip=True) for c in header_cells]
+            body_rows = []
+            for tr in rows[1:]:
+                cells = [c.get_text(" ", strip=True) for c in tr.find_all(["td", "th"])]
+                if cells:
+                    body_rows.append(cells)
+            # Only include tables that contain at least one segment keyword in header text
+            hdr_text = " ".join(headers).lower()
+            if any(kw in hdr_text for kw in kw_lower) and _validate_table(headers, body_rows):
                 results.append({"headers": headers, "rows": body_rows})
 
     return results

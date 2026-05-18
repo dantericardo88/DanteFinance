@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dim_071: Technical screener — pure TA indicator logic
+# dim_071: Technical screener — pure TA indicator logic + Ichimoku / Volume Profile / Breadth
 set -e
 cd "$(dirname "$0")/../.."
 
@@ -55,13 +55,11 @@ assert atr > 0, f"ATR should be positive: {atr}"
 print(f"[OK] compute_atr(14) = {atr:.4f}")
 
 # RSI range checks with realistic mixed-direction price
-# Use the existing `closes` series which has both ups and downs
 assert not np.isnan(rsi), f"RSI should not be NaN for mixed-direction series: {rsi}"
 assert 0 <= rsi <= 100, f"RSI must be in [0,100]: {rsi}"
 
 # Verify RSI bounds
 oversold_series = closes.copy()
-# Introduce a 30-day decline at end
 oversold_series = pd.concat([closes, pd.Series(
     closes.iloc[-1] * np.cumprod(1 + np.full(30, -0.01)),
     index=pd.date_range(closes.index[-1] + pd.Timedelta(days=1), periods=30, freq="B")
@@ -69,6 +67,53 @@ oversold_series = pd.concat([closes, pd.Series(
 rsi_os = screener.compute_rsi(oversold_series, 14)
 assert 0 <= rsi_os <= 100, f"RSI boundary violated: {rsi_os}"
 print(f"[OK] RSI is in valid range [0,100]: {rsi:.2f} / declined period: {rsi_os:.2f}")
+
+# ── NEW: compute_ichimoku_cloud ──────────────────────────────────────────────
+# Need at least 52 bars; use a larger synthetic series
+np.random.seed(7)
+n2 = 100
+p2 = 100.0 * np.cumprod(1 + np.random.normal(0.0003, 0.01, n2))
+idx2 = pd.date_range("2023-01-01", periods=n2, freq="B")
+c2 = pd.Series(p2, index=idx2)
+h2 = c2 * 1.005
+l2 = c2 * 0.995
+
+cloud = screener.compute_ichimoku_cloud(h2, l2, c2)
+assert "tenkan" in cloud, "Ichimoku missing tenkan key"
+assert "kijun" in cloud, "Ichimoku missing kijun key"
+
+# Math verification: Tenkan = (max_high_9 + min_low_9) / 2
+expected_tenkan = (h2.rolling(9).max().iloc[-1] + l2.rolling(9).min().iloc[-1]) / 2
+actual_tenkan = cloud["tenkan"]
+assert abs(actual_tenkan - expected_tenkan) < 1e-6, (
+    f"Tenkan-sen formula mismatch: expected {expected_tenkan:.6f}, got {actual_tenkan:.6f}"
+)
+print(f"[OK] compute_ichimoku_cloud: tenkan={actual_tenkan:.4f} (verified vs formula)")
+print(f"[OK] compute_ichimoku_cloud: kijun={cloud['kijun']:.4f}")
+
+# ── NEW: compute_volume_profile ──────────────────────────────────────────────
+np.random.seed(99)
+vols = pd.Series(np.random.randint(100_000, 1_000_000, n2).astype(float), index=idx2)
+vp = screener.compute_volume_profile(c2, vols, n_buckets=20)
+assert "poc" in vp, "Volume profile missing 'poc' key"
+assert "bucket_prices" in vp, "Volume profile missing 'bucket_prices'"
+assert len(vp["bucket_prices"]) == 20, f"Expected 20 buckets, got {len(vp['bucket_prices'])}"
+assert vp["poc"] >= float(c2.min()), "POC below price min"
+assert vp["poc"] <= float(c2.max()), "POC above price max"
+poc_idx = int(np.argmax(vp["bucket_volumes"]))
+assert abs(vp["poc"] - vp["bucket_prices"][poc_idx]) < 1e-6, "POC does not match highest-volume bucket"
+print(f"[OK] compute_volume_profile: POC={vp['poc']:.4f} (highest-volume bucket verified)")
+
+# ── NEW: compute_market_breadth ──────────────────────────────────────────────
+advances = pd.Series([300, 350, 280, 400, 320], dtype=float)
+declines = pd.Series([200, 150, 220, 100, 180], dtype=float)
+ad_line = screener.compute_market_breadth(advances, declines)
+assert len(ad_line) == 5, f"AD line length mismatch: {len(ad_line)}"
+# Manual verification: cumsum([100, 200, 60, 300, 140]) = [100, 300, 360, 660, 800]
+expected = pd.Series([100.0, 300.0, 360.0, 660.0, 800.0])
+for i, (exp, act) in enumerate(zip(expected, ad_line)):
+    assert abs(act - exp) < 1e-6, f"AD line mismatch at index {i}: expected {exp}, got {act}"
+print(f"[OK] compute_market_breadth: AD line cumsum verified {ad_line.tolist()}")
 
 print("\n[PASS] dim_071: Technical screener")
 PYEOF

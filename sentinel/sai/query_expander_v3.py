@@ -834,6 +834,121 @@ class QueryExpander:
             return local
         return _edgar_company_search(company_name)
 
+    # ------------------------------------------------------------------
+    # dim_056 additions
+    # ------------------------------------------------------------------
+
+    def compute_query_specificity(self, query: str) -> float:
+        """Compute entropy of term distribution as a query specificity score.
+
+        Higher entropy → broader, less specific query (many unique terms at low frequency).
+        Lower entropy → more focused query (fewer, more repeated terms).
+
+        H = -sum(p_i * log2(p_i))  where p_i = count(term_i) / total_terms
+
+        Returns entropy in bits (float >= 0).
+        """
+        tokens = self.tokenize_financial(query)
+        if not tokens:
+            return 0.0
+        counts: Counter = Counter(tokens)
+        total = sum(counts.values())
+        entropy = 0.0
+        for count in counts.values():
+            p = count / total
+            if p > 0:
+                entropy -= p * math.log2(p)
+        return round(entropy, 6)
+
+    def build_concept_graph(self) -> Dict[str, List[str]]:
+        """Build a dict mapping each financial concept to its 3-hop related terms.
+
+        The graph is built from the ontology:
+          - 1-hop: direct synonyms from METRIC_SYNONYMS and CONCEPT_SYNONYMS
+          - 2-hop: synonyms of synonyms (terms sharing the same canonical)
+          - 3-hop: concepts that appear together in CONCEPT_SYNONYMS lists
+
+        Returns: {concept: [related_term_1, related_term_2, ...]}
+        All concepts and metrics are included (deduplicated).
+        """
+        graph: Dict[str, List[str]] = {}
+
+        # 1-hop: canonical → all its surface forms (direct synonyms)
+        all_items: Dict[str, List[str]] = {}
+        all_items.update(self.ontology.METRIC_SYNONYMS)
+        all_items.update(self.ontology.CONCEPT_SYNONYMS)
+
+        for canonical, aliases in all_items.items():
+            related: List[str] = list(aliases[:8])  # up to 8 direct synonyms
+
+            # 2-hop: other canonicals that share alias tokens
+            canonical_tokens = set(canonical.lower().replace("_", " ").split())
+            for other_canonical, other_aliases in all_items.items():
+                if other_canonical == canonical:
+                    continue
+                other_tokens = set(other_canonical.lower().replace("_", " ").split())
+                # Token overlap → related
+                if canonical_tokens & other_tokens:
+                    related.append(other_canonical.replace("_", " "))
+
+            # 3-hop: concept_synonyms items that include any of our aliases
+            our_alias_set = {a.lower() for a in aliases}
+            for concept, concept_aliases in self.ontology.CONCEPT_SYNONYMS.items():
+                if concept == canonical:
+                    continue
+                if any(ca.lower() in our_alias_set for ca in concept_aliases):
+                    related.append(concept)
+
+            # Deduplicate and exclude self
+            seen: set = {canonical, canonical.replace("_", " ")}
+            deduped: List[str] = []
+            for r in related:
+                if r not in seen:
+                    seen.add(r)
+                    deduped.append(r)
+
+            graph[canonical] = deduped[:15]  # cap at 15 per node
+
+        return graph
+
+    def rank_expansion_terms(
+        self,
+        query: str,
+        candidates: List[str],
+        k1: float = 1.5,
+    ) -> List[Tuple[str, float]]:
+        """Rank candidate expansion terms using a BM25-style relevance formula.
+
+        For each candidate term, score = tf × (k1 + 1) / (tf + k1)
+        where tf = number of times the term (or its tokens) appear in the query.
+
+        This is the BM25 term-frequency component without IDF and length normalization
+        (both are fixed since we're scoring single terms against a single query).
+
+        Returns list of (term, score) sorted descending by score.
+        k1=1.5 is the standard BM25 default.
+        """
+        query_tokens = Counter(self.tokenize_financial(query))
+
+        scored: List[Tuple[str, float]] = []
+        for candidate in candidates:
+            cand_tokens = self.tokenize_financial(candidate)
+            if not cand_tokens:
+                scored.append((candidate, 0.0))
+                continue
+
+            # tf = sum of query counts for all tokens in this candidate
+            tf = sum(query_tokens.get(tok, 0) for tok in cand_tokens)
+
+            # BM25 TF component
+            bm25_score = tf * (k1 + 1) / (tf + k1)
+
+            scored.append((candidate, round(bm25_score, 6)))
+
+        # Sort descending; stable sort preserves insertion order for ties
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored
+
     def expand(self, query: str) -> ExpandedQuery:
         """Expand a query into all related financial terms with confidence scoring."""
         intent = self.detect_intent(query)

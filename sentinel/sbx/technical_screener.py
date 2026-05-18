@@ -1200,6 +1200,147 @@ class TechnicalScreener:
 
         return signals
 
+    # ── New math-verified indicator methods ───────────────────────────────────
+
+    def compute_ichimoku_cloud(
+        self,
+        highs: pd.Series,
+        lows: pd.Series,
+        closes: pd.Series,
+        tenkan_period: int = 9,
+        kijun_period: int = 26,
+        senkou_b_period: int = 52,
+    ) -> dict:
+        """Ichimoku Cloud components.
+
+        Tenkan-sen  (Conversion Line) = (max_high_9  + min_low_9)  / 2
+        Kijun-sen   (Base Line)       = (max_high_26 + min_low_26) / 2
+        Senkou A    (Leading Span A)  = (Tenkan + Kijun) / 2  shifted 26 forward
+        Senkou B    (Leading Span B)  = (max_high_52 + min_low_52) / 2  shifted 26 forward
+        Chikou Span (Lagging Span)    = close shifted 26 back
+
+        Returns a dict with scalar latest values and the full series.
+        """
+        if len(closes) < senkou_b_period:
+            return {}
+
+        tenkan = (
+            highs.rolling(tenkan_period).max() + lows.rolling(tenkan_period).min()
+        ) / 2
+        kijun = (
+            highs.rolling(kijun_period).max() + lows.rolling(kijun_period).min()
+        ) / 2
+        senkou_a = ((tenkan + kijun) / 2).shift(kijun_period)
+        senkou_b = (
+            (
+                highs.rolling(senkou_b_period).max()
+                + lows.rolling(senkou_b_period).min()
+            )
+            / 2
+        ).shift(kijun_period)
+        chikou = closes.shift(-kijun_period)
+
+        return {
+            "tenkan": float(tenkan.iloc[-1]),
+            "kijun": float(kijun.iloc[-1]),
+            "senkou_a": float(senkou_a.iloc[-1]) if not pd.isna(senkou_a.iloc[-1]) else None,
+            "senkou_b": float(senkou_b.iloc[-1]) if not pd.isna(senkou_b.iloc[-1]) else None,
+            "chikou": float(chikou.iloc[-kijun_period - 1]) if len(chikou) > kijun_period else None,
+            "tenkan_series": tenkan,
+            "kijun_series": kijun,
+            "senkou_a_series": senkou_a,
+            "senkou_b_series": senkou_b,
+        }
+
+    def compute_volume_profile(
+        self,
+        closes: pd.Series,
+        volumes: pd.Series,
+        n_buckets: int = 20,
+    ) -> dict:
+        """Volume Profile — distribute volume across price buckets.
+
+        Algorithm:
+          1. Divide the price range [min_close, max_close] into n_buckets equal bins.
+          2. Accumulate volume for each bar into its corresponding price bucket.
+          3. Point of Control (POC) = centre price of the highest-volume bucket.
+
+        Returns:
+            {
+              "poc": float (price of highest-volume bucket),
+              "value_area_high": float,
+              "value_area_low": float,
+              "bucket_prices": list[float],
+              "bucket_volumes": list[float],
+            }
+        """
+        if len(closes) < 2 or len(volumes) < 2:
+            return {}
+
+        price_min = float(closes.min())
+        price_max = float(closes.max())
+        if price_max <= price_min:
+            return {}
+
+        bucket_edges = np.linspace(price_min, price_max, n_buckets + 1)
+        bucket_volumes = np.zeros(n_buckets)
+        bucket_centres = (bucket_edges[:-1] + bucket_edges[1:]) / 2
+
+        for price, vol in zip(closes.values, volumes.values):
+            idx = int((price - price_min) / (price_max - price_min) * n_buckets)
+            idx = min(idx, n_buckets - 1)
+            bucket_volumes[idx] += max(0, vol)
+
+        poc_idx = int(np.argmax(bucket_volumes))
+        poc = float(bucket_centres[poc_idx])
+
+        # Value Area: ~70% of total volume centred on POC
+        total_vol = bucket_volumes.sum()
+        target = total_vol * 0.70
+        accumulated = float(bucket_volumes[poc_idx])
+        lo_idx, hi_idx = poc_idx, poc_idx
+        while accumulated < target:
+            add_lo = float(bucket_volumes[lo_idx - 1]) if lo_idx > 0 else 0.0
+            add_hi = float(bucket_volumes[hi_idx + 1]) if hi_idx < n_buckets - 1 else 0.0
+            if add_lo >= add_hi and lo_idx > 0:
+                lo_idx -= 1
+                accumulated += add_lo
+            elif hi_idx < n_buckets - 1:
+                hi_idx += 1
+                accumulated += add_hi
+            else:
+                break
+
+        return {
+            "poc": poc,
+            "value_area_high": float(bucket_centres[hi_idx]),
+            "value_area_low": float(bucket_centres[lo_idx]),
+            "bucket_prices": bucket_centres.tolist(),
+            "bucket_volumes": bucket_volumes.tolist(),
+        }
+
+    def compute_market_breadth(
+        self,
+        advances: pd.Series,
+        declines: pd.Series,
+    ) -> pd.Series:
+        """Advance-Decline Line (breadth indicator).
+
+        AD_line[t] = cumsum(advances[t] - declines[t])
+
+        A rising AD line with rising prices confirms the trend.
+        Divergence (price rising, AD falling) is a warning signal.
+
+        Args:
+            advances: Series of daily advancing issues counts.
+            declines: Series of daily declining issues counts.
+
+        Returns:
+            Cumulative advance-decline line as a pd.Series.
+        """
+        net = advances - declines
+        return net.cumsum()
+
     def _matches_criteria(
         self, profile: TechnicalProfile, criteria: ScreenCriteria
     ) -> bool:

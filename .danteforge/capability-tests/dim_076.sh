@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dim_076: NL screener — pure query parsing logic
+# dim_076: NL screener — pure query parsing logic + relative query / sector synonyms / explanation
 set -e
 cd "$(dirname "$0")/../.."
 
@@ -42,7 +42,7 @@ assert _SPECIAL_KEYWORDS["profitable"].operator == ">"
 assert _SPECIAL_KEYWORDS["profitable"].metric == "net_income"
 print(f"[OK] _SPECIAL_KEYWORDS has {len(_SPECIAL_KEYWORDS)} entries")
 
-# Test QueryParser.parse — sector extraction
+# Test QueryParser.parse
 result = parser.parse("profitable tech companies with P/E under 20")
 assert isinstance(result, ScreenerQuery), "Should return ScreenerQuery"
 assert result.requires_profitable or any(f.metric == "net_income" for f in result.filters), \
@@ -77,6 +77,65 @@ pe_filter = ScreenerFilter(metric="pe_ratio", operator="<", value=20.0)
 assert evaluate_filter(pe_filter, 15.0) == True
 assert evaluate_filter(pe_filter, 25.0) == False
 print("[OK] ScreenerFilter evaluation logic works correctly")
+
+# ── NEW: parse_relative_query ─────────────────────────────────────────────────
+# "top 10 by PE" -> sort=pe_ratio, ascending=False, limit=10
+r = parser.parse_relative_query("top 10 by PE")
+assert r["limit"] == 10, f"Expected limit=10, got {r['limit']}"
+assert r["ascending"] is False, f"'top' should be descending (ascending=False)"
+assert r["sort_by"] == "pe_ratio", f"Expected sort_by=pe_ratio, got {r['sort_by']}"
+print(f"[OK] parse_relative_query('top 10 by PE'): limit={r['limit']} sort={r['sort_by']} asc={r['ascending']}")
+
+# "bottom 5 by dividend yield" -> ascending=True
+r2 = parser.parse_relative_query("bottom 5 by dividend yield")
+assert r2["limit"] == 5, f"Expected limit=5, got {r2['limit']}"
+assert r2["ascending"] is True, f"'bottom' should be ascending"
+assert r2["sort_by"] == "dividend_yield", f"Expected dividend_yield, got {r2['sort_by']}"
+print(f"[OK] parse_relative_query('bottom 5 by dividend yield'): limit={r2['limit']} asc={r2['ascending']}")
+
+# "top 20 ROE stocks" -> limit=20, sort=roe
+r3 = parser.parse_relative_query("top 20 ROE stocks")
+assert r3["limit"] == 20, f"Expected limit=20, got {r3['limit']}"
+assert r3["sort_by"] == "roe", f"Expected roe, got {r3['sort_by']}"
+print(f"[OK] parse_relative_query('top 20 ROE stocks'): limit={r3['limit']} sort={r3['sort_by']}")
+
+# ── NEW: expand_sector_synonyms ───────────────────────────────────────────────
+# "tech", "technology", "software" -> all map to GICS sector 45 (Information Technology)
+assert parser.expand_sector_synonyms("tech") == "Information Technology", "tech -> IT"
+assert parser.expand_sector_synonyms("technology") == "Information Technology", "technology -> IT"
+assert parser.expand_sector_synonyms("software") == "Information Technology", "software -> IT"
+assert parser.expand_sector_synonyms("banks") == "Financials", "banks -> Financials"
+assert parser.expand_sector_synonyms("pharma") == "Health Care", "pharma -> Health Care"
+assert parser.expand_sector_synonyms("zzz_unknown") is None, "unknown -> None"
+print("[OK] expand_sector_synonyms: tech/technology/software -> Information Technology")
+print("[OK] expand_sector_synonyms: banks -> Financials, pharma -> Health Care, unknown -> None")
+
+# ── NEW: generate_screener_explanation ───────────────────────────────────────
+sq = ScreenerQuery(
+    raw_query="profitable tech companies with PE < 20 and dividend > 2%",
+    filters=[
+        ScreenerFilter("pe_ratio", "<", 20.0),
+        ScreenerFilter("dividend_yield", ">", 0.02),
+        ScreenerFilter("net_income", ">", 0),
+    ],
+    sectors=["Information Technology"],
+    limit=15,
+    requires_profitable=True,
+    requires_dividend=False,
+    sort_by=None,
+    sort_desc=True,
+)
+explanation = parser.generate_screener_explanation(sq)
+assert isinstance(explanation, str), "Explanation should be a string"
+assert len(explanation) > 10, "Explanation should not be empty"
+assert "pe ratio" in explanation.lower() or "pe_ratio" in explanation.lower(), \
+    f"Explanation should mention PE ratio: {explanation}"
+assert "15" in explanation, f"Explanation should mention limit 15: {explanation}"
+print(f"[OK] generate_screener_explanation: '{explanation}'")
+
+# Verify it includes the dividend filter
+assert "dividend" in explanation.lower(), f"Explanation missing dividend: {explanation}"
+print("[OK] generate_screener_explanation: includes PE, dividend, limit")
 
 print("\n[PASS] dim_076: NL screener")
 PYEOF

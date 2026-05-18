@@ -1106,6 +1106,153 @@ def refresh_ftd(max_files: int = 2) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Advanced squeeze signal functions (dim_009 — target 9/10)
+# ---------------------------------------------------------------------------
+
+def compute_days_to_cover_signal(
+    short_interest: float,
+    avg_daily_volume: float,
+) -> Dict[str, Any]:
+    """
+    Compute the Days-to-Cover (DTC) signal and classify squeeze risk level.
+
+    short_ratio = short_interest / avg_daily_volume
+
+    Thresholds:
+      - DTC > 10  → extreme squeeze risk
+      - DTC 5–10  → elevated squeeze risk
+      - DTC 2–5   → moderate
+      - DTC < 2   → low
+
+    Returns dict with ratio, signal level, and a descriptive label.
+    """
+    if avg_daily_volume <= 0:
+        return {"short_ratio": None, "signal": "unavailable", "label": "insufficient volume data"}
+    short_ratio = short_interest / avg_daily_volume
+    if short_ratio > 10.0:
+        signal = "extreme_squeeze_risk"
+        label  = f"DTC={short_ratio:.2f}: >10 days — extreme short squeeze risk"
+    elif short_ratio > 5.0:
+        signal = "elevated_squeeze_risk"
+        label  = f"DTC={short_ratio:.2f}: 5–10 days — elevated short squeeze risk"
+    elif short_ratio > 2.0:
+        signal = "moderate"
+        label  = f"DTC={short_ratio:.2f}: 2–5 days — moderate squeeze potential"
+    else:
+        signal = "low"
+        label  = f"DTC={short_ratio:.2f}: <2 days — low squeeze risk"
+    return {
+        "short_ratio": round(short_ratio, 4),
+        "signal":      signal,
+        "label":       label,
+    }
+
+
+def compute_short_squeeze_probability(
+    si_pct: float,
+    momentum_factor: float = 1.0,
+) -> float:
+    """
+    Logistic model for short squeeze probability.
+
+    Formula:
+        P = 1 / (1 + exp(-(si_pct - 0.20) / 0.05)) * momentum_factor
+
+    Parameters
+    ----------
+    si_pct          : short interest as fraction of float (e.g. 0.30 = 30%)
+    momentum_factor : optional multiplier [0..2] — upward price momentum
+                      boosts probability; default 1.0 (neutral).
+
+    Returns probability in [0, 1].  Values > 0.5 indicate elevated risk.
+
+    Examples (momentum_factor=1.0):
+        si_pct=0.20 → P ≈ 0.500  (inflection point)
+        si_pct=0.30 → P ≈ 0.880
+        si_pct=0.10 → P ≈ 0.119
+    """
+    import math
+    raw = 1.0 / (1.0 + math.exp(-(si_pct - 0.20) / 0.05))
+    prob = raw * momentum_factor
+    # Clamp to [0, 1]
+    return float(min(1.0, max(0.0, prob)))
+
+
+def detect_short_ladder_attack(
+    short_volume_series: List[float],
+    total_volume_series: List[float],
+    threshold: float = 0.40,
+    min_consecutive: int = 3,
+) -> Dict[str, Any]:
+    """
+    Detect a potential short ladder attack pattern.
+
+    Definition: 3 or more consecutive trading days where short volume
+    exceeds `threshold` (default 40%) of total volume.
+
+    Parameters
+    ----------
+    short_volume_series  : ordered list of daily short volumes (oldest first)
+    total_volume_series  : ordered list of daily total volumes (same order)
+    threshold            : fraction above which a day is flagged (default 0.40)
+    min_consecutive      : minimum run length to flag (default 3)
+
+    Returns
+    -------
+    dict with:
+      - pattern_detected  (bool)
+      - max_consecutive   (int)  longest flagged run
+      - flagged_days      (int)  total days above threshold
+      - pct_series        (list[float]) short_vol/total_vol per day
+      - description       (str)
+    """
+    if len(short_volume_series) != len(total_volume_series) or not short_volume_series:
+        return {
+            "pattern_detected": False,
+            "max_consecutive":  0,
+            "flagged_days":     0,
+            "pct_series":       [],
+            "description":      "insufficient data",
+        }
+
+    pct_series: List[float] = []
+    for sv, tv in zip(short_volume_series, total_volume_series):
+        if tv > 0:
+            pct_series.append(sv / tv)
+        else:
+            pct_series.append(0.0)
+
+    flagged = [p > threshold for p in pct_series]
+    flagged_days = sum(flagged)
+
+    # Find longest consecutive run of flagged days
+    max_consecutive = 0
+    current_run = 0
+    for f in flagged:
+        if f:
+            current_run += 1
+            max_consecutive = max(max_consecutive, current_run)
+        else:
+            current_run = 0
+
+    pattern_detected = max_consecutive >= min_consecutive
+    desc = (
+        f"Short ladder attack pattern detected: {max_consecutive} consecutive days "
+        f"with short volume >{threshold:.0%} of total volume."
+        if pattern_detected
+        else f"No ladder attack pattern: max consecutive days above {threshold:.0%} = {max_consecutive}."
+    )
+
+    return {
+        "pattern_detected": pattern_detected,
+        "max_consecutive":  max_consecutive,
+        "flagged_days":     flagged_days,
+        "pct_series":       [round(p, 6) for p in pct_series],
+        "description":      desc,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Initialise DB at import time
 # ---------------------------------------------------------------------------
 

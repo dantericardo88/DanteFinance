@@ -1555,6 +1555,168 @@ class StrategyAnalytics:
 
 
 # ===========================================================================
+# Promotion Scoring Analytics
+# ===========================================================================
+
+class PromotionScoreCalculator:
+    """
+    Quantitative promotion scoring for strategy lifecycle decisions.
+    Computes capacity estimates, paper-to-live transition simulation, and
+    a composite promotion score used as a gate supplement.
+    """
+
+    # Capacity model constants
+    DEFAULT_IMPACT_THRESHOLD: float = 0.10   # tolerable AUM / daily-volume fraction
+
+    # Promotion score weights (must sum to 1.0)
+    WEIGHT_SHARPE:    float = 0.30
+    WEIGHT_DSR:       float = 0.30
+    WEIGHT_STABILITY: float = 0.20
+    WEIGHT_CAPACITY:  float = 0.20
+
+    def compute_capacity_estimate(
+        self,
+        daily_volume: float,
+        annual_return: float,
+        impact_threshold: float = DEFAULT_IMPACT_THRESHOLD,
+    ) -> dict:
+        """
+        Estimate the strategy AUM at which alpha begins to decay from market impact.
+
+        Formula:
+            strategy_capacity = daily_volume × impact_threshold / annual_return
+
+        Where:
+            daily_volume      — average daily traded dollar volume for the strategy universe
+            impact_threshold  — maximum tolerable participation rate (default 10%)
+            annual_return     — expected gross alpha (decimal, e.g. 0.15 for 15%)
+
+        Returns dict with capacity estimate and interpretation.
+        """
+        if annual_return <= 0.0:
+            return {
+                "strategy_capacity_usd": 0.0,
+                "daily_volume": daily_volume,
+                "impact_threshold": impact_threshold,
+                "annual_return": annual_return,
+                "note": "Cannot estimate capacity: annual_return must be positive",
+            }
+        capacity_usd = daily_volume * impact_threshold / annual_return
+        return {
+            "strategy_capacity_usd": round(capacity_usd, 2),
+            "daily_volume": daily_volume,
+            "impact_threshold": impact_threshold,
+            "annual_return": annual_return,
+            "note": f"AUM > ${capacity_usd:,.0f} will erode alpha via market impact",
+        }
+
+    def simulate_paper_to_live_transition(
+        self,
+        paper_metrics: PerformanceMetrics,
+        proposed_aum: float,
+        daily_volume: float,
+        annual_return: float,
+        impact_threshold: float = DEFAULT_IMPACT_THRESHOLD,
+    ) -> dict:
+        """
+        Simulate the impact of moving from paper trading to live trading.
+
+        Adjustments applied:
+            slippage_adjustment = paper_slippage_cost × 1.5 (live slippage premium)
+            capacity_ok         = proposed_aum < strategy_capacity
+
+        Returns a simulation result dict with adjusted metrics and a capacity flag.
+        """
+        paper_slippage = abs(paper_metrics.slippage_ratio) if paper_metrics else 0.0
+        slippage_adjustment = paper_slippage * 1.5
+
+        # Adjust expected Sharpe downward by slippage premium
+        raw_sharpe = paper_metrics.sharpe_ratio if paper_metrics else 0.0
+        # Approximate impact on Sharpe from additional slippage
+        # Slippage premium reduces net alpha by slippage_adjustment fraction
+        adjusted_sharpe = raw_sharpe * (1.0 - min(slippage_adjustment, 0.5))
+
+        cap_result = self.compute_capacity_estimate(daily_volume, annual_return, impact_threshold)
+        strategy_capacity = cap_result["strategy_capacity_usd"]
+        capacity_ok = (proposed_aum <= strategy_capacity) if strategy_capacity > 0 else True
+
+        return {
+            "paper_sharpe": round(raw_sharpe, 4),
+            "adjusted_live_sharpe": round(adjusted_sharpe, 4),
+            "paper_slippage_ratio": round(paper_slippage, 4),
+            "live_slippage_premium": round(slippage_adjustment, 4),
+            "slippage_multiplier": 1.5,
+            "proposed_aum": proposed_aum,
+            "strategy_capacity_usd": round(strategy_capacity, 2),
+            "capacity_ok": capacity_ok,
+            "transition_approved": capacity_ok and adjusted_sharpe > 0.5,
+            "note": (
+                "Capacity OK — proceed with live allocation"
+                if capacity_ok else
+                f"WARNING: proposed AUM ${proposed_aum:,.0f} exceeds capacity ${strategy_capacity:,.0f}"
+            ),
+        }
+
+    def compute_promotion_score(
+        self,
+        sharpe: float,
+        dsr: float,
+        stability: float,
+        capacity_score: float,
+    ) -> dict:
+        """
+        Composite promotion score: weighted combination of key quality dimensions.
+
+        Weights:
+            Sharpe ratio          : 30% (WEIGHT_SHARPE)
+            Deflated Sharpe Ratio : 30% (WEIGHT_DSR)
+            Stability score       : 20% (WEIGHT_STABILITY)
+            Capacity score        : 20% (WEIGHT_CAPACITY)
+
+        All inputs should be normalised to [0, 1] before calling, or raw values
+        accepted with clamping.
+
+        Returns:
+            dict with component scores, weighted contributions, and total score.
+        """
+        # Clamp each component to [0, 1]
+        s_sharpe    = float(max(0.0, min(1.0, sharpe)))
+        s_dsr       = float(max(0.0, min(1.0, dsr)))
+        s_stability = float(max(0.0, min(1.0, stability)))
+        s_capacity  = float(max(0.0, min(1.0, capacity_score)))
+
+        contrib_sharpe    = self.WEIGHT_SHARPE    * s_sharpe
+        contrib_dsr       = self.WEIGHT_DSR       * s_dsr
+        contrib_stability = self.WEIGHT_STABILITY * s_stability
+        contrib_capacity  = self.WEIGHT_CAPACITY  * s_capacity
+
+        total_score = contrib_sharpe + contrib_dsr + contrib_stability + contrib_capacity
+
+        return {
+            "total_score": round(total_score, 6),
+            "weights": {
+                "sharpe":    self.WEIGHT_SHARPE,
+                "dsr":       self.WEIGHT_DSR,
+                "stability": self.WEIGHT_STABILITY,
+                "capacity":  self.WEIGHT_CAPACITY,
+            },
+            "components": {
+                "sharpe":    round(s_sharpe, 4),
+                "dsr":       round(s_dsr, 4),
+                "stability": round(s_stability, 4),
+                "capacity":  round(s_capacity, 4),
+            },
+            "contributions": {
+                "sharpe":    round(contrib_sharpe, 6),
+                "dsr":       round(contrib_dsr, 6),
+                "stability": round(contrib_stability, 6),
+                "capacity":  round(contrib_capacity, 6),
+            },
+            "promote_recommended": total_score >= 0.60,
+        }
+
+
+# ===========================================================================
 # Helpers
 # ===========================================================================
 

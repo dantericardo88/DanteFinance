@@ -1059,6 +1059,98 @@ class MonteCarloPermutationTest:
         p_value = beat_count / n_permutations
         return float(p_value)
 
+    def compute_parameter_sensitivity_surface(
+        self,
+        strategy_fn: Callable,
+        data: pd.DataFrame,
+        fast_ma_values: List[int],
+        slow_ma_values: List[int],
+        price_col: str = "Close",
+        strategy_kwargs: Optional[Dict[str, Any]] = None,
+    ) -> pd.DataFrame:
+        """
+        Compute a 2D parameter sensitivity surface (Sharpe ratio heatmap).
+
+        For each combination of (fast_ma, slow_ma) in the provided grids,
+        run the strategy and record the annualized Sharpe ratio.
+
+        Returns an (N × M) DataFrame where:
+          - Index   : fast_ma values
+          - Columns : slow_ma values
+          - Values  : annualized Sharpe ratio (float)
+
+        Only combinations where fast_ma < slow_ma are computed; invalid
+        combinations receive NaN.
+
+        Args:
+            strategy_fn      : callable(data, fast=int, slow=int, **kwargs) → pd.Series
+            data             : price/OHLCV DataFrame with DatetimeIndex
+            fast_ma_values   : list of fast moving-average window values
+            slow_ma_values   : list of slow moving-average window values
+            price_col        : price column name for validation
+            strategy_kwargs  : additional fixed kwargs passed to strategy_fn
+
+        Returns:
+            pd.DataFrame of shape (len(fast_ma_values), len(slow_ma_values))
+        """
+        kwargs = strategy_kwargs or {}
+
+        surface = pd.DataFrame(
+            index=fast_ma_values,
+            columns=slow_ma_values,
+            dtype=float,
+        )
+        surface.index.name = "fast_ma"
+        surface.columns.name = "slow_ma"
+
+        for fast in fast_ma_values:
+            for slow in slow_ma_values:
+                if fast >= slow:
+                    surface.loc[fast, slow] = float("nan")
+                    continue
+                try:
+                    rets = strategy_fn(data, fast=fast, slow=slow, **kwargs)
+                    sharpe = _annualized_sharpe(rets, self.ann)
+                    surface.loc[fast, slow] = round(sharpe, 4)
+                except Exception as exc:
+                    logger.debug(
+                        "Sensitivity surface: fast=%d, slow=%d → %s", fast, slow, exc
+                    )
+                    surface.loc[fast, slow] = float("nan")
+
+        return surface
+
+    def compute_oos_stability(
+        self,
+        fold_results: List["FoldResult"],
+        benchmark_sharpe: float = 0.0,
+    ) -> float:
+        """
+        Compute strategy stability: fraction of OOS periods where the strategy
+        beats the benchmark Sharpe ratio.
+
+        Stability = (# folds with OOS Sharpe > benchmark_sharpe) / total_folds
+
+        A stable strategy consistently generates positive (or benchmark-beating)
+        OOS returns across most periods.
+
+        Args:
+            fold_results     : list of FoldResult from WalkForwardEngine.run_all_folds
+            benchmark_sharpe : Sharpe threshold to beat (default 0.0 = positive returns)
+
+        Returns:
+            float in [0, 1] — fraction of OOS periods beating the benchmark
+        """
+        if not fold_results:
+            return 0.0
+
+        n_total = len(fold_results)
+        n_positive = sum(
+            1 for r in fold_results
+            if r.out_sample_sharpe > benchmark_sharpe
+        )
+        return float(n_positive / n_total)
+
     def run_white_reality_check(
         self,
         returns: pd.Series,

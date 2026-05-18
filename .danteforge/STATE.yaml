@@ -1,6 +1,6 @@
 project: DanteFinance
 lastHandoff: initialized
-workflowStage: initialized
+workflowStage: verify
 currentPhase: 0
 tasks: {}
 auditLog:
@@ -44,9 +44,31 @@ auditLog:
     returned)"
   - "2026-05-15T20:11:39.741Z | llm: ollama/qwen2.5-coder:latest (139 chars
     returned)"
+  - "2026-05-17T23:21:54.013Z | mcp: score_all"
+  - "2026-05-18T00:23:23.131Z | verify: 5 passed, 0 warnings, 9 failures"
+  - "2026-05-18T00:23:26.696Z | lessons: added [Workflow] rule from verify
+    failure"
+  - "2026-05-18T00:23:29.672Z | lessons: added [Workflow] rule from verify
+    failure"
+  - "2026-05-18T00:23:34.133Z | lessons: added [Workflow] rule from verify
+    failure"
+  - "2026-05-18T00:23:36.591Z | lessons: added [Workflow] rule from verify
+    failure"
+  - "2026-05-18T00:23:39.069Z | lessons: added [Workflow] rule from verify
+    failure"
+  - "2026-05-18T00:23:40.891Z | lessons: added [Workflow] rule from verify
+    failure"
+  - "2026-05-18T00:23:42.791Z | lessons: added [Workflow] rule from verify
+    failure"
+  - "2026-05-18T00:23:43.721Z | lessons: added [Workflow] rule from verify
+    failure"
+  - "2026-05-18T00:23:45.579Z | lessons: added [Workflow] rule from verify
+    failure"
 profile: balanced
 enforcementMode: strict
 projectType: unknown
 selfEditPolicy: deny
+lastVerifyStatus: fail
+lastVerifyReceiptPath: C:\Projects\DanteFinance\.danteforge\evidence\verify\latest.json
 maxBudgetUsd: 10
 routingAggressiveness: balanced

@@ -1280,6 +1280,162 @@ class ToolExecutor:
         except Exception as exc:
             return {"ticker": ticker, "form": form, "error": str(exc)}
 
+    # ------------------------------------------------------------------ #
+    # Named SENTINEL module integrations
+    # ------------------------------------------------------------------ #
+
+    def execute_dcf_tool(self, ticker: str, growth_rate: float = 0.10,
+                          discount_rate: float = 0.10) -> Dict[str, Any]:
+        """
+        Call sentinel.sfe.dcf_wacc_v3.DCFValuationEngine.run_dcf() for a
+        proper multi-scenario DCF with WACC estimation.
+
+        Falls back to the built-in heuristic DCF when the module is
+        unavailable or raises an exception.
+        """
+        try:
+            from sentinel.sfe.dcf_wacc_v3 import DCFValuationEngine  # type: ignore
+            engine = DCFValuationEngine()
+            result = engine.run_dcf(ticker)
+            # Normalise output to consistent schema
+            if hasattr(result, "__dict__"):
+                out = {k: v for k, v in result.__dict__.items()
+                       if not k.startswith("_")}
+            elif isinstance(result, dict):
+                out = result
+            else:
+                out = {"raw": str(result)}
+            out.setdefault("ticker", ticker)
+            out.setdefault("source", "dcf_wacc_v3")
+            return out
+        except Exception as exc:
+            logger.debug("DCFValuationEngine.run_dcf failed, using built-in: %s", exc)
+        return self._tool_get_dcf_valuation(ticker, growth_rate, discount_rate)
+
+    def execute_sentiment_tool(self, ticker: str, text: Optional[str] = None,
+                                days: int = 7) -> Dict[str, Any]:
+        """
+        Call sentinel.sai.finbert_sentiment_v3 for FinBERT-based sentiment.
+
+        Falls back to keyword-based sentiment when FinBERT is unavailable.
+        """
+        try:
+            from sentinel.sai.finbert_sentiment_v3 import (  # type: ignore
+                AggregatedSentimentEngine,
+            )
+            engine = AggregatedSentimentEngine()
+            result = engine.analyze_ticker(ticker, days=days)
+            if hasattr(result, "__dict__"):
+                out = {k: v for k, v in result.__dict__.items()
+                       if not k.startswith("_")}
+            elif isinstance(result, dict):
+                out = result
+            else:
+                out = {"raw": str(result)}
+            out.setdefault("ticker", ticker)
+            out.setdefault("source", "finbert_sentiment_v3")
+            return out
+        except Exception as exc:
+            logger.debug("finbert_sentiment_v3 unavailable, using keyword fallback: %s", exc)
+        return self._tool_get_news_sentiment(ticker, days=days)
+
+    def execute_risk_tool(self, ticker: str,
+                           weights: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+        """
+        Call sentinel.spm.portfolio_risk_v3.PortfolioRiskEngine.analyze_portfolio().
+
+        When called for a single ticker the portfolio is a unit weight.
+        Falls back to Altman Z-score credit risk on import failure.
+        """
+        try:
+            from sentinel.spm.portfolio_risk_v3 import PortfolioRiskEngine  # type: ignore
+            engine = PortfolioRiskEngine()
+            portfolio = weights or {ticker: 1.0}
+            result = engine.analyze_portfolio(portfolio)
+            if hasattr(result, "__dict__"):
+                out = {k: v for k, v in result.__dict__.items()
+                       if not k.startswith("_")}
+            elif isinstance(result, dict):
+                out = result
+            else:
+                out = {"raw": str(result)}
+            out.setdefault("ticker", ticker)
+            out.setdefault("source", "portfolio_risk_v3")
+            return out
+        except Exception as exc:
+            logger.debug("PortfolioRiskEngine.analyze_portfolio failed, using fallback: %s", exc)
+        return self._tool_get_credit_spread(ticker)
+
+    # ------------------------------------------------------------------ #
+    # Confidence scoring with source agreement
+    # ------------------------------------------------------------------ #
+
+    def compute_confidence_from_sources(
+        self,
+        findings: Dict[str, Any],
+        recommendation: str,
+    ) -> float:
+        """
+        Compute a confidence score based on how many independent data sources
+        agree on the same directional signal (bullish/bearish/neutral).
+
+        Algorithm
+        ---------
+        1. Each successful tool result that contains a directional signal
+           contributes a vote: +1 bullish, -1 bearish, 0 neutral.
+        2. Confidence = |vote_sum| / n_votes * 0.85 + base(0.40)
+           — capped at 0.92 to avoid over-confidence.
+        """
+        signal_map: Dict[str, int] = {
+            "BUY": 1, "BULLISH": 1, "STRONG BUY": 1, "OUTPERFORM": 1,
+            "UNDERVALUED": 1, "SAFE": 1, "POSITIVE": 1, "HIGH": 1,
+            "SELL": -1, "BEARISH": -1, "UNDERPERFORM": -1,
+            "OVERVALUED": -1, "DISTRESS": -1, "NEGATIVE": -1,
+            "HOLD": 0, "NEUTRAL": 0, "FAIR VALUE": 0, "GREY": 0,
+            "MONITOR": 0, "INLINE": 0,
+        }
+        rec_signal = signal_map.get(recommendation.upper(), 0)
+
+        votes: List[int] = []
+        for tool_key, data in findings.items():
+            if not isinstance(data, dict):
+                continue
+            if "error" in data:
+                continue
+
+            # Extract directional signals from known fields
+            for field_name in ("verdict", "sentiment", "label", "default_risk",
+                               "zone", "pe_vs_sector", "regime",
+                               "short_squeeze_potential", "ma_attractiveness"):
+                raw_val = data.get(field_name)
+                if raw_val and isinstance(raw_val, str):
+                    v = signal_map.get(raw_val.upper())
+                    if v is not None:
+                        votes.append(v)
+
+            # DCF margin of safety as a signal
+            mos = data.get("margin_of_safety_pct")
+            if isinstance(mos, (int, float)):
+                votes.append(1 if mos > 15 else (-1 if mos < -15 else 0))
+
+            # Sentiment score as a signal
+            sent_score = data.get("sentiment_score")
+            if isinstance(sent_score, (int, float)):
+                votes.append(1 if sent_score > 0.15 else (-1 if sent_score < -0.15 else 0))
+
+        if not votes:
+            return 0.50
+
+        n = len(votes)
+        vote_sum = sum(votes)
+        # How many votes agree with the recommendation
+        agreeing = sum(1 for v in votes if v == rec_signal)
+        agreement_ratio = agreeing / n
+
+        # Base confidence + agreement bonus + breadth bonus
+        confidence = 0.40 + agreement_ratio * 0.40 + min(n * 0.01, 0.12)
+        return round(min(0.92, confidence), 2)
+
 
 # ---------------------------------------------------------------------------
 # ── 3. SQLite Persistence Layer ──────────────────────────────────────────────
@@ -1552,11 +1708,21 @@ class ReportBuilder:
             recommendation = "HOLD"
             confidence = 0.55
 
-        # Higher confidence when more tools have data
-        tools_with_data = sum(1 for k, v in findings.items()
-                              if v and not (isinstance(v, dict) and "error" in v))
-        data_breadth_bonus = min(0.10, tools_with_data * 0.01)
-        confidence = min(0.92, confidence + data_breadth_bonus)
+        # Use source-agreement confidence scoring from ToolExecutor.
+        # This considers how many independent tool results agree directionally.
+        try:
+            executor = ToolExecutor()
+            source_confidence = executor.compute_confidence_from_sources(
+                findings, recommendation
+            )
+            # Blend: 60% source-agreement, 40% signal-count heuristic
+            confidence = round(0.60 * source_confidence + 0.40 * confidence, 2)
+        except Exception:
+            # Fallback: breadth bonus only
+            tools_with_data = sum(1 for k, v in findings.items()
+                                  if v and not (isinstance(v, dict) and "error" in v))
+            data_breadth_bonus = min(0.10, tools_with_data * 0.01)
+            confidence = min(0.92, confidence + data_breadth_bonus)
 
         # Price target
         price_target: Optional[float] = None

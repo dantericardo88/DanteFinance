@@ -388,6 +388,7 @@ class FunctionDispatcher:
         r.register("SCHD", "Earnings & event schedule", self._h_SCHD, "Equity Analysis")
         r.register("BRC", "Broker recommendations", self._h_BRC, "Equity Analysis")
         r.register("WACC", "WACC / DCF model", self._h_WACC, "Equity Analysis")
+        r.register("CDSW", "Credit default swap / Merton model", self._h_CDSW, "Fixed Income")
 
         # ---- FIXED INCOME (12) -------------------------------------------
         r.register("YAS", "Yield & spread analysis", self._h_YAS, "Fixed Income")
@@ -499,14 +500,27 @@ class FunctionDispatcher:
     # ================================================================== EQUITY ANALYSIS
 
     def _h_DES(self, cmd: ParsedCommand) -> CommandResult:
+        """Company description & overview (DES<GO>)"""
+        ticker = cmd.ticker or ""
         try:
-            from sentinel.sfe.fundamental_screener_v3 import FundamentalScreenerV3
-            screener = FundamentalScreenerV3()
-            result = screener.get_company_description(cmd.ticker or "")
+            import yfinance as yf
+            info = yf.Ticker(ticker).info
+            result = {
+                "ticker": ticker,
+                "name": info.get("longName", info.get("shortName", ticker)),
+                "sector": info.get("sector", "N/A"),
+                "industry": info.get("industry", "N/A"),
+                "country": info.get("country", "N/A"),
+                "exchange": info.get("exchange", "N/A"),
+                "currency": info.get("currency", "USD"),
+                "market_cap": info.get("marketCap"),
+                "employees": info.get("fullTimeEmployees"),
+                "description": (info.get("longBusinessSummary") or "")[:300],
+            }
             return CommandResult(
-                code="DES", ticker=cmd.ticker,
-                data=result if isinstance(result, dict) else {"description": str(result)},
-                text=f"[DES] {cmd.ticker}: {result}",
+                code="DES", ticker=ticker,
+                data=result,
+                text=f"[DES] {result['name']} ({ticker}) | {result['sector']} / {result['industry']}",
                 success=True,
             )
         except ImportError:
@@ -515,14 +529,35 @@ class FunctionDispatcher:
             return self._err("DES", cmd.ticker, exc)
 
     def _h_GP(self, cmd: ParsedCommand) -> CommandResult:
+        """Price graph / chart (GP<GO>) — delegates to yfinance OHLCV."""
+        ticker = cmd.ticker or "SPY"
+        period_map = {"1D": "1d", "5D": "5d", "1M": "1mo", "3M": "3mo",
+                      "6M": "6mo", "1Y": "1y", "2Y": "2y", "5Y": "5y", "MAX": "max"}
+        raw = str(cmd.params.get("PERIOD", "1Y")).upper()
+        yf_period = period_map.get(raw, "1y")
         try:
-            from sentinel.sfe.charting_v3 import ChartingV3
-            c = ChartingV3()
-            data = c.price_chart(cmd.ticker or "", period=cmd.params.get("PERIOD", "1Y"))
+            import yfinance as yf
+            hist = yf.Ticker(ticker).history(period=yf_period)
+            if hist is None or hist.empty:
+                return self._stub("GP", cmd.ticker, f"No price data for {ticker}")
+            close_series = hist["Close"].dropna()
+            first_close = float(close_series.iloc[0])
+            last_close = float(close_series.iloc[-1])
+            pct_chg = (last_close / first_close - 1) * 100 if first_close else 0.0
+            data = {
+                "ticker": ticker,
+                "period": yf_period,
+                "bars": len(hist),
+                "start_close": round(first_close, 4),
+                "end_close": round(last_close, 4),
+                "pct_change": round(pct_chg, 2),
+                "high_52w": round(float(hist["High"].max()), 4),
+                "low_52w": round(float(hist["Low"].min()), 4),
+            }
             return CommandResult(
-                code="GP", ticker=cmd.ticker,
-                data=data if isinstance(data, dict) else {"chart": str(data)},
-                text=f"[GP] Price chart for {cmd.ticker} — {len(data) if isinstance(data, dict) else 'N/A'} data points",
+                code="GP", ticker=ticker, data=data,
+                text=(f"[GP] {ticker} ({yf_period}): {len(hist)} bars | "
+                      f"last={last_close:.2f} | chg={pct_chg:+.1f}%"),
                 success=True,
             )
         except ImportError:
@@ -531,32 +566,69 @@ class FunctionDispatcher:
             return self._err("GP", cmd.ticker, exc)
 
     def _h_HP(self, cmd: ParsedCommand) -> CommandResult:
+        """Historical price data — fetches OHLCV via yfinance."""
+        ticker = cmd.ticker or "SPY"
+        period_map = {
+            "1D": "1d", "5D": "5d", "1M": "1mo", "3M": "3mo",
+            "6M": "6mo", "1Y": "1y", "2Y": "2y", "5Y": "5y",
+            "10Y": "10y", "YTD": "ytd", "MAX": "max",
+        }
+        raw_period = str(cmd.params.get("PERIOD", "1Y")).upper()
+        yf_period = period_map.get(raw_period, "1y")
         try:
-            from sentinel.sds.adapters.historical_ohlcv_daily_v3 import HistoricalOHLCVDailyV3
-            adapter = HistoricalOHLCVDailyV3()
-            period = cmd.params.get("PERIOD", "1Y")
-            data = adapter.fetch(cmd.ticker or "", period=period)
-            rows = data if isinstance(data, list) else []
+            import yfinance as yf
+            hist = yf.Ticker(ticker).history(period=yf_period)
+            if hist is None or hist.empty:
+                return self._stub("HP", cmd.ticker,
+                                  f"No price data returned for {ticker} ({yf_period})")
+            rows = []
+            for dt, row in hist.iterrows():
+                rows.append({
+                    "date": str(dt.date()),
+                    "open":  round(float(row.get("Open",  0)), 4),
+                    "high":  round(float(row.get("High",  0)), 4),
+                    "low":   round(float(row.get("Low",   0)), 4),
+                    "close": round(float(row.get("Close", 0)), 4),
+                    "volume": int(row.get("Volume", 0)),
+                })
+            latest = rows[-1] if rows else {}
             return CommandResult(
-                code="HP", ticker=cmd.ticker,
-                data={"rows": rows[:10], "total": len(rows), "period": period},
-                text=f"[HP] {cmd.ticker}: {len(rows)} OHLCV bars ({period})",
+                code="HP", ticker=ticker,
+                data={
+                    "period": yf_period,
+                    "total_bars": len(rows),
+                    "latest": latest,
+                    "rows": rows[-10:],   # last 10 bars in payload
+                },
+                text=(
+                    f"[HP] {ticker} ({yf_period}): {len(rows)} bars | "
+                    f"latest close={latest.get('close', 'N/A')} "
+                    f"on {latest.get('date', 'N/A')}"
+                ),
                 success=True,
             )
         except ImportError:
-            return self._stub("HP", cmd.ticker, "Historical price data — OHLCV bars")
+            return self._stub("HP", cmd.ticker, "Historical price data — install yfinance")
         except Exception as exc:
             return self._err("HP", cmd.ticker, exc)
 
     def _h_FA(self, cmd: ParsedCommand) -> CommandResult:
+        """Financial analysis — income/balance/CF (FA<GO>)"""
+        ticker = cmd.ticker or ""
         try:
-            from sentinel.sfe.historical_financials_engine import HistoricalFinancialsEngine
-            engine = HistoricalFinancialsEngine()
-            data = engine.get_financials(cmd.ticker or "")
+            from sentinel.sfe.historical_financials_engine import UniversalCashFlowParser
+            parser = UniversalCashFlowParser()
+            period_type = cmd.params.get("PERIOD", "A")  # A=annual, Q=quarterly
+            df = parser.get_ticker_cash_flow(ticker, periods=4, period_type=period_type)
+            if df is not None and not df.empty:
+                data = {"ticker": ticker, "period_type": period_type,
+                        "periods": len(df), "columns": list(df.columns)[:10],
+                        "latest": df.iloc[-1].to_dict() if len(df) else {}}
+            else:
+                data = {"ticker": ticker, "period_type": period_type, "note": "no data"}
             return CommandResult(
-                code="FA", ticker=cmd.ticker,
-                data=data if isinstance(data, dict) else {"financials": str(data)},
-                text=f"[FA] Financial analysis for {cmd.ticker}",
+                code="FA", ticker=ticker, data=data,
+                text=f"[FA] {ticker}: financial statements ({period_type}) — {data.get('periods', 0)} periods",
                 success=True,
             )
         except ImportError:
@@ -565,14 +637,24 @@ class FunctionDispatcher:
             return self._err("FA", cmd.ticker, exc)
 
     def _h_RV(self, cmd: ParsedCommand) -> CommandResult:
+        """Relative value / peer comps (RV<GO>)"""
+        ticker = cmd.ticker or ""
         try:
-            from sentinel.sfe.comps_engine_v3 import CompsEngineV3
-            engine = CompsEngineV3()
-            data = engine.relative_value(cmd.ticker or "")
+            from sentinel.sfe.comps_engine_v3 import CompsEngine
+            engine = CompsEngine()
+            multiples = engine.get_multiples(ticker)
+            peers = engine.get_peer_tickers(ticker, n_peers=5)
+            data = {
+                "ticker": ticker,
+                "multiples": multiples.to_dict() if hasattr(multiples, "to_dict") else (multiples.__dict__ if multiples else {}),
+                "peer_tickers": peers,
+            }
+            pe = getattr(multiples, "pe_ltm", None) if multiples else None
+            ev_ebitda = getattr(multiples, "ev_ebitda", None) if multiples else None
             return CommandResult(
-                code="RV", ticker=cmd.ticker,
-                data=data if isinstance(data, dict) else {"rv": str(data)},
-                text=f"[RV] Relative value comps for {cmd.ticker}",
+                code="RV", ticker=ticker, data=data,
+                text=(f"[RV] {ticker}: P/E={pe:.1f}x | EV/EBITDA={ev_ebitda:.1f}x | "
+                      f"peers={peers[:3]}" if pe else f"[RV] {ticker}: comps built, {len(peers)} peers"),
                 success=True,
             )
         except ImportError:
@@ -597,14 +679,31 @@ class FunctionDispatcher:
             return self._err("EE", cmd.ticker, exc)
 
     def _h_DVD(self, cmd: ParsedCommand) -> CommandResult:
+        """Dividend history & model (DVD<GO>)"""
+        ticker = cmd.ticker or ""
         try:
-            from sentinel.sfe.dividend_ddm import DividendDDM
-            ddm = DividendDDM()
-            data = ddm.dividend_history(cmd.ticker or "")
+            import yfinance as yf
+            t = yf.Ticker(ticker)
+            divs = t.dividends
+            info = t.info
+            if divs is None or divs.empty:
+                data = {"ticker": ticker, "dividends": [], "yield": info.get("dividendYield"), "note": "no dividend history"}
+            else:
+                recent = divs.tail(8)
+                data = {
+                    "ticker": ticker,
+                    "forward_yield": info.get("dividendYield"),
+                    "trailing_annual_div": info.get("trailingAnnualDividendRate"),
+                    "payout_ratio": info.get("payoutRatio"),
+                    "ex_dividend_date": str(info.get("exDividendDate", "")),
+                    "dividend_count": len(divs),
+                    "recent_dividends": [{"date": str(d.date()), "amount": round(float(v), 4)}
+                                         for d, v in zip(recent.index, recent.values)],
+                }
+            yld = data.get("forward_yield") or 0
             return CommandResult(
-                code="DVD", ticker=cmd.ticker,
-                data=data if isinstance(data, dict) else {"dividends": str(data)},
-                text=f"[DVD] Dividend history for {cmd.ticker}",
+                code="DVD", ticker=ticker, data=data,
+                text=f"[DVD] {ticker}: yield={yld:.2%} | {data.get('dividend_count', 0)} historical payments",
                 success=True,
             )
         except ImportError:
@@ -613,14 +712,21 @@ class FunctionDispatcher:
             return self._err("DVD", cmd.ticker, exc)
 
     def _h_CF(self, cmd: ParsedCommand) -> CommandResult:
+        """Cash flow statement (CF<GO>)"""
+        ticker = cmd.ticker or ""
         try:
-            from sentinel.sfe.cash_flow_enhanced import CashFlowEnhanced
-            cf = CashFlowEnhanced()
-            data = cf.get_cash_flow(cmd.ticker or "")
+            from sentinel.sfe.cash_flow_enhanced import UniversalCashFlowParser
+            parser = UniversalCashFlowParser()
+            df = parser.get_ticker_cash_flow(ticker, periods=4, period_type="A")
+            if df is not None and not df.empty:
+                data = {"ticker": ticker, "periods": len(df),
+                        "columns": list(df.columns)[:12],
+                        "latest": df.iloc[-1].to_dict() if len(df) else {}}
+            else:
+                data = {"ticker": ticker, "note": "no data returned"}
             return CommandResult(
-                code="CF", ticker=cmd.ticker,
-                data=data if isinstance(data, dict) else {"cf": str(data)},
-                text=f"[CF] Cash flow statement for {cmd.ticker}",
+                code="CF", ticker=ticker, data=data,
+                text=f"[CF] {ticker}: cash flow statement — {data.get('periods', 0)} periods",
                 success=True,
             )
         except ImportError:
@@ -629,14 +735,16 @@ class FunctionDispatcher:
             return self._err("CF", cmd.ticker, exc)
 
     def _h_RELS(self, cmd: ParsedCommand) -> CommandResult:
+        """Related securities — peers / ETFs / indices (RELS<GO>)"""
+        ticker = cmd.ticker or ""
         try:
-            from sentinel.sfe.peer_comparison import PeerComparison
-            pc = PeerComparison()
-            data = pc.get_related(cmd.ticker or "")
+            from sentinel.sfe.comps_engine_v3 import CompsEngine
+            engine = CompsEngine()
+            peers = engine.get_peer_tickers(ticker, n_peers=10)
+            data = {"ticker": ticker, "peer_tickers": peers, "count": len(peers)}
             return CommandResult(
-                code="RELS", ticker=cmd.ticker,
-                data=data if isinstance(data, dict) else {"related": str(data)},
-                text=f"[RELS] Related securities for {cmd.ticker}",
+                code="RELS", ticker=ticker, data=data,
+                text=f"[RELS] {ticker}: {len(peers)} related securities — {peers[:5]}",
                 success=True,
             )
         except ImportError:
@@ -645,14 +753,30 @@ class FunctionDispatcher:
             return self._err("RELS", cmd.ticker, exc)
 
     def _h_CH(self, cmd: ParsedCommand) -> CommandResult:
+        """Company highlights — key stats & events (CH<GO>)"""
+        ticker = cmd.ticker or ""
         try:
-            from sentinel.sfe.fundamental_screener_v3 import FundamentalScreenerV3
-            fs = FundamentalScreenerV3()
-            data = fs.get_highlights(cmd.ticker or "")
+            import yfinance as yf
+            info = yf.Ticker(ticker).info
+            data = {
+                "ticker": ticker,
+                "name": info.get("longName", ticker),
+                "market_cap": info.get("marketCap"),
+                "pe_ratio": info.get("trailingPE"),
+                "eps": info.get("trailingEps"),
+                "revenue": info.get("totalRevenue"),
+                "profit_margin": info.get("profitMargins"),
+                "roe": info.get("returnOnEquity"),
+                "beta": info.get("beta"),
+                "52w_high": info.get("fiftyTwoWeekHigh"),
+                "52w_low": info.get("fiftyTwoWeekLow"),
+                "analyst_target": info.get("targetMeanPrice"),
+            }
             return CommandResult(
-                code="CH", ticker=cmd.ticker,
-                data=data if isinstance(data, dict) else {"highlights": str(data)},
-                text=f"[CH] Company highlights for {cmd.ticker}",
+                code="CH", ticker=ticker, data=data,
+                text=(f"[CH] {ticker}: P/E={data['pe_ratio']:.1f} | "
+                      f"mktcap={data['market_cap']:,} | beta={data['beta']}"
+                      if data.get("pe_ratio") else f"[CH] {ticker}: highlights loaded"),
                 success=True,
             )
         except ImportError:
@@ -661,30 +785,48 @@ class FunctionDispatcher:
             return self._err("CH", cmd.ticker, exc)
 
     def _h_MGMT(self, cmd: ParsedCommand) -> CommandResult:
+        """Management & board (MGMT<GO>)"""
+        ticker = cmd.ticker or ""
         try:
             from sentinel.sfe.proxy_intelligence_v3 import ProxyIntelligenceV3
             pi = ProxyIntelligenceV3()
-            data = pi.get_management(cmd.ticker or "")
+            data = pi.get_management(ticker)
             return CommandResult(
-                code="MGMT", ticker=cmd.ticker,
+                code="MGMT", ticker=ticker,
                 data=data if isinstance(data, dict) else {"management": str(data)},
-                text=f"[MGMT] Management & board for {cmd.ticker}",
+                text=f"[MGMT] Management & board for {ticker}",
                 success=True,
             )
         except ImportError:
-            return self._stub("MGMT", cmd.ticker, "Management team & board of directors")
+            try:
+                import yfinance as yf
+                officers = yf.Ticker(ticker).info.get("companyOfficers", [])
+                data = {"ticker": ticker, "officers": officers[:8], "count": len(officers)}
+                return CommandResult(
+                    code="MGMT", ticker=ticker, data=data,
+                    text=f"[MGMT] {ticker}: {len(officers)} officers/directors",
+                    success=True,
+                )
+            except Exception as exc2:
+                return self._err("MGMT", ticker, exc2)
         except Exception as exc:
             return self._err("MGMT", cmd.ticker, exc)
 
     def _h_OWN(self, cmd: ParsedCommand) -> CommandResult:
+        """Ownership — institutional / insider / ETF holders (OWN<GO>)"""
+        ticker = cmd.ticker or ""
         try:
-            from sentinel.sfe.institutional_ownership_v3 import InstitutionalOwnershipV3
-            iov = InstitutionalOwnershipV3()
-            data = iov.get_ownership(cmd.ticker or "")
+            from sentinel.sfe.institutional_ownership_v3 import OwnershipAnalytics, OwnershipDatabase, InstitutionRegistry
+            db = OwnershipDatabase()
+            reg = InstitutionRegistry(db)
+            analytics = OwnershipAnalytics(db, reg)
+            data = analytics.get_full_ownership_report(ticker)
+            if not isinstance(data, dict):
+                data = {"report": str(data)}
+            data["ticker"] = ticker
             return CommandResult(
-                code="OWN", ticker=cmd.ticker,
-                data=data if isinstance(data, dict) else {"ownership": str(data)},
-                text=f"[OWN] Institutional ownership for {cmd.ticker}",
+                code="OWN", ticker=ticker, data=data,
+                text=f"[OWN] {ticker}: institutional ownership report",
                 success=True,
             )
         except ImportError:
@@ -693,14 +835,30 @@ class FunctionDispatcher:
             return self._err("OWN", cmd.ticker, exc)
 
     def _h_SCHD(self, cmd: ParsedCommand) -> CommandResult:
+        """Earnings & event schedule (SCHD<GO>)"""
+        ticker = cmd.ticker or ""
         try:
-            from sentinel.sma.economic_calendar_v3 import EconomicCalendarV3
-            cal = EconomicCalendarV3()
-            data = cal.get_company_schedule(cmd.ticker or "")
+            import yfinance as yf
+            t = yf.Ticker(ticker)
+            cal = t.calendar
+            if cal is not None and not (hasattr(cal, "empty") and cal.empty):
+                if hasattr(cal, "to_dict"):
+                    cal_dict = cal.to_dict()
+                else:
+                    cal_dict = dict(cal) if cal else {}
+            else:
+                cal_dict = {}
+            info = t.info
+            data = {
+                "ticker": ticker,
+                "earnings_date": str(info.get("earningsTimestamp", "")),
+                "ex_div_date": str(info.get("exDividendDate", "")),
+                "next_fiscal_year_end": str(info.get("nextFiscalYearEnd", "")),
+                "calendar": cal_dict,
+            }
             return CommandResult(
-                code="SCHD", ticker=cmd.ticker,
-                data=data if isinstance(data, dict) else {"schedule": str(data)},
-                text=f"[SCHD] Event schedule for {cmd.ticker}",
+                code="SCHD", ticker=ticker, data=data,
+                text=f"[SCHD] {ticker}: event schedule loaded",
                 success=True,
             )
         except ImportError:
@@ -709,14 +867,18 @@ class FunctionDispatcher:
             return self._err("SCHD", cmd.ticker, exc)
 
     def _h_BRC(self, cmd: ParsedCommand) -> CommandResult:
+        """Broker recommendations (BRC<GO>)"""
+        ticker = cmd.ticker or ""
         try:
             from sentinel.sfe.analyst_estimates import AnalystEstimates
             ae = AnalystEstimates()
-            data = ae.get_recommendations(cmd.ticker or "")
+            data = ae.get_recommendations(ticker)
+            if not isinstance(data, dict):
+                data = {"recommendations": str(data)}
+            data["ticker"] = ticker
             return CommandResult(
-                code="BRC", ticker=cmd.ticker,
-                data=data if isinstance(data, dict) else {"recs": str(data)},
-                text=f"[BRC] Broker recommendations for {cmd.ticker}",
+                code="BRC", ticker=ticker, data=data,
+                text=f"[BRC] {ticker}: broker recommendations loaded",
                 success=True,
             )
         except ImportError:
@@ -725,20 +887,75 @@ class FunctionDispatcher:
             return self._err("BRC", cmd.ticker, exc)
 
     def _h_WACC(self, cmd: ParsedCommand) -> CommandResult:
+        """WACC / DCF valuation — delegates to sentinel.sfe.dcf_wacc_v3.DCFValuationEngine."""
+        ticker = cmd.ticker or ""
+        if not ticker:
+            return self._stub("WACC", None, "Provide a ticker: e.g. AAPL WACC")
         try:
-            from sentinel.sfe.dcf_wacc_templates import DCFWACCTemplates
-            dcf = DCFWACCTemplates()
-            data = dcf.calculate_wacc(cmd.ticker or "")
-            return CommandResult(
-                code="WACC", ticker=cmd.ticker,
-                data=data if isinstance(data, dict) else {"wacc": str(data)},
-                text=f"[WACC] WACC / DCF model for {cmd.ticker}",
-                success=True,
+            from sentinel.sfe.dcf_wacc_v3 import DCFValuationEngine, DCFResult
+            engine = DCFValuationEngine()
+            scenario = str(cmd.params.get("SCENARIO", "base")).lower()
+            n_years = int(cmd.params.get("YEARS", 10))
+            result: DCFResult = engine.run_dcf(
+                ticker=ticker,
+                scenario=scenario,
+                n_years=n_years,
             )
+            data = {
+                "ticker":            ticker,
+                "scenario":          scenario,
+                "intrinsic_value":   round(result.intrinsic_value_per_share, 2),
+                "wacc":              round(result.wacc, 4),
+                "terminal_growth":   round(result.terminal_growth_rate, 4),
+                "upside_pct":        round(result.upside_pct, 2) if hasattr(result, "upside_pct") else None,
+                "enterprise_value":  round(result.enterprise_value, 0) if hasattr(result, "enterprise_value") else None,
+            }
+            text = (
+                f"[WACC] {ticker}: intrinsic={data['intrinsic_value']} | "
+                f"WACC={data['wacc']:.2%} | scenario={scenario}"
+            )
+            return CommandResult(code="WACC", ticker=ticker, data=data, text=text, success=True)
         except ImportError:
-            return self._stub("WACC", cmd.ticker, "WACC & DCF valuation model")
+            return self._stub("WACC", cmd.ticker, "WACC & DCF valuation — install sentinel.sfe.dcf_wacc_v3")
         except Exception as exc:
             return self._err("WACC", cmd.ticker, exc)
+
+    def _h_CDSW(self, cmd: ParsedCommand) -> CommandResult:
+        """Credit default swap / Merton model — delegates to sentinel.sfe.credit_spread_v3."""
+        ticker = cmd.ticker or ""
+        if not ticker:
+            return self._stub("CDSW", None, "Provide a ticker: e.g. AAPL CDSW")
+        try:
+            from sentinel.sfe.credit_spread_v3 import KMVDistanceToDefault, CreditRiskEngine
+            # KMV distance-to-default (Merton structural model)
+            kmv = KMVDistanceToDefault()
+            kmv_result = kmv.run_for_ticker(ticker)
+            # Full credit report via CreditRiskEngine
+            cre = CreditRiskEngine()
+            credit_report = cre.get_full_credit_report(ticker)
+            data: Dict[str, Any] = {
+                "ticker": ticker,
+                "kmv": {
+                    "distance_to_default": round(kmv_result.distance_to_default, 4)
+                        if hasattr(kmv_result, "distance_to_default") else None,
+                    "edf": round(kmv_result.edf, 6)
+                        if hasattr(kmv_result, "edf") else None,
+                    "credit_quality": kmv_result.credit_quality
+                        if hasattr(kmv_result, "credit_quality") else "unknown",
+                },
+                "credit_report": credit_report if isinstance(credit_report, dict) else {},
+            }
+            dd = data["kmv"].get("distance_to_default") or 0.0
+            edf = data["kmv"].get("edf") or 0.0
+            text = (
+                f"[CDSW] {ticker}: distance-to-default={dd:.3f} | "
+                f"EDF={edf:.4%} | quality={data['kmv'].get('credit_quality', 'N/A')}"
+            )
+            return CommandResult(code="CDSW", ticker=ticker, data=data, text=text, success=True)
+        except ImportError:
+            return self._stub("CDSW", cmd.ticker, "Credit default / Merton model — install sentinel.sfe.credit_spread_v3")
+        except Exception as exc:
+            return self._err("CDSW", cmd.ticker, exc)
 
     # ================================================================== FIXED INCOME
 
@@ -759,14 +976,18 @@ class FunctionDispatcher:
             return self._err("YAS", cmd.ticker, exc)
 
     def _h_CRVD(self, cmd: ParsedCommand) -> CommandResult:
+        """Credit / yield curve display (CRVD<GO>)"""
+        ticker = cmd.ticker or ""
         try:
-            from sentinel.sfe.credit_spread_analysis import CreditSpreadAnalysis
-            cs = CreditSpreadAnalysis()
-            data = cs.credit_curve(cmd.ticker or "")
+            from sentinel.sfe.treasury_yield_v3 import TreasuryYieldEngine
+            engine = TreasuryYieldEngine()
+            data = engine.get_current_curve()
+            if not isinstance(data, dict):
+                data = {"curve": str(data)}
+            data["ticker"] = ticker
             return CommandResult(
-                code="CRVD", ticker=cmd.ticker,
-                data=data if isinstance(data, dict) else {"curve": str(data)},
-                text=f"[CRVD] Credit curve for {cmd.ticker}",
+                code="CRVD", ticker=ticker, data=data,
+                text=f"[CRVD] Yield curve display — {len(data)} data points",
                 success=True,
             )
         except ImportError:
@@ -775,14 +996,16 @@ class FunctionDispatcher:
             return self._err("CRVD", cmd.ticker, exc)
 
     def _h_VCUB(self, cmd: ParsedCommand) -> CommandResult:
+        """Swaption / cap-floor volatility cube (VCUB<GO>)"""
+        ticker = cmd.ticker or "EURUSD"
         try:
-            from sentinel.sfe.fx_surface_v3 import FXSurfaceV3
-            fxs = FXSurfaceV3()
-            data = fxs.volatility_cube(cmd.ticker or "")
+            from sentinel.sfe.fx_surface_v3 import FXVolatilitySurface
+            fxs = FXVolatilitySurface()
+            surface = fxs.build_surface(ticker)
+            data = {"ticker": ticker, "surface": str(surface)[:200] if surface else "no surface"}
             return CommandResult(
-                code="VCUB", ticker=cmd.ticker,
-                data=data if isinstance(data, dict) else {"vcub": str(data)},
-                text=f"[VCUB] Volatility cube for {cmd.ticker}",
+                code="VCUB", ticker=ticker, data=data,
+                text=f"[VCUB] Volatility surface for {ticker}",
                 success=True,
             )
         except ImportError:
@@ -791,14 +1014,15 @@ class FunctionDispatcher:
             return self._err("VCUB", cmd.ticker, exc)
 
     def _h_FWCM(self, cmd: ParsedCommand) -> CommandResult:
+        """Forward curve matrix — rate forwards by tenor (FWCM<GO>)"""
         try:
-            from sentinel.sfe.yield_curve import YieldCurve
-            yc = YieldCurve()
-            data = yc.forward_curve_matrix(cmd.ticker or "")
+            from sentinel.sfe.treasury_yield_v3 import TreasuryYieldEngine
+            engine = TreasuryYieldEngine()
+            analytics = engine.get_analytics()
+            data = analytics if isinstance(analytics, dict) else {"analytics": str(analytics)[:300]}
             return CommandResult(
-                code="FWCM", ticker=cmd.ticker,
-                data=data if isinstance(data, dict) else {"fwcm": str(data)},
-                text=f"[FWCM] Forward curve matrix",
+                code="FWCM", ticker=cmd.ticker, data=data,
+                text="[FWCM] Forward curve matrix — treasury analytics loaded",
                 success=True,
             )
         except ImportError:
@@ -807,14 +1031,29 @@ class FunctionDispatcher:
             return self._err("FWCM", cmd.ticker, exc)
 
     def _h_SRCH(self, cmd: ParsedCommand) -> CommandResult:
+        """Bond / security search & screener (SRCH<GO>)"""
         try:
-            from sentinel.sfe.fixed_income_screener_v3 import FixedIncomeScreenerV3
-            screener = FixedIncomeScreenerV3()
-            data = screener.search(cmd.params)
+            from sentinel.sfe.fixed_income_screener_v3 import FIScreenerService, ScreenRequest
+            svc = FIScreenerService()
+            req = ScreenRequest(
+                min_yield=float(cmd.params.get("MIN_YIELD", 0.0)),
+                max_yield=float(cmd.params.get("MAX_YIELD", 20.0)),
+                min_maturity_years=float(cmd.params.get("MIN_MAT", 0.0)),
+                max_maturity_years=float(cmd.params.get("MAX_MAT", 30.0)),
+                ratings=cmd.params.get("RATING", "").split(",") if cmd.params.get("RATING") else [],
+                sectors=cmd.params.get("SECTOR", "").split(",") if cmd.params.get("SECTOR") else [],
+                limit=int(cmd.params.get("LIMIT", 20)),
+            )
+            resp = svc.screen(req)
+            results = resp.bonds if hasattr(resp, "bonds") else (resp if isinstance(resp, list) else [])
+            data = {
+                "results": [r.__dict__ if hasattr(r, "__dict__") else str(r) for r in results[:10]],
+                "count": len(results),
+                "params": cmd.params,
+            }
             return CommandResult(
-                code="SRCH", ticker=cmd.ticker,
-                data={"results": data} if isinstance(data, list) else (data if isinstance(data, dict) else {}),
-                text=f"[SRCH] Bond search returned {len(data) if isinstance(data, list) else 'N/A'} results",
+                code="SRCH", ticker=cmd.ticker, data=data,
+                text=f"[SRCH] Bond screener: {len(results)} results",
                 success=True,
             )
         except ImportError:
@@ -823,14 +1062,16 @@ class FunctionDispatcher:
             return self._err("SRCH", cmd.ticker, exc)
 
     def _h_TRA(self, cmd: ParsedCommand) -> CommandResult:
+        """TRACE bond pricing data (TRA<GO>)"""
+        ticker = cmd.ticker or ""
         try:
-            from sentinel.sfe.trace_bond_v3 import TraceBondV3
-            tb = TraceBondV3()
-            data = tb.get_pricing(cmd.ticker or "")
+            from sentinel.sfe.trace_bond_v3 import BondPriceConsolidator
+            consolidator = BondPriceConsolidator()
+            result = consolidator.price_issuer(ticker)
+            data = result if isinstance(result, dict) else {"issuer": ticker, "prices": str(result)[:300]}
             return CommandResult(
-                code="TRA", ticker=cmd.ticker,
-                data=data if isinstance(data, dict) else {"trace": str(data)},
-                text=f"[TRA] TRACE pricing for {cmd.ticker}",
+                code="TRA", ticker=ticker, data=data,
+                text=f"[TRA] TRACE pricing for {ticker} — {len(data)} data points",
                 success=True,
             )
         except ImportError:
@@ -839,14 +1080,18 @@ class FunctionDispatcher:
             return self._err("TRA", cmd.ticker, exc)
 
     def _h_MUNI(self, cmd: ParsedCommand) -> CommandResult:
+        """Municipal bond analytics — tax-equivalent yield (MUNI<GO>)"""
         try:
-            from sentinel.sfe.municipal_bond_v3 import MunicipalBondV3
-            mb = MunicipalBondV3()
-            data = mb.analytics(cmd.ticker or "")
+            from sentinel.sfe.municipal_bond_v3 import MuniService
+            svc = MuniService()
+            curve = svc.build_yield_curve()
+            data = {
+                "mmd_curve": curve if isinstance(curve, dict) else {"note": str(curve)[:200]},
+                "ticker": cmd.ticker,
+            }
             return CommandResult(
-                code="MUNI", ticker=cmd.ticker,
-                data=data if isinstance(data, dict) else {"muni": str(data)},
-                text=f"[MUNI] Municipal bond analytics for {cmd.ticker}",
+                code="MUNI", ticker=cmd.ticker, data=data,
+                text="[MUNI] Municipal bond yield curve loaded",
                 success=True,
             )
         except ImportError:
@@ -855,14 +1100,16 @@ class FunctionDispatcher:
             return self._err("MUNI", cmd.ticker, exc)
 
     def _h_ZV(self, cmd: ParsedCommand) -> CommandResult:
+        """Z-spread / OAS analysis (ZV<GO>)"""
+        ticker = cmd.ticker or ""
         try:
-            from sentinel.sfe.bond_analytics_v3 import BondAnalyticsV3
-            ba = BondAnalyticsV3()
-            data = ba.z_spread(cmd.ticker or "")
+            from sentinel.sfe.bond_analytics_v3 import SpreadCalculator
+            calc = SpreadCalculator()
+            spreads = calc.get_spreads(ticker)
+            data = spreads if isinstance(spreads, dict) else {"issuer": ticker, "spread": str(spreads)[:200]}
             return CommandResult(
-                code="ZV", ticker=cmd.ticker,
-                data=data if isinstance(data, dict) else {"zv": str(data)},
-                text=f"[ZV] Z-spread / OAS for {cmd.ticker}",
+                code="ZV", ticker=ticker, data=data,
+                text=f"[ZV] {ticker}: spread analytics loaded",
                 success=True,
             )
         except ImportError:
@@ -871,14 +1118,16 @@ class FunctionDispatcher:
             return self._err("ZV", cmd.ticker, exc)
 
     def _h_DUR(self, cmd: ParsedCommand) -> CommandResult:
+        """Duration & convexity (DUR<GO>)"""
+        ticker = cmd.ticker or ""
         try:
-            from sentinel.sfe.bond_analytics_v3 import BondAnalyticsV3
-            ba = BondAnalyticsV3()
-            data = ba.duration_convexity(cmd.ticker or "")
+            from sentinel.sfe.bond_analytics_v3 import DurationConvexity
+            dc = DurationConvexity()
+            dur = dc.get_duration(ticker)
+            data = dur if isinstance(dur, dict) else {"issuer": ticker, "duration": str(dur)[:200]}
             return CommandResult(
-                code="DUR", ticker=cmd.ticker,
-                data=data if isinstance(data, dict) else {"dur": str(data)},
-                text=f"[DUR] Duration & convexity for {cmd.ticker}",
+                code="DUR", ticker=ticker, data=data,
+                text=f"[DUR] {ticker}: duration & convexity loaded",
                 success=True,
             )
         except ImportError:
@@ -887,14 +1136,16 @@ class FunctionDispatcher:
             return self._err("DUR", cmd.ticker, exc)
 
     def _h_CSHF(self, cmd: ParsedCommand) -> CommandResult:
+        """Bond cash flow schedule — coupon & principal (CSHF<GO>)"""
+        ticker = cmd.ticker or ""
         try:
-            from sentinel.sfe.bond_analytics_v3 import BondAnalyticsV3
-            ba = BondAnalyticsV3()
-            data = ba.cash_flow_schedule(cmd.ticker or "")
+            from sentinel.sfe.bond_analytics_v3 import BondCashFlows
+            bcf = BondCashFlows()
+            cfs = bcf.get_cash_flow_schedule(ticker)
+            data = cfs if isinstance(cfs, dict) else {"issuer": ticker, "cashflows": str(cfs)[:300]}
             return CommandResult(
-                code="CSHF", ticker=cmd.ticker,
-                data=data if isinstance(data, dict) else {"cshf": str(data)},
-                text=f"[CSHF] Cash flow schedule for {cmd.ticker}",
+                code="CSHF", ticker=ticker, data=data,
+                text=f"[CSHF] {ticker}: bond cash flow schedule",
                 success=True,
             )
         except ImportError:
@@ -903,14 +1154,17 @@ class FunctionDispatcher:
             return self._err("CSHF", cmd.ticker, exc)
 
     def _h_ALLX(self, cmd: ParsedCommand) -> CommandResult:
+        """All exchanges — bond pricing & crypto arbitrage (ALLX<GO>)"""
+        ticker = cmd.ticker or ""
         try:
-            from sentinel.sfe.trace_bond_v3 import TraceBondV3
-            tb = TraceBondV3()
-            data = tb.all_exchange_prices(cmd.ticker or "")
+            from sentinel.sfe.ccxt_multi_exchange import CrossExchangeArbitrageDetector
+            detector = CrossExchangeArbitrageDetector()
+            symbol = ticker if "/" in ticker else "BTC/USDT"
+            arb = detector.scan_pair(symbol, exchanges=["binance", "coinbase", "kraken"])
+            data = {"symbol": symbol, "opportunities": [a.__dict__ if hasattr(a, "__dict__") else str(a) for a in (arb or [])[:5]]}
             return CommandResult(
-                code="ALLX", ticker=cmd.ticker,
-                data=data if isinstance(data, dict) else {"allx": str(data)},
-                text=f"[ALLX] All-exchange bond prices for {cmd.ticker}",
+                code="ALLX", ticker=ticker, data=data,
+                text=f"[ALLX] Cross-exchange prices for {symbol} — {len(data['opportunities'])} spreads",
                 success=True,
             )
         except ImportError:
@@ -919,14 +1173,17 @@ class FunctionDispatcher:
             return self._err("ALLX", cmd.ticker, exc)
 
     def _h_RATD(self, cmd: ParsedCommand) -> CommandResult:
+        """Credit ratings detail — Moody's / S&P / Fitch (RATD<GO>)"""
+        ticker = cmd.ticker or ""
         try:
-            from sentinel.sfe.esg_ratings_v3 import ESGRatingsV3
-            er = ESGRatingsV3()
-            data = er.credit_ratings(cmd.ticker or "")
+            from sentinel.sfe.esg_ratings_v3 import ESGCompositeEngine, ESGDB
+            db = ESGDB()
+            engine = ESGCompositeEngine(db)
+            result = engine.score(ticker)
+            data = result.__dict__ if hasattr(result, "__dict__") else (result if isinstance(result, dict) else {"ticker": ticker})
             return CommandResult(
-                code="RATD", ticker=cmd.ticker,
-                data=data if isinstance(data, dict) else {"ratings": str(data)},
-                text=f"[RATD] Credit ratings for {cmd.ticker}",
+                code="RATD", ticker=ticker, data=data,
+                text=f"[RATD] {ticker}: ratings & ESG scores loaded",
                 success=True,
             )
         except ImportError:
@@ -937,14 +1194,18 @@ class FunctionDispatcher:
     # ================================================================== MACRO & ECONOMICS
 
     def _h_ECO(self, cmd: ParsedCommand) -> CommandResult:
+        """Economic calendar — upcoming releases & forecasts (ECO<GO>)"""
         try:
-            from sentinel.sma.economic_calendar_v3 import EconomicCalendarV3
-            cal = EconomicCalendarV3()
-            data = cal.upcoming_events(cmd.params.get("COUNTRY", "US"))
+            from sentinel.sma.economic_calendar_v3 import FOMCEvent, TreasuryAuction
+            from sentinel.sma.fred_macro_enhanced import FREDUniversalAdapter, MacroDashboard
+            adapter = FREDUniversalAdapter()
+            dashboard = MacroDashboard(adapter)
+            result = dashboard.fetch()
+            data = result if isinstance(result, dict) else {"dashboard": str(result)[:400]}
+            data["country"] = cmd.params.get("COUNTRY", "US")
             return CommandResult(
-                code="ECO", ticker=cmd.ticker,
-                data={"events": data} if isinstance(data, list) else (data if isinstance(data, dict) else {}),
-                text=f"[ECO] Economic calendar — {len(data) if isinstance(data, list) else 'N/A'} upcoming events",
+                code="ECO", ticker=cmd.ticker, data=data,
+                text=f"[ECO] Economic calendar / macro dashboard loaded",
                 success=True,
             )
         except ImportError:

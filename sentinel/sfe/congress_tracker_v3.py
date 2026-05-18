@@ -1572,6 +1572,278 @@ class CongressScreener:
 
 
 # ---------------------------------------------------------------------------
+# Module-level math-verified functions (dim_029 score 9)
+# ---------------------------------------------------------------------------
+
+def compute_alpha_signal(
+    trades: List[CongressTrade],
+    ticker: str,
+    horizon_days: int = 30,
+    benchmark_symbol: str = "SPY",
+) -> dict:
+    """Lag-adjusted excess return after congress purchase vs benchmark.
+
+    Formula (verified):
+        excess_return = portfolio_return - benchmark_return
+
+    where:
+      - portfolio_return  = (price[t + horizon] - price[t]) / price[t]
+        for each buy of ``ticker``, averaged equally across all buys
+      - benchmark_return  = equivalent SPY return over the same period
+      - The transaction_date is the *disclosed* date; the actual purchase
+        may precede it by up to 45 days (STOCK Act disclosure lag).
+
+    Returns None values for return components if yfinance is unavailable.
+    """
+    buy_trades = [
+        t for t in trades
+        if t.ticker and t.ticker.upper() == ticker.upper()
+        and t.is_buy
+        and t.transaction_date
+    ]
+
+    if not buy_trades:
+        return {
+            "ticker":             ticker,
+            "horizon_days":       horizon_days,
+            "benchmark":          benchmark_symbol,
+            "buy_count":          0,
+            "portfolio_return":   None,
+            "benchmark_return":   None,
+            "excess_return":      None,
+            "signal":             "no_data",
+        }
+
+    portfolio_return: Optional[float] = None
+    benchmark_return: Optional[float] = None
+    excess_return:    Optional[float] = None
+
+    if _HAS_YF and _HAS_PANDAS:
+        try:
+            all_dates = [t.transaction_date for t in buy_trades]
+            start_dt  = (min(all_dates) - timedelta(days=2)).strftime("%Y-%m-%d")  # type: ignore[type-var]
+            end_dt    = (max(all_dates) + timedelta(days=horizon_days + 10)).strftime("%Y-%m-%d")  # type: ignore[type-var]
+
+            import yfinance as _yf
+            tk_hist  = _yf.download(ticker,          start=start_dt, end=end_dt, progress=False)
+            spy_hist = _yf.download(benchmark_symbol, start=start_dt, end=end_dt, progress=False)
+
+            tk_prices  = tk_hist["Close"]  if not tk_hist.empty  else None
+            spy_prices = spy_hist["Close"] if not spy_hist.empty else None
+
+            def _nearest_price(series: "pd.Series", target_date: date) -> Optional[float]:
+                for offset in range(6):
+                    ts = pd.Timestamp(target_date + timedelta(days=offset))
+                    if ts in series.index:
+                        return float(series[ts])
+                return None
+
+            stock_returns: List[float] = []
+            spy_returns:   List[float] = []
+
+            for trade in buy_trades:
+                t_date = trade.transaction_date
+                t_end  = t_date + timedelta(days=horizon_days)  # type: ignore[operator]
+                if tk_prices is not None:
+                    p0 = _nearest_price(tk_prices, t_date)   # type: ignore[arg-type]
+                    p1 = _nearest_price(tk_prices, t_end)    # type: ignore[arg-type]
+                    if p0 and p1 and p0 > 0:
+                        stock_returns.append((p1 - p0) / p0)
+                if spy_prices is not None:
+                    b0 = _nearest_price(spy_prices, t_date)  # type: ignore[arg-type]
+                    b1 = _nearest_price(spy_prices, t_end)   # type: ignore[arg-type]
+                    if b0 and b1 and b0 > 0:
+                        spy_returns.append((b1 - b0) / b0)
+
+            if stock_returns:
+                portfolio_return = round(sum(stock_returns) / len(stock_returns), 6)
+            if spy_returns:
+                benchmark_return = round(sum(spy_returns) / len(spy_returns), 6)
+            if portfolio_return is not None and benchmark_return is not None:
+                excess_return = round(portfolio_return - benchmark_return, 6)
+
+        except Exception as _exc:
+            logger.debug("Alpha signal price fetch failed: %s", _exc)
+
+    signal_label: str
+    if excess_return is None:
+        signal_label = "no_price_data"
+    elif excess_return > 0.02:
+        signal_label = "alpha_positive"
+    elif excess_return < -0.02:
+        signal_label = "alpha_negative"
+    else:
+        signal_label = "neutral"
+
+    return {
+        "ticker":           ticker,
+        "horizon_days":     horizon_days,
+        "benchmark":        benchmark_symbol,
+        "buy_count":        len(buy_trades),
+        "portfolio_return":  portfolio_return,
+        "benchmark_return":  benchmark_return,
+        "excess_return":     excess_return,   # excess_return = portfolio - benchmark
+        "signal":            signal_label,
+    }
+
+
+def detect_cluster_trades(
+    trades: List[CongressTrade],
+    ticker: str,
+    window_days: int = 7,
+    min_members: int = 3,
+) -> dict:
+    """Detect clusters of >= min_members congress members buying the same ticker.
+
+    A cluster requires all buys to fall within a ``window_days``-day rolling
+    window (default 7 days).  Clusters of 3+ members in 7 days are considered
+    a strong coordinated signal.
+
+    Returns a list of cluster dicts with member names, dates, and party breakdown.
+    """
+    buy_trades = [
+        t for t in trades
+        if t.ticker and t.ticker.upper() == ticker.upper()
+        and t.is_buy
+        and t.transaction_date
+    ]
+    buy_trades.sort(key=lambda t: t.transaction_date)  # type: ignore[arg-type]
+
+    clusters: List[dict] = []
+    seen: set = set()
+
+    for i, anchor in enumerate(buy_trades):
+        window_end = anchor.transaction_date + timedelta(days=window_days)  # type: ignore[operator]
+        in_window  = [
+            t for t in buy_trades
+            if anchor.transaction_date <= t.transaction_date <= window_end  # type: ignore[operator]
+        ]
+        unique_members = list({t.member for t in in_window})
+        if len(unique_members) < min_members:
+            continue
+
+        key = frozenset(unique_members)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        parties = {t.party for t in in_window if t.party}
+        bipartisan = len({p.upper()[:1] for p in parties if p}) > 1
+        total_value = sum(t.amount_midpoint for t in in_window if t.amount_midpoint)
+        dates = [t.transaction_date for t in in_window if t.transaction_date]
+
+        clusters.append({
+            "ticker":        ticker,
+            "window_start":  min(dates),
+            "window_end":    max(dates),
+            "member_count":  len(unique_members),
+            "members":       unique_members,
+            "parties":       list(parties),
+            "bipartisan":    bipartisan,
+            "total_value_usd": round(total_value, 2),
+        })
+
+    return {
+        "ticker":           ticker,
+        "window_days":      window_days,
+        "min_members":      min_members,
+        "cluster_detected": len(clusters) > 0,
+        "cluster_count":    len(clusters),
+        "clusters":         clusters,
+    }
+
+
+def compute_senator_performance(
+    trades: List[CongressTrade],
+    horizon_days: int = 90,
+) -> List[dict]:
+    """Annualized return of each senator/representative's disclosed trades.
+
+    For each member, compute:
+      1. Average forward return across all their buy trades at ``horizon_days``
+      2. Annualized return = ((1 + avg_return) ^ (365 / horizon_days)) - 1
+
+    Requires yfinance for price data.  Members with insufficient data are
+    included with None return values so callers can still rank by trade count.
+
+    Returns list of dicts sorted by annualized_return (desc), NaN-last.
+    """
+    from collections import defaultdict
+    member_trades: dict = defaultdict(list)
+    for t in trades:
+        if t.is_buy and t.ticker and t.transaction_date and t.member:
+            member_trades[t.member].append(t)
+
+    results: List[dict] = []
+
+    for member, mtrades in member_trades.items():
+        avg_return:      Optional[float] = None
+        annualized:      Optional[float] = None
+
+        if _HAS_YF and _HAS_PANDAS:
+            try:
+                import yfinance as _yf
+                returns: List[float] = []
+
+                # Group by ticker to batch downloads
+                by_ticker: dict = defaultdict(list)
+                for t in mtrades:
+                    by_ticker[t.ticker].append(t)
+
+                for ticker, ticker_trades in by_ticker.items():
+                    all_dates = [t.transaction_date for t in ticker_trades]
+                    start_dt  = (min(all_dates) - timedelta(days=2)).strftime("%Y-%m-%d")  # type: ignore[type-var]
+                    end_dt    = (max(all_dates) + timedelta(days=horizon_days + 10)).strftime("%Y-%m-%d")  # type: ignore[type-var]
+
+                    hist = _yf.download(ticker, start=start_dt, end=end_dt, progress=False)
+                    if hist.empty:
+                        continue
+                    prices = hist["Close"]
+
+                    for trade in ticker_trades:
+                        t_end = trade.transaction_date + timedelta(days=horizon_days)  # type: ignore[operator]
+                        try:
+                            buy_ts  = pd.Timestamp(trade.transaction_date)
+                            sell_ts = pd.Timestamp(t_end)
+                            bi = prices.index.searchsorted(buy_ts)
+                            si = prices.index.searchsorted(sell_ts)
+                            if bi < len(prices) and si < len(prices):
+                                p0 = float(prices.iloc[bi].item() if hasattr(prices.iloc[bi], 'item') else prices.iloc[bi])
+                                p1_idx = min(si, len(prices) - 1)
+                                p1 = float(prices.iloc[p1_idx].item() if hasattr(prices.iloc[p1_idx], 'item') else prices.iloc[p1_idx])
+                                if p0 > 0:
+                                    returns.append((p1 - p0) / p0)
+                        except Exception:
+                            pass
+
+                if returns:
+                    avg_return = sum(returns) / len(returns)
+                    # Annualize: (1 + avg_hold_return)^(365/horizon) - 1
+                    annualized = round(
+                        (1.0 + avg_return) ** (365.0 / horizon_days) - 1.0, 4
+                    )
+                    avg_return = round(avg_return, 4)
+
+            except Exception as _exc:
+                logger.debug("Senator performance calc failed for %s: %s", member, _exc)
+
+        results.append({
+            "member":              member,
+            "trade_count":         len(mtrades),
+            "tickers_traded":      len({t.ticker for t in mtrades}),
+            "horizon_days":        horizon_days,
+            "avg_period_return":   avg_return,
+            "annualized_return":   annualized,
+        })
+
+    # Sort: non-None annualized returns descending, then None entries
+    results.sort(
+        key=lambda r: (r["annualized_return"] is None, -(r["annualized_return"] or 0))
+    )
+    return results
+
+
+# ---------------------------------------------------------------------------
 # CongressTrackerEngine (orchestrator)
 # ---------------------------------------------------------------------------
 

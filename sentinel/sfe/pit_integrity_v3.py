@@ -1350,6 +1350,190 @@ class PITIntegrityService:
 
 
 # ---------------------------------------------------------------------------
+# dim_022 additions: stale data penalty, fiscal year consistency, restatement risk
+# ---------------------------------------------------------------------------
+
+
+def compute_stale_data_penalty(days_since_filing: int) -> dict:
+    """
+    Compute a staleness penalty for financial data that has not been refreshed.
+
+    Rule: if days_since_filing > 90, apply a penalty of 0.1 per 30-day block
+    beyond the 90-day grace period.  Each complete 30-day block past 90 days
+    adds 0.1 to the penalty score.
+
+    Parameters
+    ----------
+    days_since_filing : int
+        Calendar days elapsed since the most recent filing date.
+
+    Returns
+    -------
+    dict with keys:
+        days_since_filing : int
+        penalty           : float   (0.0 = fresh, higher = staler)
+        grace_period_days : int     (90)
+        blocks_past_grace : int     complete 30-day blocks beyond 90 days
+        is_stale          : bool    True if days_since_filing > 90
+    """
+    if days_since_filing < 0:
+        raise ValueError("days_since_filing must be >= 0")
+
+    grace = 90
+    block_size = 30
+    penalty_per_block = 0.1
+
+    is_stale = days_since_filing > grace
+    days_past_grace = max(0, days_since_filing - grace)
+    # Integer division: each complete 30-day block past grace triggers penalty
+    blocks_past_grace = days_past_grace // block_size
+    penalty = round(blocks_past_grace * penalty_per_block, 4)
+
+    return {
+        "days_since_filing": days_since_filing,
+        "penalty": penalty,
+        "grace_period_days": grace,
+        "blocks_past_grace": blocks_past_grace,
+        "is_stale": is_stale,
+    }
+
+
+def validate_fiscal_year_consistency(filings: List[Dict[str, Any]]) -> dict:
+    """
+    Validate that fiscal year-end month is consistent across all filings for
+    the same ticker.
+
+    A company should always close its fiscal year on the same calendar month
+    (e.g., always September 30 for AAPL).  Inconsistency may signal:
+      - Data quality error (wrong ticker/CIK mapping)
+      - Rare fiscal year change (must be disclosed in SEC filings)
+
+    Parameters
+    ----------
+    filings : list[dict]
+        Each dict must contain at least {"period_end": "YYYY-MM-DD", "ticker": str}.
+
+    Returns
+    -------
+    dict with keys:
+        is_consistent    : bool
+        fiscal_month_end : int | None   month number (1-12) of fiscal year end
+        inconsistent_periods : list[str]  period_end values that differ
+        ticker           : str
+        total_filings    : int
+    """
+    if not filings:
+        return {
+            "is_consistent": True,
+            "fiscal_month_end": None,
+            "inconsistent_periods": [],
+            "ticker": "",
+            "total_filings": 0,
+        }
+
+    ticker = filings[0].get("ticker", "")
+    months: List[int] = []
+    bad_periods: List[str] = []
+
+    for f in filings:
+        period_end = f.get("period_end", "")
+        if not period_end:
+            continue
+        try:
+            month = datetime.strptime(period_end[:10], "%Y-%m-%d").month
+            months.append(month)
+        except ValueError:
+            pass
+
+    if not months:
+        return {
+            "is_consistent": True,
+            "fiscal_month_end": None,
+            "inconsistent_periods": [],
+            "ticker": ticker,
+            "total_filings": len(filings),
+        }
+
+    # Fiscal year-end is defined by the most common month in 10-K filings
+    from collections import Counter as _Counter
+    majority_month = _Counter(months).most_common(1)[0][0]
+
+    # Flag any period whose month differs from the majority
+    for f in filings:
+        period_end = f.get("period_end", "")
+        if not period_end:
+            continue
+        try:
+            month = datetime.strptime(period_end[:10], "%Y-%m-%d").month
+            if month != majority_month:
+                bad_periods.append(period_end)
+        except ValueError:
+            pass
+
+    is_consistent = len(bad_periods) == 0
+
+    return {
+        "is_consistent": is_consistent,
+        "fiscal_month_end": majority_month,
+        "inconsistent_periods": bad_periods,
+        "ticker": ticker,
+        "total_filings": len(filings),
+    }
+
+
+def flag_restatement_risk(filings: List[Dict[str, Any]], lookback_years: int = 2) -> dict:
+    """
+    Flag restatement risk if a 10-K/A amendment was filed in the past
+    ``lookback_years`` years (default 2).
+
+    A 10-K/A indicates the company restated its annual financials — a
+    significant earnings-quality red flag.  The presence of even one
+    10-K/A in the window triggers risk_flag=True.
+
+    Parameters
+    ----------
+    filings : list[dict]
+        Each dict must contain at least {"form": str, "filed_date": "YYYY-MM-DD"}.
+    lookback_years : int
+        Number of years to look back from today (default 2).
+
+    Returns
+    -------
+    dict with keys:
+        risk_flag           : bool   True if 10-K/A found in window
+        amendment_filings   : list[dict]  matching 10-K/A entries
+        lookback_years      : int
+        window_start        : str    ISO date
+    """
+    cutoff = datetime.utcnow() - timedelta(days=lookback_years * 365)
+    window_start = cutoff.strftime("%Y-%m-%d")
+    amendment_forms = {"10-K/A", "10-KT/A", "20-F/A"}
+
+    matches: List[Dict[str, Any]] = []
+    for f in filings:
+        form = f.get("form", "")
+        filed_date_str = f.get("filed_date", "")
+        if form not in amendment_forms:
+            continue
+        if not filed_date_str:
+            matches.append(f)
+            continue
+        try:
+            filed_dt = datetime.strptime(filed_date_str[:10], "%Y-%m-%d")
+            if filed_dt >= cutoff:
+                matches.append(f)
+        except ValueError:
+            pass
+
+    return {
+        "risk_flag": len(matches) > 0,
+        "amendment_filings": matches,
+        "lookback_years": lookback_years,
+        "window_start": window_start,
+    }
+
+
+# ---------------------------------------------------------------------------
 # FastAPI router
 # ---------------------------------------------------------------------------
 

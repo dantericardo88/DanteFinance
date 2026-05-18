@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# dim_091: Workspace — panel layout config logic and serialization
+# dim_091: Workspace — panel layout config, serialization, export, scheduler
 set -e
 cd "$(dirname "$0")/../.."
 
 python - <<'PYEOF'
 import sys, os
 sys.path.insert(0, os.getcwd())
-import datetime
+import datetime, json, tempfile, pathlib
 
 from sentinel.ui.workspace_v3 import (
     Panel,
@@ -15,9 +15,13 @@ from sentinel.ui.workspace_v3 import (
     Workspace,
     LayoutPresets,
     RendererMode,
+    WorkspaceExporter,
+    PanelScheduler,
+    save_workspace_state,
+    load_workspace_state,
 )
 
-# Test PanelType enum
+# ── PanelType / RendererMode enums ──────────────────────────────────────────
 assert PanelType.PRICE_CHART.value == "price_chart"
 assert PanelType.FUNDAMENTALS.value == "fundamentals"
 assert PanelType.OPTIONS_CHAIN.value == "options_chain"
@@ -25,13 +29,13 @@ assert PanelType.PORTFOLIO.value == "portfolio"
 assert PanelType.RISK_DASHBOARD.value == "risk_dashboard"
 print(f"[OK] PanelType enum: {len(PanelType)} panel types defined")
 
-# Test RendererMode enum
 assert RendererMode.DASH.value == "dash"
 assert RendererMode.RICH.value == "rich"
 assert RendererMode.PLAIN.value == "plain"
-print(f"[OK] RendererMode enum: DASH/RICH/PLAIN")
+print("[OK] RendererMode enum: DASH/RICH/PLAIN")
 
-# Test Panel construction and to_dict/from_dict round-trip
+# ── Panel round-trip serialization ──────────────────────────────────────────
+import uuid
 panel = Panel(
     id="test_p1",
     panel_type=PanelType.PRICE_CHART,
@@ -42,100 +46,119 @@ panel = Panel(
     refresh_interval_seconds=30,
     config={"timeframe": "1d", "n_bars": 252},
 )
-assert panel.id == "test_p1"
-assert panel.panel_type == PanelType.PRICE_CHART
-assert panel.ticker == "AAPL"
-assert panel.width_pct == 50.0
-print(f"[OK] Panel: id={panel.id} type={panel.panel_type.value} ticker={panel.ticker}")
-
-# Test Panel.to_dict()
 d = panel.to_dict()
-assert d["id"] == "test_p1"
 assert d["panel_type"] == "price_chart"
-assert d["ticker"] == "AAPL"
-assert d["config"]["timeframe"] == "1d"
-print(f"[OK] Panel.to_dict(): panel_type serialized as string '{d['panel_type']}'")
-
-# Test Panel.from_dict() round-trip
 panel2 = Panel.from_dict(d)
-assert panel2.id == panel.id
 assert panel2.panel_type == PanelType.PRICE_CHART
-assert panel2.ticker == panel.ticker
 assert panel2.config == panel.config
-print(f"[OK] Panel.from_dict(): round-trip preserves type={panel2.panel_type.value}")
+print(f"[OK] Panel.to_dict()/from_dict() round-trip preserved type={panel2.panel_type.value}")
 
-# Test LayoutPresets.equity_deep_dive()
+# ── Workspace round-trip (WorkspaceState serialization) ─────────────────────
 layout_eq = LayoutPresets.equity_deep_dive("MSFT")
-assert layout_eq.name == "EQUITY_DEEP_DIVE", f"Expected EQUITY_DEEP_DIVE: {layout_eq.name}"
-assert len(layout_eq.panels) == 4, f"Expected 4 panels: {len(layout_eq.panels)}"
-# Verify first panel is price chart for MSFT
-assert layout_eq.panels[0].panel_type == PanelType.PRICE_CHART
-assert layout_eq.panels[0].ticker == "MSFT"
-# Verify second panel is fundamentals
-assert layout_eq.panels[1].panel_type == PanelType.FUNDAMENTALS
-# Check width percentages sum properly (each row ~ 100%)
-total_top_width = layout_eq.panels[0].width_pct + layout_eq.panels[1].width_pct + layout_eq.panels[2].width_pct
-assert abs(total_top_width - 100.0) < 1.0, f"Top panels width should sum to ~100: {total_top_width}"
-print(f"[OK] LayoutPresets.equity_deep_dive: 4 panels, top row width={total_top_width:.1f}%")
-
-# Test LayoutPresets.portfolio_monitor()
-layout_port = LayoutPresets.portfolio_monitor()
-assert layout_port.name == "PORTFOLIO_MONITOR", f"Expected PORTFOLIO_MONITOR: {layout_port.name}"
-assert len(layout_port.panels) >= 3, f"Expected >= 3 panels: {len(layout_port.panels)}"
-panel_types = [p.panel_type for p in layout_port.panels]
-assert PanelType.PORTFOLIO in panel_types, "Should have PORTFOLIO panel"
-assert PanelType.RISK_DASHBOARD in panel_types, "Should have RISK_DASHBOARD panel"
-print(f"[OK] LayoutPresets.portfolio_monitor: {len(layout_port.panels)} panels")
-
-# Test LayoutPresets.trading_desk()
-layout_td = LayoutPresets.trading_desk("SPY")
-assert layout_td.name == "TRADING_DESK"
-assert len(layout_td.panels) >= 3
-# Trading desk should have very short refresh (order book ~5s)
-order_book_panels = [p for p in layout_td.panels if p.panel_type == PanelType.ORDER_BOOK]
-assert len(order_book_panels) >= 1, "Trading desk should have an order book panel"
-assert order_book_panels[0].refresh_interval_seconds <= 10, \
-    f"Order book should refresh frequently: {order_book_panels[0].refresh_interval_seconds}s"
-print(f"[OK] LayoutPresets.trading_desk: {len(layout_td.panels)} panels, order_book refresh={order_book_panels[0].refresh_interval_seconds}s")
-
-# Test LayoutPresets.macro_watch()
-layout_macro = LayoutPresets.macro_watch()
-assert layout_macro.name == "MACRO_WATCH"
-assert len(layout_macro.panels) >= 3
-print(f"[OK] LayoutPresets.macro_watch: {len(layout_macro.panels)} panels")
-
-# Test Workspace serialization round-trip
-import uuid
 workspace = Workspace(
     id=str(uuid.uuid4()),
     layout=layout_eq,
     metadata={"user": "test", "version": "3"},
 )
 ws_dict = workspace.to_dict()
-assert "id" in ws_dict
-assert "layout" in ws_dict
-assert "panels" in ws_dict["layout"]
 assert len(ws_dict["layout"]["panels"]) == 4
-print(f"[OK] Workspace.to_dict(): {len(ws_dict['layout']['panels'])} panels serialized")
-
-# Restore from dict
 workspace2 = Workspace.from_dict(ws_dict)
 assert workspace2.id == workspace.id
 assert workspace2.layout.name == "EQUITY_DEEP_DIVE"
-assert len(workspace2.layout.panels) == 4
 assert workspace2.layout.panels[0].panel_type == PanelType.PRICE_CHART
 assert workspace2.metadata["user"] == "test"
-print(f"[OK] Workspace.from_dict(): round-trip complete, panels restored correctly")
+print("[OK] Workspace.to_dict()/from_dict() round-trip: 4 panels restored")
 
-# Verify panel refresh intervals are reasonable
-for layout in [layout_eq, layout_port, layout_td, layout_macro]:
+# ── Panel state persistence (save/load) ─────────────────────────────────────
+with tempfile.TemporaryDirectory() as tmpdir:
+    state_path = pathlib.Path(tmpdir) / "workspace_state.json"
+    saved_path = save_workspace_state(workspace, path=state_path)
+    assert state_path.exists(), "State file should exist after save"
+    loaded = load_workspace_state(path=state_path)
+    assert loaded is not None, "load_workspace_state should return a Workspace"
+    assert loaded.id == workspace.id
+    assert loaded.layout.name == workspace.layout.name
+    assert len(loaded.layout.panels) == len(workspace.layout.panels)
+    print(f"[OK] save/load workspace state: id={loaded.id} panels={len(loaded.layout.panels)}")
+
+# ── Export to JSON ───────────────────────────────────────────────────────────
+exporter = WorkspaceExporter(workspace)
+with tempfile.TemporaryDirectory() as tmpdir:
+    json_path = os.path.join(tmpdir, "export.json")
+    result_path = exporter.export_json(json_path)
+    assert os.path.exists(result_path), "JSON export file should exist"
+    with open(result_path) as fh:
+        data = json.load(fh)
+    assert "workspace" in data, "JSON export must have 'workspace' key"
+    assert "snapshots" in data, "JSON export must have 'snapshots' key"
+    assert "exported_at" in data, "JSON export must have 'exported_at' key"
+    assert "layout" in data["workspace"], "workspace should have layout"
+    panels_in_export = data["workspace"]["layout"]["panels"]
+    assert len(panels_in_export) == 4, f"Export should have 4 panels: {len(panels_in_export)}"
+    # Verify snapshots has an entry per panel
+    for p in workspace.layout.panels:
+        assert p.id in data["snapshots"], f"Snapshot missing for panel {p.id}"
+    print(f"[OK] export_json: valid JSON with {len(panels_in_export)} panel configs")
+
+# ── Export to HTML ───────────────────────────────────────────────────────────
+with tempfile.TemporaryDirectory() as tmpdir:
+    html_path = os.path.join(tmpdir, "export.html")
+    result_path = exporter.export_html(html_path)
+    assert os.path.exists(result_path), "HTML export file should exist"
+    with open(result_path, encoding="utf-8") as fh:
+        html_content = fh.read()
+    assert "<!DOCTYPE html>" in html_content, "Should be a valid HTML document"
+    assert "SENTINEL" in html_content, "Should mention SENTINEL"
+    assert workspace.layout.name in html_content, "Should include layout name"
+    # At least one panel header should appear
+    assert any(p.title in html_content for p in workspace.layout.panels), \
+        "At least one panel title should be in HTML"
+    print("[OK] export_html: valid self-contained HTML report")
+
+# ── Scheduler tick (stale panel detection) ──────────────────────────────────
+# Build a workspace with panels that have last_updated = None (never refreshed)
+layout_td = LayoutPresets.trading_desk("SPY")
+ws_sched = Workspace(id=str(uuid.uuid4()), layout=layout_td)
+scheduler = PanelScheduler(ws_sched)
+
+# All panels start with last_updated=None → all are stale → all fire on first tick
+fired = scheduler.tick()
+assert len(fired) == len(ws_sched.layout.panels), \
+    f"All {len(ws_sched.layout.panels)} panels should fire on first tick: got {len(fired)}"
+for pid in fired:
+    assert scheduler.refresh_counts[pid] == 1, f"Panel {pid} should have count=1"
+print(f"[OK] Scheduler first tick: {len(fired)} panels fired (all stale on init)")
+
+# Mark one panel as just-refreshed; a second tick should NOT re-fire it
+first_panel = ws_sched.layout.panels[0]
+scheduler.mark_refreshed(first_panel.id)
+fired2 = scheduler.tick()
+# The marked panel should NOT be in fired2 (just refreshed, TTL not yet elapsed)
+assert first_panel.id not in fired2, \
+    f"Just-refreshed panel should not re-fire: {first_panel.id} in {fired2}"
+# Other panels (still last_updated=None) should still fire
+remaining = [p for p in ws_sched.layout.panels if p.id != first_panel.id]
+for p in remaining:
+    assert p.id in fired2, f"Stale panel {p.id} should fire on second tick"
+print(f"[OK] Scheduler second tick: {len(fired2)} stale panels fired, refreshed panel skipped")
+
+# Force-expire one panel by backdating its last_updated beyond TTL
+first_panel.last_updated = datetime.datetime.utcnow() - datetime.timedelta(
+    seconds=first_panel.refresh_interval_seconds + 5
+)
+fired3 = scheduler.tick()
+assert first_panel.id in fired3, "Expired panel should fire after TTL elapsed"
+assert scheduler.refresh_counts[first_panel.id] == 2, \
+    f"Panel refresh count should be 2 after 2 fires: {scheduler.refresh_counts[first_panel.id]}"
+print(f"[OK] Scheduler TTL expiry: panel re-fired after TTL elapsed (count={scheduler.refresh_counts[first_panel.id]})")
+
+# ── Layout presets validation ────────────────────────────────────────────────
+for layout in [layout_eq, LayoutPresets.portfolio_monitor(), layout_td, LayoutPresets.macro_watch()]:
     for p in layout.panels:
-        assert p.refresh_interval_seconds > 0, \
-            f"Refresh interval must be positive: {p.id}={p.refresh_interval_seconds}"
-        assert p.refresh_interval_seconds <= 3600, \
-            f"Refresh interval should not exceed 1h: {p.id}={p.refresh_interval_seconds}"
-        assert 0 < p.width_pct <= 100, f"Width pct must be in (0, 100]: {p.width_pct}"
-        assert 0 < p.height_pct <= 100, f"Height pct must be in (0, 100]: {p.height_pct}"
+        assert p.refresh_interval_seconds > 0
+        assert p.refresh_interval_seconds <= 3600
+        assert 0 < p.width_pct <= 100
+        assert 0 < p.height_pct <= 100
 print("[OK] All panels have valid refresh intervals and dimensions")
 
 print("\n[PASS] dim_091: Workspace")

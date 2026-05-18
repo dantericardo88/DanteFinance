@@ -1538,6 +1538,497 @@ class StrategyOrchestratorV3:
 
 
 # ---------------------------------------------------------------------------
+# ── 8. Parameter Grid Search Template ────────────────────────────────────────
+# ---------------------------------------------------------------------------
+
+# Standard parameter grids keyed by intent type
+_PARAM_GRIDS: Dict[str, Dict[str, Any]] = {
+    "MEAN_REVERT": {
+        "rsi_period":    {"default": 14, "range": [7, 14, 21], "type": "int"},
+        "rsi_entry":     {"default": 30, "range": [20, 25, 30, 35], "type": "float"},
+        "rsi_exit":      {"default": 70, "range": [60, 65, 70, 75], "type": "float"},
+        "stop_loss_pct": {"default": 5.0, "range": [3.0, 5.0, 7.0, 10.0], "type": "float"},
+        "take_profit_pct": {"default": 10.0, "range": [5.0, 8.0, 10.0, 15.0], "type": "float"},
+        "holding_period_days": {"default": 10, "range": [5, 10, 15, 20], "type": "int"},
+    },
+    "TREND_FOLLOW": {
+        "fast_ma":       {"default": 50,  "range": [20, 50, 100], "type": "int"},
+        "slow_ma":       {"default": 200, "range": [100, 150, 200], "type": "int"},
+        "stop_loss_pct": {"default": 8.0, "range": [5.0, 8.0, 10.0, 15.0], "type": "float"},
+        "rebalance":     {"default": "daily", "range": ["daily", "weekly"], "type": "str"},
+    },
+    "MOMENTUM": {
+        "lookback_days":  {"default": 252, "range": [63, 126, 252], "type": "int"},
+        "top_pct":        {"default": 20,  "range": [10, 20, 30], "type": "int"},
+        "stop_loss_pct":  {"default": 8.0, "range": [5.0, 8.0, 12.0], "type": "float"},
+        "rebalance":      {"default": "monthly", "range": ["weekly", "monthly"], "type": "str"},
+    },
+    "BREAKOUT": {
+        "lookback_days":   {"default": 252, "range": [126, 252], "type": "int"},
+        "volume_mult":     {"default": 2.0, "range": [1.5, 2.0, 2.5], "type": "float"},
+        "stop_loss_pct":   {"default": 5.0, "range": [3.0, 5.0, 7.0], "type": "float"},
+        "take_profit_pct": {"default": 15.0, "range": [10.0, 15.0, 20.0], "type": "float"},
+    },
+    "PAIRS": {
+        "zscore_entry":    {"default": 2.0, "range": [1.5, 2.0, 2.5], "type": "float"},
+        "zscore_exit":     {"default": 0.5, "range": [0.0, 0.5, 1.0], "type": "float"},
+        "lookback_days":   {"default": 60,  "range": [30, 60, 90], "type": "int"},
+        "stop_loss_pct":   {"default": 5.0, "range": [3.0, 5.0, 8.0], "type": "float"},
+    },
+}
+
+# Default fallback grid
+_DEFAULT_PARAM_GRID: Dict[str, Any] = {
+    "stop_loss_pct":   {"default": 5.0, "range": [3.0, 5.0, 7.0, 10.0], "type": "float"},
+    "take_profit_pct": {"default": 10.0, "range": [5.0, 10.0, 15.0], "type": "float"},
+    "position_pct":    {"default": 0.10, "range": [0.05, 0.10, 0.15], "type": "float"},
+    "max_positions":   {"default": 10, "range": [5, 10, 20], "type": "int"},
+}
+
+
+class ParameterGridBuilder:
+    """
+    Build parameter grids for strategy optimization from a natural-language
+    strategy description.
+
+    Given "RSI oversold momentum strategy" → returns RSI(14), entry<30, exit>70,
+    stop=-5%, target=+10% with full range for grid search.
+    """
+
+    def __init__(self) -> None:
+        self._classifier = IntentClassifier()
+
+    def build(self, description: str) -> Dict[str, Any]:
+        """
+        Parse the description and return a parameter grid dict.
+
+        Returns
+        -------
+        dict with keys:
+          intent: classified intent
+          params: dict of param_name → {default, range, type}
+          total_combinations: number of grid combinations
+        """
+        intent = self._classifier.classify(description)
+        grid = dict(_PARAM_GRIDS.get(intent, _DEFAULT_PARAM_GRID))
+
+        # Overlay RSI params if mentioned
+        if re.search(r"\brsi\b", description, re.I):
+            period_m = re.search(r"(\d+)[\s-]?(?:period|day)?[\s-]?rsi", description, re.I)
+            period = int(period_m.group(1)) if period_m else 14
+            grid["rsi_period"] = {"default": period, "range": [7, 14, 21], "type": "int"}
+
+            entry_m = re.search(r"rsi\s*(?:below|<|under)\s*(\d+)", description, re.I)
+            if entry_m:
+                entry_val = float(entry_m.group(1))
+                grid["rsi_entry"] = {"default": entry_val, "range": [20.0, 25.0, 30.0, 35.0], "type": "float"}
+
+            exit_m = re.search(r"rsi\s*(?:above|>|over)\s*(\d+)", description, re.I)
+            if exit_m:
+                exit_val = float(exit_m.group(1))
+                grid["rsi_exit"] = {"default": exit_val, "range": [60.0, 65.0, 70.0, 75.0], "type": "float"}
+
+        # Overlay stop loss if mentioned
+        sl_m = re.search(r"stop[\s-]loss\s*(?:at\s*)?(-?\d+(?:\.\d+)?)\s*%", description, re.I)
+        if sl_m:
+            sl_val = abs(float(sl_m.group(1)))
+            grid["stop_loss_pct"] = {"default": sl_val, "range": [sl_val * 0.5, sl_val, sl_val * 1.5, sl_val * 2], "type": "float"}
+
+        # Overlay take profit if mentioned
+        tp_m = re.search(r"(?:take\s+profit|target)\s*(?:at\s*)?(\+?\d+(?:\.\d+)?)\s*%", description, re.I)
+        if tp_m:
+            tp_val = float(tp_m.group(1).lstrip("+"))
+            grid["take_profit_pct"] = {"default": tp_val, "range": [tp_val * 0.5, tp_val, tp_val * 1.5], "type": "float"}
+
+        # Compute total combinations
+        total = 1
+        for p in grid.values():
+            total *= len(p.get("range", [p.get("default")]))
+
+        return {
+            "intent": intent,
+            "description": description[:200],
+            "params": grid,
+            "total_combinations": total,
+        }
+
+
+# ---------------------------------------------------------------------------
+# ── 8b. Risk Management Layer ─────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+
+
+class RiskManagementLayer:
+    """
+    Automatically add risk management parameters to any strategy spec.
+
+    Adds:
+      - Kelly position sizing (fractional Kelly = 0.25 * full Kelly)
+      - Maximum drawdown stop (portfolio-level)
+      - Correlation filter (avoid adding positions when correlation > threshold)
+    """
+
+    DEFAULT_WIN_RATE: float = 0.50
+    DEFAULT_WIN_LOSS_RATIO: float = 1.5    # avg win / avg loss
+    KELLY_FRACTION: float = 0.25           # use 1/4 Kelly for safety
+    MAX_DRAWDOWN_STOP: float = 0.20        # halt trading if portfolio DD > 20%
+    CORRELATION_THRESHOLD: float = 0.70    # skip new position if corr > 0.7
+
+    @staticmethod
+    def kelly_fraction(win_rate: float, win_loss_ratio: float, fraction: float = 0.25) -> float:
+        """
+        Compute Kelly criterion position size.
+
+        Kelly % = W - (1-W)/R, where W=win rate, R=win/loss ratio.
+        Apply fractional Kelly (default 25%) for robustness.
+
+        Parameters
+        ----------
+        win_rate     : probability of winning trade (0-1)
+        win_loss_ratio: avg win / avg loss
+        fraction     : Kelly fraction to use (0.25 = quarter-Kelly)
+        """
+        full_kelly = win_rate - (1.0 - win_rate) / max(win_loss_ratio, 0.01)
+        fractional = max(0.0, full_kelly * fraction)
+        return round(fractional, 4)
+
+    def apply(self, spec: StrategySpec,
+              win_rate: Optional[float] = None,
+              win_loss_ratio: Optional[float] = None) -> Dict[str, Any]:
+        """
+        Return a risk management overlay for the given strategy spec.
+
+        Returns a dict of risk params that should be applied to any backtest
+        or live execution of the strategy.
+        """
+        wr = win_rate if win_rate is not None else self.DEFAULT_WIN_RATE
+        wlr = win_loss_ratio if win_loss_ratio is not None else self.DEFAULT_WIN_LOSS_RATIO
+
+        kelly = self.kelly_fraction(wr, wlr, self.KELLY_FRACTION)
+
+        # Position sizing: use Kelly but cap at spec's value
+        position_pct = min(kelly, spec.position_sizing.value)
+
+        return {
+            "kelly_fraction": kelly,
+            "recommended_position_pct": round(position_pct, 4),
+            "max_drawdown_stop": self.MAX_DRAWDOWN_STOP,
+            "correlation_filter_threshold": self.CORRELATION_THRESHOLD,
+            "max_positions": spec.position_sizing.max_positions,
+            "sizing_method": "fractional_kelly",
+            "kelly_inputs": {
+                "win_rate": wr,
+                "win_loss_ratio": wlr,
+                "kelly_fraction_applied": self.KELLY_FRACTION,
+            },
+        }
+
+
+# ---------------------------------------------------------------------------
+# ── 8c. Backtest Template Generator ──────────────────────────────────────────
+# ---------------------------------------------------------------------------
+
+
+_BACKTEST_TEMPLATE = textwrap.dedent("""
+    \"\"\"
+    NumpyPortfolio-compatible entry/exit signal function.
+    Strategy: {name}
+    Intent:   {intent}
+    Generated by SENTINEL dim_054 StrategyTemplateGenerator.
+    \"\"\"
+    from __future__ import annotations
+    import numpy as np
+    import pandas as pd
+    from typing import Tuple
+
+
+    def generate_signals(
+        close: pd.Series,
+        high: pd.Series,
+        low: pd.Series,
+        volume: pd.Series,
+    ) -> Tuple[pd.Series, pd.Series]:
+        \"\"\"
+        Return (entry_signals, exit_signals) as boolean Series.
+
+        entry_signals: True on the bar to enter long
+        exit_signals:  True on the bar to exit long
+
+        Compatible with NumpyPortfolio.from_signals(entry, exit).
+        \"\"\"
+        entry = pd.Series(False, index=close.index)
+        exit_sig = pd.Series(False, index=close.index)
+
+        # ---- Entry logic ----
+        {entry_logic}
+
+        # ---- Exit logic ----
+        {exit_logic}
+
+        return entry, exit_sig
+
+
+    # ---------------------------------------------------------------------------
+    # NumpyPortfolio-compatible run (requires vectorbt installed)
+    # ---------------------------------------------------------------------------
+
+    def run_backtest(close: pd.Series, high: pd.Series, low: pd.Series, volume: pd.Series,
+                     init_cash: float = 100_000.0) -> dict:
+        \"\"\"Run backtest using vectorbt NumpyPortfolio (optional dep).\"\"\"
+        try:
+            import vectorbt as vbt
+            entry, exit_sig = generate_signals(close, high, low, volume)
+            pf = vbt.Portfolio.from_signals(
+                close, entries=entry, exits=exit_sig,
+                init_cash=init_cash, freq='D'
+            )
+            return {{
+                'total_return': pf.total_return(),
+                'sharpe_ratio': pf.sharpe_ratio(),
+                'max_drawdown': pf.max_drawdown(),
+                'num_trades':   pf.num_trades,
+            }}
+        except ImportError:
+            return {{'error': 'vectorbt not installed — install with: pip install vectorbt'}}
+""").strip()
+
+
+class StrategyTemplateGenerator:
+    """
+    Generate NumpyPortfolio-compatible (vectorbt) entry/exit signal functions
+    from a StrategySpec.
+
+    The generated code compiles cleanly (verified via ast.parse) and is
+    compatible with vectorbt's Portfolio.from_signals interface.
+    """
+
+    def __init__(self) -> None:
+        self._parser = StrategyLanguageParserV3()
+        self._gen = StrategyCodeGeneratorV3()
+
+    def generate_template(self, description: str) -> str:
+        """
+        Generate a backtest template from a NL description.
+        Returns Python source code as a string.
+        """
+        spec = self._parser.parse(description)
+        return self.generate_from_spec(spec)
+
+    def generate_from_spec(self, spec: StrategySpec) -> str:
+        """Generate template from a StrategySpec."""
+        entry_conds = spec.entry_conditions
+        exit_conds = spec.exit_conditions
+
+        # Build entry logic
+        if entry_conds:
+            entry_parts = []
+            for i, cond in enumerate(entry_conds[:5]):
+                if cond.python_expr:
+                    entry_parts.append(f"    # {cond.raw_text or cond.condition_type}")
+                    entry_parts.append(f"    # entry.iloc[i] = {cond.python_expr}")
+            if entry_parts:
+                entry_logic = (
+                    "# Vectorised entry: adapt conditions to boolean Series\n    "
+                    + "\n    ".join(entry_parts)
+                    + "\n    # entry = ...  # implement vectorised condition here"
+                )
+            else:
+                entry_logic = "# No specific entry conditions parsed — implement here\n    pass"
+        else:
+            entry_logic = "# No entry conditions — add your entry logic here\n    pass"
+
+        # Build exit logic
+        if exit_conds:
+            exit_parts = []
+            for cond in exit_conds[:5]:
+                if cond.python_expr:
+                    exit_parts.append(f"    # {cond.raw_text or cond.condition_type}")
+                    exit_parts.append(f"    # exit_sig.iloc[i] = {cond.python_expr}")
+            if exit_parts:
+                exit_logic = (
+                    "# Vectorised exit: adapt conditions to boolean Series\n    "
+                    + "\n    ".join(exit_parts)
+                    + "\n    # exit_sig = ...  # implement vectorised condition here"
+                )
+            else:
+                exit_logic = "# No specific exit conditions parsed — implement here\n    pass"
+        else:
+            exit_logic = "# No exit conditions — add your exit logic here\n    pass"
+
+        code = _BACKTEST_TEMPLATE.format(
+            name=spec.name,
+            intent=spec.intent,
+            entry_logic=entry_logic,
+            exit_logic=exit_logic,
+        )
+        return code
+
+    def validate(self, code: str) -> Tuple[bool, List[str]]:
+        """Verify the template compiles without syntax errors."""
+        errors: List[str] = []
+        try:
+            ast.parse(code)
+        except SyntaxError as exc:
+            errors.append(f"SyntaxError: {exc}")
+        return len(errors) == 0, errors
+
+
+# ---------------------------------------------------------------------------
+# ── 8d. Strategy Economic Rationale Engine ───────────────────────────────────
+# ---------------------------------------------------------------------------
+
+_ECONOMIC_RATIONALES: Dict[str, str] = {
+    "MOMENTUM": (
+        "Momentum strategies exploit the empirical phenomenon of trend persistence: "
+        "assets that have outperformed recently tend to continue outperforming over "
+        "the next 3-12 months. This is underpinned by (1) investor under-reaction to "
+        "new information causing gradual price adjustment, (2) herding and positive "
+        "feedback loops as trend-followers enter, and (3) institutional constraints "
+        "that delay full incorporation of new information. Jegadeesh & Titman (1993) "
+        "documented 12-month momentum returns of ~12% annually."
+    ),
+    "MEAN_REVERT": (
+        "Mean-reversion strategies profit from the tendency of asset prices to revert "
+        "toward equilibrium after over-extension. The economic rationale is: "
+        "(1) liquidity provision — buyers absorb temporary selling pressure, "
+        "(2) statistical convergence — short-term sentiment overshoots fundamentals, "
+        "(3) risk-aversion cycles — fear/greed oscillations create predictable "
+        "reversals. RSI-based strategies specifically exploit retail over-reaction "
+        "and subsequent institutional re-pricing."
+    ),
+    "TREND_FOLLOW": (
+        "Trend-following capitalizes on the persistence of price trends across asset "
+        "classes, driven by: (1) slow diffusion of fundamental information, "
+        "(2) investor behavioral biases (anchoring, herding), and (3) macro regime "
+        "persistence — inflation, growth, and monetary cycles last months to years. "
+        "Moving average crossovers identify regime changes with a lag, trading the "
+        "middle of the trend rather than tops/bottoms."
+    ),
+    "BREAKOUT": (
+        "Breakout strategies are grounded in technical resistance/support theory: "
+        "price levels where supply/demand have historically balanced act as barriers. "
+        "When price breaks through with volume confirmation, it signals a shift in "
+        "market structure and often precedes a sustained directional move. The "
+        "economic driver is a forced re-pricing as stop-losses and momentum programs "
+        "pile in on the same side."
+    ),
+    "PAIRS": (
+        "Statistical arbitrage pairs trading exploits cointegration — the long-run "
+        "equilibrium relationship between two related assets. When the spread widens "
+        "beyond its historical norm, it anticipates mean-reversion. The economic "
+        "basis is: companies in the same sector face similar macro drivers, so "
+        "temporary spread divergence from idiosyncratic news corrects over time."
+    ),
+    "EARNINGS_DRIFT": (
+        "Post-Earnings Announcement Drift (PEAD) is one of the most robust market "
+        "anomalies: prices continue to drift in the direction of earnings surprises "
+        "for weeks after the announcement. The cause is investor under-reaction — "
+        "analysts and institutions slowly revise estimates, creating a gradual "
+        "price adjustment that trend-followers can capture."
+    ),
+    "CARRY": (
+        "Carry strategies earn the risk premium from holding higher-yielding assets "
+        "funded by lower-yielding ones. The economic rationale: investors demand "
+        "compensation for liquidity risk and rollover risk. In equities, dividend "
+        "yield carry profits when market participants systematically underweight "
+        "income-generating assets relative to growth stocks."
+    ),
+    "VOLATILITY": (
+        "Volatility strategies exploit the volatility risk premium (VRP): implied "
+        "volatility (options pricing) systematically exceeds subsequent realized "
+        "volatility on average, rewarding sellers of options. The economic driver "
+        "is the demand for insurance — hedgers overpay for downside protection, "
+        "creating a persistent premium for systematic vol sellers."
+    ),
+    "FACTOR": (
+        "Factor strategies systematically harvest known risk premia: value (cheap "
+        "assets outperform over long horizons), quality (financially sound companies "
+        "outperform), and size (small caps carry higher risk premia). These premia "
+        "persist because they compensate for genuine economic risks that most "
+        "investors find hard to bear over full market cycles."
+    ),
+    "MACRO": (
+        "Macro strategies trade on the predictive power of economic indicators for "
+        "asset prices. Interest rate regimes, yield curve shape, and GDP growth "
+        "cycles are empirically linked to equity and fixed-income returns. The "
+        "economic logic: central bank policy, credit conditions, and growth "
+        "expectations drive discount rates and earnings forecasts simultaneously."
+    ),
+    "SECTOR_ROTATION": (
+        "Sector rotation exploits the cyclical nature of economic regimes: different "
+        "sectors outperform at different stages of the business cycle (early-cycle: "
+        "financials and consumer discretionary; late-cycle: energy and materials; "
+        "recession: utilities and healthcare). Rotating into the relevant sector "
+        "ahead of regime shifts captures the mean-reversion of sector relative value."
+    ),
+    "SENTIMENT": (
+        "Sentiment strategies trade on the predictive power of investor positioning "
+        "and mood: extreme bullishness is contrarian bearish, and vice versa. The "
+        "economic mechanism is the behavioral finance concept of noise trader risk "
+        "and the tendency of sentiment to revert to fundamentals over time."
+    ),
+    "SEASONALITY": (
+        "Seasonal strategies exploit calendar-based patterns in asset returns that "
+        "persist due to institutional behavior, tax effects, and window dressing. "
+        "The January Effect, turn-of-month premium, and Sell in May anomalies have "
+        "persisted for decades, suggesting structural non-arbitrageable drivers "
+        "related to fund flows and reporting cycles."
+    ),
+    "STAT_ARB": (
+        "Statistical arbitrage exploits mean-reversion in asset spreads derived "
+        "from quantitative modeling of historical relationships. Unlike fundamental "
+        "pairs trading, stat arb uses purely statistical signals — cointegration, "
+        "PCA residuals, or factor model pricing errors — to identify mispriced "
+        "assets relative to a factor-neutral benchmark."
+    ),
+    "UNKNOWN": (
+        "This strategy's economic rationale depends on the specific signals and "
+        "market dynamics it exploits. Effective strategies typically profit from one "
+        "of: (1) risk premia — compensation for bearing systematic risk, "
+        "(2) behavioral anomalies — predictable human over/under-reaction, or "
+        "(3) structural inefficiencies — frictions that prevent full arbitrage."
+    ),
+}
+
+
+class EconomicRationaleEngine:
+    """
+    Generate human-readable economic rationales for trading strategies.
+    Explains why the strategy should work based on financial theory.
+    """
+
+    def __init__(self) -> None:
+        self._classifier = IntentClassifier()
+
+    def explain(self, description: str) -> Dict[str, str]:
+        """
+        Given a strategy description, return the economic rationale.
+
+        Returns dict with:
+          intent:    classified strategy type
+          rationale: detailed economic explanation
+          key_driver: one-sentence driver
+        """
+        intent = self._classifier.classify(description)
+        rationale = _ECONOMIC_RATIONALES.get(intent, _ECONOMIC_RATIONALES["UNKNOWN"])
+
+        # Extract key driver (first sentence)
+        key_driver = rationale.split(".")[0] + "."
+
+        return {
+            "intent": intent,
+            "rationale": rationale,
+            "key_driver": key_driver,
+            "strategy_description": description[:200],
+        }
+
+    @staticmethod
+    def get_rationale(intent: str) -> str:
+        """Return the standard rationale string for a given intent type."""
+        return _ECONOMIC_RATIONALES.get(intent, _ECONOMIC_RATIONALES["UNKNOWN"])
+
+
+# ---------------------------------------------------------------------------
 # ── 8. Module-level singletons ───────────────────────────────────────────────
 # ---------------------------------------------------------------------------
 

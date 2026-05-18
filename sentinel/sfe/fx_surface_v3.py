@@ -134,6 +134,24 @@ _VOL_TENORS = ["1W", "1M", "3M", "6M", "1Y"]
 # EWMA lambda for realized vol
 _EWMA_LAMBDA = 0.94
 
+# Garman-Klass vol estimator: GK = sqrt(0.5*ln(H/L)^2 - (2*ln2-1)*ln(C/O)^2) * sqrt(252)
+_GK_CONST = 2.0 * math.log(2.0) - 1.0  # ≈ 0.3863
+
+# G10 short-rate proxies for carry (% annual) — hardcoded fallback when FRED unavailable
+# Updated periodically; used as r_f for implied forward rate in FX carry signal
+_G10_RATE_FALLBACK: Dict[str, float] = {
+    "USD": 5.25,   # SOFR/EFFR
+    "EUR": 4.00,   # ECB deposit rate
+    "GBP": 5.25,   # SONIA / BoE base
+    "JPY": 0.10,   # BoJ policy rate
+    "CHF": 1.75,   # SNB rate
+    "CAD": 5.00,   # BoC overnight
+    "AUD": 4.35,   # RBA cash rate
+    "NZD": 5.50,   # RBNZ OCR
+    "SEK": 4.00,   # Riksbank
+    "NOK": 4.50,   # Norges Bank
+}
+
 # Approximate GDP weights for REER (World Bank 2023 data, normalised)
 _GDP_WEIGHTS: Dict[str, float] = {
     "USD": 0.2500, "EUR": 0.1850, "CNY": 0.1750, "JPY": 0.0550,
@@ -893,28 +911,74 @@ class FXVolatilitySurface:
         T: float,
         beta: float = 0.5,
     ) -> Dict[str, float]:
-        """Calibrate SABR parameters (alpha, rho, nu) with beta fixed at 0.5.
+        """Calibrate SABR parameters (alpha, rho, nu) with beta fixed.
+
+        Stability guards:
+          - Fewer than 4 strikes → fall back to ATM vol + constant skew approx
+          - ATM vol effectively zero → degenerate, return insufficient_data
+          - Calibration RMSE > 0.005 (0.5 vol pts) → warn and flag
+          - scipy NaN result → return insufficient_data fallback
 
         Uses scipy least_squares to minimise squared vol differences.
         """
-        if not _SCIPY_AVAILABLE:
-            return {"alpha": atm_vol, "beta": beta, "rho": 0.0, "nu": 0.3}
+        n_strikes = len(moneyness)
 
-        # Initial guess: alpha ≈ ATM vol, rho ≈ 0, nu ≈ vol_of_vol proxy
-        vol_range = float(np.max(vols) - np.min(vols))
+        # Guard 1: insufficient strikes for meaningful SABR fit
+        if n_strikes < 4:
+            logger.debug("SABR: only %d strikes — using ATM vol + linear skew approx", n_strikes)
+            if n_strikes >= 2:
+                # Estimate simple skew from available points
+                skew = float(np.polyfit(moneyness - 1.0, vols, 1)[0]) if n_strikes >= 2 else 0.0
+            else:
+                skew = 0.0
+            return {
+                "status": "insufficient_strikes",
+                "alpha": atm_vol,
+                "beta": beta,
+                "rho": float(np.clip(skew / max(atm_vol, 1e-6), -0.999, 0.999)),
+                "nu": 0.3,
+                "atm_vol": atm_vol,
+                "skew_approx": skew,
+                "calibration_rmse": float("nan"),
+                "n_strikes": n_strikes,
+            }
+
+        # Guard 2: degenerate ATM vol (too low for SABR)
+        if atm_vol < 1e-4:
+            logger.warning("SABR: ATM vol %.6f too low — degenerate, returning insufficient_data", atm_vol)
+            return {
+                "status": "insufficient_data",
+                "atm_vol": atm_vol,
+                "calibration_rmse": float("nan"),
+            }
+
+        if not _SCIPY_AVAILABLE:
+            return {
+                "status": "no_scipy",
+                "alpha": atm_vol,
+                "beta": beta,
+                "rho": 0.0,
+                "nu": 0.3,
+                "calibration_rmse": float("nan"),
+            }
+
+        # Initial guess: alpha ≈ ATM vol, rho ≈ -0.1 (typical FX skew), nu ≈ 0.3
         x0 = [atm_vol, -0.1, 0.3]  # alpha, rho, nu
 
         def residuals(x: List[float]) -> np.ndarray:
             alpha, rho, nu = x[0], x[1], x[2]
-            rho = np.clip(rho, -0.999, 0.999)
-            alpha = max(alpha, 1e-4)
-            nu = max(nu, 1e-4)
+            rho = float(np.clip(rho, -0.999, 0.999))
+            alpha = max(alpha, 1e-6)
+            nu = max(nu, 1e-6)
             res = []
             for m, target_vol in zip(moneyness, vols):
-                K = m  # treat moneyness as K/F ratio, F=1
+                K = float(m)
                 try:
                     model_vol = self._sabr_vol(1.0, K, T, alpha, beta, rho, nu)
-                    res.append(model_vol - target_vol)
+                    if not math.isfinite(model_vol) or model_vol < 0:
+                        res.append(1.0)  # penalise invalid output
+                    else:
+                        res.append(model_vol - target_vol)
                 except Exception:
                     res.append(1.0)
             return np.array(res)
@@ -922,20 +986,40 @@ class FXVolatilitySurface:
         try:
             result = least_squares(
                 residuals, x0,
-                bounds=([-0.5, -0.999, 0.001], [5.0, 0.999, 5.0]),
-                max_nfev=500,
+                bounds=([1e-6, -0.999, 1e-4], [5.0, 0.999, 5.0]),
+                max_nfev=1000,
+                ftol=1e-8,
+                xtol=1e-8,
             )
             alpha, rho, nu = result.x
+
+            # Guard 3: NaN / non-finite parameters → degenerate
+            if not all(math.isfinite(v) for v in [alpha, rho, nu]):
+                logger.warning("SABR: non-finite parameters after calibration — returning insufficient_data")
+                return {"status": "insufficient_data", "atm_vol": atm_vol, "calibration_rmse": float("nan")}
+
+            rmse = float(np.sqrt(np.mean(result.fun ** 2)))
+
+            # Guard 4: calibration quality warning (> 0.5 vol points = 0.005 in decimal)
+            if rmse > 0.005:
+                logger.warning(
+                    "SABR: calibration RMSE=%.4f > 0.005 (0.5 vol pts) — fit may be unreliable",
+                    rmse,
+                )
+
             return {
+                "status": "ok",
                 "alpha": round(float(alpha), 6),
                 "beta": beta,
                 "rho": round(float(rho), 6),
                 "nu": round(float(nu), 6),
-                "fit_rmse": round(float(np.sqrt(np.mean(result.fun ** 2))), 6),
+                "calibration_rmse": round(rmse, 6),
+                "calibration_quality": "good" if rmse < 0.002 else ("warn" if rmse < 0.005 else "poor"),
+                "n_strikes": n_strikes,
             }
         except Exception as exc:
-            logger.debug(f"SABR least_squares failed: {exc}")
-            return {"alpha": atm_vol, "beta": beta, "rho": 0.0, "nu": 0.3}
+            logger.debug("SABR least_squares failed: %s", exc)
+            return {"status": "insufficient_data", "atm_vol": atm_vol, "calibration_rmse": float("nan")}
 
     def interpolate_surface(self, surface: VolSurface,
                             moneyness: float, tenor_years: float) -> float:
@@ -1824,6 +1908,533 @@ class FXMomentumSignals:
 
 
 # ===========================================================================
+# Garman-Klass realized vol estimator (pure math, no network)
+# ===========================================================================
+
+def garman_klass_vol(
+    high: np.ndarray | pd.Series,
+    low: np.ndarray | pd.Series,
+    close: np.ndarray | pd.Series,
+    open_: np.ndarray | pd.Series,
+    annualize: bool = True,
+) -> float:
+    """Garman-Klass (1980) volatility estimator from OHLC data.
+
+    GK estimator per period:
+        sigma^2 = 0.5 * ln(H/L)^2 - (2*ln2 - 1) * ln(C/O)^2
+
+    More efficient than close-to-close: uses full daily price range.
+
+    Args:
+        high, low, close, open_: array-like price series (aligned)
+        annualize: if True, multiply by sqrt(252) for annual vol
+
+    Returns:
+        Annualized (or daily) Garman-Klass volatility estimate.
+    """
+    H = np.asarray(high, dtype=float)
+    L = np.asarray(low, dtype=float)
+    C = np.asarray(close, dtype=float)
+    O = np.asarray(open_, dtype=float)
+
+    # Guard against zero or negative prices
+    valid = (H > 0) & (L > 0) & (C > 0) & (O > 0) & (H >= L)
+    H, L, C, O = H[valid], L[valid], C[valid], O[valid]
+
+    if len(H) == 0:
+        return 0.0
+
+    hl_term = 0.5 * (np.log(H / L) ** 2)
+    co_term = _GK_CONST * (np.log(C / O) ** 2)
+    gk_var = float(np.mean(hl_term - co_term))
+
+    gk_var = max(gk_var, 0.0)
+    gk_vol = math.sqrt(gk_var)
+    if annualize:
+        gk_vol *= math.sqrt(252)
+    return round(gk_vol, 6)
+
+
+def rogers_satchell_vol(
+    high: "np.ndarray | pd.Series",
+    low: "np.ndarray | pd.Series",
+    close: "np.ndarray | pd.Series",
+    open_: "np.ndarray | pd.Series",
+    annualize: bool = True,
+) -> float:
+    """Rogers-Satchell (1991) drift-independent volatility estimator.
+
+    RS estimator per period:
+        sigma^2 = (1/T) * sum[ ln(H/C)*ln(H/O) + ln(L/C)*ln(L/O) ]
+
+    Unlike Garman-Klass this estimator is unbiased when there is a non-zero
+    drift (trending markets), making it superior for FX pairs with carry.
+
+    Args:
+        high, low, close, open_: array-like price series (aligned)
+        annualize: if True, multiply by sqrt(252)
+
+    Returns:
+        Annualized (or daily) Rogers-Satchell volatility estimate.
+    """
+    H = np.asarray(high, dtype=float)
+    L = np.asarray(low, dtype=float)
+    C = np.asarray(close, dtype=float)
+    O = np.asarray(open_, dtype=float)
+
+    valid = (H > 0) & (L > 0) & (C > 0) & (O > 0) & (H >= L)
+    H, L, C, O = H[valid], L[valid], C[valid], O[valid]
+
+    if len(H) == 0:
+        return 0.0
+
+    rs_var = float(np.mean(
+        np.log(H / C) * np.log(H / O) + np.log(L / C) * np.log(L / O)
+    ))
+    rs_var = max(rs_var, 0.0)
+    rs_vol = math.sqrt(rs_var)
+    if annualize:
+        rs_vol *= math.sqrt(252)
+    return round(rs_vol, 6)
+
+
+def yang_zhang_vol(
+    high: "np.ndarray | pd.Series",
+    low: "np.ndarray | pd.Series",
+    close: "np.ndarray | pd.Series",
+    open_: "np.ndarray | pd.Series",
+    annualize: bool = True,
+) -> float:
+    """Yang-Zhang (2000) minimum-variance unbiased volatility estimator.
+
+    YZ combines overnight, open, and Rogers-Satchell components:
+        sigma^2_YZ = sigma^2_overnight + k * sigma^2_open + (1-k) * sigma^2_RS
+
+    where:
+        k = 0.34 / (1.34 + (T+1)/(T-1))
+        sigma^2_overnight = variance of ln(O_t / C_{t-1})   (overnight jumps)
+        sigma^2_open      = variance of ln(O_t / C_t)       (open-to-close)
+        sigma^2_RS        = Rogers-Satchell per-period variance
+
+    YZ is the most efficient OHLC estimator, handling both drift and
+    overnight gaps — making it optimal for equity-like assets where
+    overnight sessions are separate.
+
+    Args:
+        high, low, close, open_: array-like price series (aligned)
+        annualize: if True, multiply by sqrt(252)
+
+    Returns:
+        Annualized (or daily) Yang-Zhang volatility estimate.
+    """
+    H = np.asarray(high, dtype=float)
+    L = np.asarray(low, dtype=float)
+    C = np.asarray(close, dtype=float)
+    O = np.asarray(open_, dtype=float)
+
+    valid = (H > 0) & (L > 0) & (C > 0) & (O > 0) & (H >= L)
+    H, L, C, O = H[valid], L[valid], C[valid], O[valid]
+
+    T = len(H)
+    if T < 2:
+        return 0.0
+
+    # Overnight returns: ln(O_t / C_{t-1})
+    overnight = np.log(O[1:] / C[:-1])
+    # Open-to-close returns: ln(C_t / O_t)
+    open_close = np.log(C[1:] / O[1:])
+    # Rogers-Satchell variance on aligned subset (skip first bar, no prev close)
+    H2, L2, C2, O2 = H[1:], L[1:], C[1:], O[1:]
+    rs_terms = np.log(H2 / C2) * np.log(H2 / O2) + np.log(L2 / C2) * np.log(L2 / O2)
+
+    n = len(overnight)
+    if n < 1:
+        return 0.0
+
+    sigma2_overnight = float(np.var(overnight, ddof=1)) if n > 1 else 0.0
+    sigma2_open = float(np.var(open_close, ddof=1)) if n > 1 else 0.0
+    sigma2_rs = float(np.mean(rs_terms))
+    sigma2_rs = max(sigma2_rs, 0.0)
+
+    # Optimal k (Yang-Zhang 2000, Eq. 8)
+    k = 0.34 / (1.34 + (n + 1) / max(n - 1, 1))
+
+    yz_var = sigma2_overnight + k * sigma2_open + (1.0 - k) * sigma2_rs
+    yz_var = max(yz_var, 0.0)
+    yz_vol = math.sqrt(yz_var)
+    if annualize:
+        yz_vol *= math.sqrt(252)
+    return round(yz_vol, 6)
+
+
+def close_to_close_vol(
+    close: "np.ndarray | pd.Series",
+    annualize: bool = True,
+) -> float:
+    """Close-to-close (classical) historical volatility estimator.
+
+    Baseline estimator using only closing prices:
+        sigma^2 = (1/(T-1)) * sum[ (ln(C_t/C_{t-1}) - mu)^2 ]
+
+    where mu = mean(ln(C_t/C_{t-1})) over the period.
+
+    Args:
+        close: array-like closing price series
+        annualize: if True, multiply by sqrt(252)
+
+    Returns:
+        Annualized (or daily) close-to-close historical volatility.
+    """
+    C = np.asarray(close, dtype=float)
+    C = C[C > 0]
+
+    if len(C) < 2:
+        return 0.0
+
+    log_rets = np.log(C[1:] / C[:-1])
+    cc_var = float(np.var(log_rets, ddof=1))
+    cc_vol = math.sqrt(max(cc_var, 0.0))
+    if annualize:
+        cc_vol *= math.sqrt(252)
+    return round(cc_vol, 6)
+
+
+def garman_klass_vol_series(
+    ohlcv: pd.DataFrame,
+    window: int = 21,
+    annualize: bool = True,
+) -> pd.Series:
+    """Rolling Garman-Klass vol on a DataFrame with columns H, L, C, O (or Open/High/Low/Close).
+
+    Returns a Series of rolling GK volatility.
+    """
+    col_map = {}
+    for col in ohlcv.columns:
+        lc = col.lower()
+        if lc in ("open", "o"):
+            col_map["o"] = col
+        elif lc in ("high", "h"):
+            col_map["h"] = col
+        elif lc in ("low", "l"):
+            col_map["l"] = col
+        elif lc in ("close", "c"):
+            col_map["c"] = col
+
+    missing = {"o", "h", "l", "c"} - set(col_map.keys())
+    if missing:
+        logger.warning(f"garman_klass_vol_series: missing OHLC columns {missing}")
+        return pd.Series(dtype=float)
+
+    H = ohlcv[col_map["h"]]
+    L = ohlcv[col_map["l"]]
+    C = ohlcv[col_map["c"]]
+    O = ohlcv[col_map["o"]]
+
+    hl = 0.5 * (np.log(H / L) ** 2)
+    co = _GK_CONST * (np.log(C / O) ** 2)
+    gk_var = hl - co
+
+    rolling_var = gk_var.rolling(window, min_periods=2).mean()
+    rolling_vol = np.sqrt(rolling_var.clip(lower=0.0))
+    if annualize:
+        rolling_vol = rolling_vol * math.sqrt(252)
+    rolling_vol.name = "gk_vol"
+    return rolling_vol
+
+
+# ===========================================================================
+# Implied Forward Rate calculator (pure math)
+# ===========================================================================
+
+def compute_implied_forward(
+    spot: float,
+    r_domestic: float,
+    r_foreign: float,
+    tenor_years: float,
+) -> float:
+    """Compute CIP-based implied forward rate.
+
+    F = S × exp((r_d - r_f) × T)
+
+    Where:
+        spot        : current FX spot rate (domestic per foreign)
+        r_domestic  : domestic currency rate (decimal, e.g. 0.0525)
+        r_foreign   : foreign currency rate (decimal, e.g. 0.04)
+        tenor_years : time to expiry in years
+
+    Returns forward rate in same quotation as spot.
+    """
+    if spot <= 0 or tenor_years < 0:
+        raise ValueError("spot must be > 0 and tenor_years >= 0")
+    return spot * math.exp((r_domestic - r_foreign) * tenor_years)
+
+
+def build_implied_forward_curve(
+    spot: float,
+    pair: str = "EURUSD",
+    r_domestic_pct: Optional[float] = None,
+    r_foreign_pct: Optional[float] = None,
+) -> Dict[str, float]:
+    """Build a full implied forward curve using G10 rate fallbacks.
+
+    For EURUSD: base=EUR (foreign), quote=USD (domestic).
+    F = S × exp((r_USD - r_EUR) × T)
+
+    Uses FRED SOFR (USD) and hardcoded ECB/BoE/BoJ etc. rates as fallback.
+
+    Args:
+        spot            : FX spot rate (quote ccy per base ccy)
+        pair            : 6-char FX pair code, e.g. "EURUSD"
+        r_domestic_pct  : domestic rate override in % (e.g. 5.25)
+        r_foreign_pct   : foreign rate override in %
+
+    Returns:
+        dict of tenor_label → forward_rate
+    """
+    base = pair[:3].upper()
+    quote = pair[3:].upper()
+
+    r_for_pct = r_foreign_pct if r_foreign_pct is not None else _G10_RATE_FALLBACK.get(base, 4.0)
+    r_dom_pct = r_domestic_pct if r_domestic_pct is not None else _G10_RATE_FALLBACK.get(quote, 4.0)
+
+    r_for = r_for_pct / 100.0
+    r_dom = r_dom_pct / 100.0
+
+    curve: Dict[str, float] = {}
+    for tenor_label, T in _TENORS.items():
+        curve[tenor_label] = round(compute_implied_forward(spot, r_dom, r_for, T), 6)
+    return curve
+
+
+# ===========================================================================
+# Intraday FX via CCXT multi-exchange adapter
+# ===========================================================================
+
+class IntradayFXCollector:
+    """Fetch intraday FX OHLCV from crypto exchanges via CCXT.
+
+    Most major crypto exchanges list FX pairs (EUR/USD, GBP/USD, etc.)
+    as stablecoin crosses — or via perpetual funding-rate proxies.
+    We use Kraken and Bitfinex which natively carry FX spot markets.
+
+    Falls back gracefully if CCXT is unavailable.
+    """
+
+    # FX pairs available on Kraken as spot markets (EUR quoted vs USD)
+    _KRAKEN_FX_MAP: Dict[str, str] = {
+        "EURUSD": "EUR/USD",
+        "GBPUSD": "GBP/USD",
+        "USDJPY": "USD/JPY",
+        "USDCHF": "USD/CHF",
+        "USDCAD": "USD/CAD",
+        "AUDUSD": "AUD/USD",
+    }
+
+    # Bitfinex FX symbols (lowercase)
+    _BITFINEX_FX_MAP: Dict[str, str] = {
+        "EURUSD": "EUR/USD",
+        "GBPUSD": "GBP/USD",
+    }
+
+    def __init__(self) -> None:
+        self._ccxt: Optional[Any] = self._load_ccxt()
+
+    @staticmethod
+    def _load_ccxt() -> Optional[Any]:
+        """Try to import CCXT or the project's CCXT multi-exchange adapter."""
+        # Try project adapter first
+        try:
+            from sentinel.sds.adapters import ccxt_multi_exchange_v3  # type: ignore[import]
+            return ccxt_multi_exchange_v3
+        except ImportError:
+            pass
+        # Fall back to raw ccxt
+        try:
+            import ccxt  # type: ignore[import]
+            return ccxt
+        except ImportError:
+            return None
+
+    def fetch_ohlcv(
+        self,
+        pair: str,
+        timeframe: str = "1h",
+        limit: int = 168,
+        exchange: str = "kraken",
+    ) -> pd.DataFrame:
+        """Fetch intraday OHLCV for an FX pair.
+
+        Args:
+            pair      : 6-char FX code, e.g. "EURUSD"
+            timeframe : CCXT timeframe string, e.g. "1h", "15m", "1d"
+            limit     : number of bars to fetch
+            exchange  : exchange name (kraken / bitfinex)
+
+        Returns:
+            DataFrame with columns: timestamp, open, high, low, close, volume
+            Returns empty DataFrame on failure.
+        """
+        if self._ccxt is None:
+            logger.warning("IntradayFXCollector: ccxt not available — returning empty")
+            return pd.DataFrame()
+
+        symbol = self._KRAKEN_FX_MAP.get(pair.upper())
+        if symbol is None:
+            logger.warning(f"IntradayFXCollector: no CCXT symbol for pair {pair}")
+            return pd.DataFrame()
+
+        try:
+            # If we have the project adapter
+            if hasattr(self._ccxt, "fetch_ohlcv"):
+                raw = self._ccxt.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit,
+                                              exchange=exchange)
+            else:
+                # Direct ccxt usage
+                ex = getattr(self._ccxt, exchange)()
+                raw = ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+
+            if not raw:
+                return pd.DataFrame()
+
+            df = pd.DataFrame(raw, columns=["timestamp", "open", "high", "low", "close", "volume"])
+            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+            df = df.set_index("timestamp").sort_index()
+            df.index.name = "datetime"
+            logger.info(f"IntradayFXCollector: {pair} {timeframe} → {len(df)} bars from {exchange}")
+            return df
+
+        except Exception as exc:
+            logger.warning(f"IntradayFXCollector: {pair}/{exchange}: {exc}")
+            return pd.DataFrame()
+
+    def compute_intraday_gk_vol(
+        self,
+        pair: str,
+        timeframe: str = "1h",
+        lookback_bars: int = 168,
+    ) -> Optional[float]:
+        """Fetch intraday OHLCV and compute Garman-Klass vol (annualized).
+
+        Returns annualized intraday realized vol, or None if data unavailable.
+        """
+        df = self.fetch_ohlcv(pair, timeframe=timeframe, limit=lookback_bars)
+        if df.empty or len(df) < 5:
+            return None
+        try:
+            return garman_klass_vol(df["high"], df["low"], df["close"], df["open"])
+        except Exception as exc:
+            logger.warning(f"IntradayFXCollector: GK vol computation failed: {exc}")
+            return None
+
+
+# ===========================================================================
+# FX Carry Trade Signal (pure math, uses hardcoded rate fallbacks)
+# ===========================================================================
+
+class FXCarrySignal:
+    """G10 carry trade signal based on interest rate differentials vs USD.
+
+    Methodology:
+      - Rank G10 currencies by rate differential to USD
+      - Long high-yielders (AUD, NZD, CAD), short low-yielders (JPY, CHF)
+      - Signal is purely rate-differential driven (no FX spot data needed)
+
+    Uses hardcoded G10 short rates (_G10_RATE_FALLBACK) as defaults,
+    overridable with live FRED data via FREDFXAdapter.
+    """
+
+    def __init__(self, rates: Optional[Dict[str, float]] = None) -> None:
+        """
+        Args:
+            rates: dict of {currency: short_rate_%} overrides.
+                   Currencies not provided fall back to _G10_RATE_FALLBACK.
+        """
+        self._rates = dict(_G10_RATE_FALLBACK)
+        if rates:
+            self._rates.update({k.upper(): v for k, v in rates.items()})
+
+    def get_rate(self, currency: str) -> float:
+        """Return short-term rate (%) for a currency."""
+        return self._rates.get(currency.upper(), 4.0)
+
+    def rate_differential_vs_usd(self, currency: str) -> float:
+        """Return rate differential of currency vs USD (in percentage points).
+
+        Positive = currency has higher rate than USD → positive carry (long currency vs USD).
+        Negative = currency has lower rate than USD → negative carry (short currency vs USD).
+        """
+        r_ccy = self.get_rate(currency)
+        r_usd = self.get_rate("USD")
+        return round(r_ccy - r_usd, 4)
+
+    def rank_g10_carry(self) -> pd.DataFrame:
+        """Rank all G10 currencies by carry vs USD.
+
+        Returns DataFrame with columns:
+            currency, rate_pct, diff_vs_usd, carry_signal, rank
+        Sorted by diff_vs_usd descending.
+        """
+        rows = []
+        for ccy in sorted(_G10):
+            if ccy == "USD":
+                continue  # skip USD itself
+            diff = self.rate_differential_vs_usd(ccy)
+            rows.append({
+                "currency": ccy,
+                "rate_pct": self.get_rate(ccy),
+                "diff_vs_usd": diff,
+                "carry_signal": "LONG" if diff > 0 else "SHORT",
+            })
+
+        df = pd.DataFrame(rows).sort_values("diff_vs_usd", ascending=False)
+        df["rank"] = range(1, len(df) + 1)
+        return df.reset_index(drop=True)
+
+    def get_carry_portfolio(
+        self,
+        n_long: int = 3,
+        n_short: int = 3,
+    ) -> Dict[str, float]:
+        """Build a simple carry portfolio: long top n, short bottom n.
+
+        Returns dict of {currency: signal_weight}
+        where weight > 0 = long vs USD, weight < 0 = short vs USD.
+        """
+        ladder = self.rank_g10_carry()
+        portfolio: Dict[str, float] = {}
+
+        long_ccys = ladder.head(n_long)["currency"].tolist()
+        short_ccys = ladder.tail(n_short)["currency"].tolist()
+
+        for ccy in long_ccys:
+            portfolio[ccy] = 1.0 / n_long
+        for ccy in short_ccys:
+            portfolio[ccy] = -1.0 / n_short
+
+        return portfolio
+
+    def compute_implied_carry_forward(
+        self,
+        spot: float,
+        pair: str,
+        tenor: str = "1Y",
+    ) -> float:
+        """Compute carry-implied forward rate using G10 rate fallbacks.
+
+        F = S × exp((r_quote - r_base) × T)
+
+        This is equivalent to the no-arbitrage CIP forward, but using
+        the carry signal's rate assumptions rather than live FRED data.
+        """
+        base = pair[:3].upper()
+        quote = pair[3:].upper()
+        T = _TENORS.get(tenor, 1.0)
+        r_base = self.get_rate(base) / 100.0
+        r_quote = self.get_rate(quote) / 100.0
+        return round(compute_implied_forward(spot, r_quote, r_base, T), 6)
+
+
+# ===========================================================================
 # Convenience factory
 # ===========================================================================
 
@@ -1838,6 +2449,9 @@ def build_fx_platform() -> Dict[str, Any]:
     reer = FXRealEffectiveRate(fred, ecb)
     mom = FXMomentumSignals(fred, ecb)
 
+    intraday = IntradayFXCollector()
+    carry_signal = FXCarrySignal()
+
     return {
         "fred": fred,
         "ecb": ecb,
@@ -1847,6 +2461,8 @@ def build_fx_platform() -> Dict[str, Any]:
         "carry": carry,
         "reer": reer,
         "momentum": mom,
+        "intraday": intraday,
+        "carry_signal": carry_signal,
     }
 
 

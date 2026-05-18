@@ -256,11 +256,110 @@ _SECTOR_ALIASES: Dict[str, str] = {
     "telecom": "Communication Services", "media": "Communication Services",
 }
 
+# ---------------------------------------------------------------------------
+# SIC code mapping — sector name → representative SIC code ranges
+# Used for EDGAR XBRL and DuckDB queries that filter by SIC.
+# ---------------------------------------------------------------------------
+
+_SECTOR_SIC_RANGES: Dict[str, List[Tuple[int, int]]] = {
+    "Information Technology": [
+        (3570, 3579),   # Computer & Office Equipment
+        (3670, 3679),   # Electronic Components
+        (3812, 3812),   # Defense Electronics
+        (3820, 3829),   # Measuring Instruments
+        (7370, 7379),   # Computer Programming, Data Processing
+        (7372, 7372),   # Prepackaged Software
+    ],
+    "Health Care": [
+        (2830, 2836),   # Drugs
+        (5047, 5047),   # Medical & Hospital Equipment
+        (7389, 7389),   # Services-Health Services
+        (8000, 8099),   # Health Services
+        (8011, 8099),
+    ],
+    "Financials": [
+        (6000, 6099),   # Banks
+        (6100, 6199),   # Non-bank Credit
+        (6200, 6299),   # Security & Commodity Brokers
+        (6300, 6399),   # Insurance
+        (6400, 6499),   # Insurance Agents
+        (6500, 6599),   # Real Estate Holding
+        (6700, 6799),   # Holding Companies
+    ],
+    "Energy": [
+        (1300, 1399),   # Oil & Gas Extraction
+        (1311, 1311),
+        (2910, 2919),   # Petroleum Refining
+        (5172, 5172),   # Petroleum Products Wholesale
+    ],
+    "Consumer Discretionary": [
+        (5200, 5299),   # Retail Stores
+        (5300, 5399),
+        (5600, 5699),
+        (5900, 5999),
+        (7011, 7011),   # Hotels
+        (7812, 7812),   # Motion Picture
+    ],
+    "Consumer Staples": [
+        (2000, 2099),   # Food
+        (2100, 2199),   # Tobacco
+        (2800, 2829),   # Chemicals
+        (5140, 5149),   # Groceries Wholesale
+        (5400, 5499),   # Food Stores
+        (5912, 5912),   # Drug Stores
+    ],
+    "Industrials": [
+        (3400, 3499),   # Fabricated Metal
+        (3500, 3569),   # Industrial Machinery
+        (3700, 3769),   # Transportation Equipment
+        (4500, 4599),   # Air Transportation
+        (7500, 7599),   # Auto Repair
+    ],
+    "Utilities": [
+        (4900, 4999),   # Electric, Gas & Sanitary Services
+    ],
+    "Real Estate": [
+        (6500, 6552),   # Real Estate
+        (6726, 6726),   # Investment Offices
+    ],
+    "Materials": [
+        (1000, 1499),   # Mining
+        (2600, 2699),   # Paper
+        (2800, 2899),   # Chemicals
+        (3300, 3399),   # Primary Metals
+    ],
+    "Communication Services": [
+        (4800, 4899),   # Communications
+        (4830, 4833),
+        (7372, 7375),   # Internet
+        (4813, 4813),   # Telephone
+    ],
+}
+
+
+def sector_to_sic_codes(sector: str) -> List[int]:
+    """Return a list of SIC codes for a given GICS sector name."""
+    ranges = _SECTOR_SIC_RANGES.get(sector, [])
+    codes: List[int] = []
+    for lo, hi in ranges:
+        codes.extend(range(lo, hi + 1))
+    return codes
+
+
+def sector_alias_to_sic_codes(alias: str) -> List[int]:
+    """Convert a sector alias (e.g. 'tech') to SIC codes via the alias map."""
+    canonical = _SECTOR_ALIASES.get(alias.lower().strip())
+    if not canonical:
+        return []
+    return sector_to_sic_codes(canonical)
+
+
 _COMPARISON_OPS: List[Tuple[re.Pattern, str]] = [
-    (re.compile(r"\bunder\b|\bbelow\b|\bless\s+than\b|\b<\b"), "<"),
-    (re.compile(r"\bover\b|\babove\b|\bmore\s+than\b|\bgreater\s+than\b|\b>\b"), ">"),
-    (re.compile(r"\bat\s+least\b|\bno\s+less\s+than\b|\b>=\b"), ">="),
-    (re.compile(r"\bat\s+most\b|\bno\s+more\s+than\b|\b<=\b"), "<="),
+    # Note: <= / >= must be checked before < / > to avoid partial matches
+    (re.compile(r"<=|=<|\bat\s+most\b|\bno\s+more\s+than\b"), "<="),
+    (re.compile(r">=|=>\b|\bat\s+least\b|\bno\s+less\s+than\b"), ">="),
+    (re.compile(r"\bunder\b|\bbelow\b|\bless\s+than\b|(?<![=!<>])<(?![=])"), "<"),
+    (re.compile(r"\bover\b|\babove\b|\bmore\s+than\b|\bgreater\s+than\b|(?<![=!<>])>(?![=])"), ">"),
     (re.compile(r"\bexceeds?\b|\bexceeding\b"), ">"),
     (re.compile(r"\bexceeded\s+by\b|\bdown\s+more\s+than\b"), "<"),
 ]
@@ -452,68 +551,169 @@ class QueryParser:
             requires_profitable=requires_profitable,
         )
 
+    _BETWEEN_PATTERN = re.compile(
+        r"(\w[\w\s/\-]*?)\s+(?:is\s+)?between\s+"
+        r"\$?(\d+(?:\.\d+)?)\s*(%|x|times|percent|billion|million|b|m|k)?"
+        r"\s+and\s+"
+        r"\$?(\d+(?:\.\d+)?)\s*(%|x|times|percent|billion|million|b|m|k)?",
+        re.IGNORECASE,
+    )
+
+    @staticmethod
+    def _normalise_val(raw: str, suf: str) -> float:
+        """Parse raw number string + optional suffix to float."""
+        val = float(raw)
+        suf_lower = (suf or "").lower()
+        if suf_lower in _PERCENT_SUFFIXES:
+            val /= 100.0
+        elif suf_lower in _BILLION_SUFFIXES:
+            val *= 1e9
+        elif suf_lower in _MILLION_SUFFIXES:
+            val *= 1e6
+        elif suf_lower in _TRILLION_SUFFIXES:
+            val *= 1e12
+        return val
+
     def _extract_metric_filters(self, q: str) -> List[ScreenerFilter]:
         """
-        Find patterns: <metric> <op> <value> and <value> <op> <metric>.
+        Proper token-aware parser producing typed ScreenerFilter nodes.
+
+        Parse tree overview
+        -------------------
+        For each metric alias found in the query we examine a ±60-char context
+        window and classify into one of three filter patterns:
+
+          1. RANGE    : <metric> between <lo> and <hi>   → operator='between'
+          2. COMPARE  : <metric> <op> <value>             → operator in <,>,<=,>=,==
+          3. NOT_NULL : <metric> is present / has         → operator='not_null'
+
+        The result is a list of :class:`ScreenerFilter` objects (the parse-tree
+        leaf nodes) that are later de-duplicated and SQL-translated.
         """
         filters: List[ScreenerFilter] = []
         number_re = re.compile(
             r"\$?(\d+(?:\.\d+)?)\s*(trillion|billion|million|t|b|m|k|%|x|times|percent)?",
-            re.IGNORECASE
+            re.IGNORECASE,
         )
 
-        # Try each metric alias
+        # ── Pattern 1: RANGE ("PE between 10 and 20") ──────────────────────
+        for m in self._BETWEEN_PATTERN.finditer(q):
+            metric_phrase = m.group(1).strip().lower()
+            lo_raw, lo_suf = m.group(2), m.group(3) or ""
+            hi_raw, hi_suf = m.group(4), m.group(5) or ""
+
+            # Match the metric phrase against aliases (longest first)
+            matched_metric: Optional[str] = None
+            for alias in sorted(_METRIC_ALIASES.keys(), key=len, reverse=True):
+                if alias in metric_phrase or metric_phrase in alias:
+                    matched_metric = _METRIC_ALIASES[alias]
+                    break
+            if not matched_metric:
+                continue
+
+            try:
+                lo = self._normalise_val(lo_raw, lo_suf)
+                hi = self._normalise_val(hi_raw, hi_suf)
+                if lo > hi:
+                    lo, hi = hi, lo
+                filters.append(ScreenerFilter(
+                    metric=matched_metric, operator="between", value=(lo, hi)
+                ))
+            except (ValueError, TypeError):
+                pass
+
+        # ── Pattern 2 & 3: COMPARE / NOT_NULL (existing metric alias scan) ─
+        # Split query into clauses at conjunctions so operators don't bleed
+        # across clause boundaries (e.g. "PE < 20 and dividend yield > 2%").
+        _CLAUSE_SEP = re.compile(r"\s+(?:and|or|but|,)\s+", re.IGNORECASE)
+        clauses: List[Tuple[int, str]] = []  # (offset_in_q, clause_text)
+        prev = 0
+        for sep in _CLAUSE_SEP.finditer(q):
+            clauses.append((prev, q[prev:sep.start()]))
+            prev = sep.end()
+        clauses.append((prev, q[prev:]))
+
+        processed_metrics: set = set()
+
         for alias in sorted(_METRIC_ALIASES.keys(), key=len, reverse=True):
             if alias not in q:
                 continue
+            # Require alias to appear as a complete word/phrase (not a substring of another word)
+            if not re.search(r"(?<![a-z])" + re.escape(alias) + r"(?![a-z])", q):
+                continue
             metric = _METRIC_ALIASES[alias]
-            pos = q.find(alias)
-            # Grab context window: 40 chars before and after
-            ctx_start = max(0, pos - 40)
-            ctx_end = min(len(q), pos + len(alias) + 40)
-            ctx = q[ctx_start:ctx_end]
 
-            op = None
-            value = None
+            # Skip if already captured by range parser or processed
+            if any(f.metric == metric and f.operator == "between" for f in filters):
+                continue
+            if metric in processed_metrics:
+                continue
 
-            # Find operator in context
+            # Find position using word-boundary aware search
+            m_pos = re.search(r"(?<![a-z])" + re.escape(alias) + r"(?![a-z])", q)
+            if not m_pos:
+                continue
+            alias_pos_in_q = m_pos.start()
+            clause_text = q  # fallback: whole query
+            clause_offset = 0
+            for c_off, c_text in clauses:
+                if alias in c_text:
+                    # Verify the position matches
+                    local_pos = c_text.find(alias)
+                    if c_off + local_pos == alias_pos_in_q:
+                        clause_text = c_text
+                        clause_offset = c_off
+                        break
+
+            alias_local = alias_pos_in_q - clause_offset
+
+            # Pattern 3: NOT_NULL ("has dividend", "pays dividend")
+            prefix_in_clause = clause_text[:alias_local]
+            if re.search(r"\b(?:has|pays?|showing)\b", prefix_in_clause):
+                if not number_re.search(clause_text):
+                    filters.append(ScreenerFilter(metric=metric, operator="not_null", value=None))
+                    processed_metrics.add(metric)
+                    continue
+
+            op: Optional[str] = None
+            value: Optional[float] = None
+
+            # Find operator within THIS clause only
             for op_re, op_str in _COMPARISON_OPS:
-                if op_re.search(ctx):
+                if op_re.search(clause_text):
                     op = op_str
                     break
 
             if op is None:
                 continue
 
-            # Find number in context
-            num_matches = list(number_re.finditer(ctx))
+            # Find the number closest to the alias in this clause
+            # Prefer numbers AFTER the alias, then before
+            num_matches = list(number_re.finditer(clause_text))
+            alias_end_local = alias_local + len(alias)
+            best: Optional[Tuple[float, float]] = None  # (distance, parsed_val)
+
             for nm in num_matches:
-                # Skip if number is part of the alias text itself
-                num_start = ctx_start + nm.start()
-                if pos <= num_start < pos + len(alias):
+                nm_start = nm.start()
+                # Skip if number overlaps with alias text
+                if alias_local <= nm_start < alias_end_local:
                     continue
                 raw_val = nm.group(1)
                 suf = (nm.group(2) or "").lower()
                 try:
-                    val = float(raw_val)
-                    if suf in _PERCENT_SUFFIXES:
-                        val /= 100.0
-                    elif suf in _BILLION_SUFFIXES:
-                        val *= 1e9
-                    elif suf in _MILLION_SUFFIXES:
-                        val *= 1e6
-                    elif suf in _TRILLION_SUFFIXES:
-                        val *= 1e12
-                    value = val
-                    break
+                    val = self._normalise_val(raw_val, suf)
                 except Exception:
                     continue
+                dist = abs(nm_start - alias_end_local)
+                if best is None or dist < best[0]:
+                    best = (dist, val)
 
-            if value is not None:
-                # Infer proper sign for ratio metrics
+            if best is not None:
+                value = best[1]
                 if metric == "dividend_yield" and value > 1:
-                    value /= 100.0  # "3%" as 0.03
+                    value /= 100.0
                 filters.append(ScreenerFilter(metric=metric, operator=op, value=value))
+                processed_metrics.add(metric)
 
         return filters
 
@@ -537,6 +737,146 @@ class QueryParser:
                     # Different direction — add as separate entry
                     seen[f"{key}_{f.operator}"] = f
         return list(seen.values())
+
+    def parse_relative_query(self, query: str) -> dict:
+        """Parse a relative/ranked query like "top 10 by PE".
+
+        Extracts:
+          - limit    : integer N from "top N" / "bottom N"
+          - sort_by  : canonical metric name
+          - ascending: True for "bottom N" / "lowest", False for "top N" / "highest"
+
+        Examples:
+          "top 10 by PE"          → {limit:10, sort_by:"pe_ratio",  ascending:False}
+          "bottom 5 by dividend"  → {limit:5,  sort_by:"dividend_yield", ascending:True}
+          "top 20 ROE stocks"     → {limit:20, sort_by:"roe", ascending:False}
+
+        Returns:
+            dict with keys: limit (int), sort_by (str|None), ascending (bool)
+        """
+        q = query.lower().strip()
+
+        # Extract limit
+        limit = 25  # default
+        ascending = False  # default: top = descending
+
+        # "top N" → highest first (descending)
+        top_m = re.search(r"\btop\s+(\d+)\b", q)
+        if top_m:
+            limit = int(top_m.group(1))
+            ascending = False
+
+        # "bottom N" → lowest first (ascending)
+        bot_m = re.search(r"\bbottom\s+(\d+)\b", q)
+        if bot_m:
+            limit = int(bot_m.group(1))
+            ascending = True
+
+        # Superlative direction overrides
+        if any(w in q for w in ("lowest", "smallest", "cheapest", "worst", "least")):
+            ascending = True
+        elif any(w in q for w in ("highest", "largest", "biggest", "best", "most")):
+            ascending = False
+
+        # Metric — longest alias match wins
+        sort_by: Optional[str] = None
+        for alias in sorted(_METRIC_ALIASES.keys(), key=len, reverse=True):
+            if alias in q:
+                sort_by = _METRIC_ALIASES[alias]
+                break
+
+        return {"limit": limit, "sort_by": sort_by, "ascending": ascending}
+
+    def expand_sector_synonyms(self, term: str) -> Optional[str]:
+        """Map a sector synonym/alias to its canonical GICS sector name.
+
+        Covers common informal names like "tech", "technology", "software"
+        all mapping to GICS sector code 45 (Information Technology).
+
+        Args:
+            term: Free-text sector name or alias.
+
+        Returns:
+            Canonical GICS sector string, or None if no match found.
+
+        Examples:
+            "tech"       → "Information Technology"
+            "technology" → "Information Technology"
+            "software"   → "Information Technology"
+            "banks"      → "Financials"
+            "pharma"     → "Health Care"
+        """
+        term_lower = term.lower().strip()
+        # Direct alias lookup first
+        if term_lower in _SECTOR_ALIASES:
+            return _SECTOR_ALIASES[term_lower]
+        # Partial match fallback (term appears inside an alias key)
+        for alias, canonical in _SECTOR_ALIASES.items():
+            if term_lower in alias or alias in term_lower:
+                return canonical
+        return None
+
+    def generate_screener_explanation(self, query: "ScreenerQuery") -> str:
+        """Generate a human-readable explanation of an active screener.
+
+        Produces natural-language output like:
+          "Showing stocks with PE < 20 AND dividend yield > 2%"
+
+        Args:
+            query: A ScreenerQuery (parsed or constructed programmatically).
+
+        Returns:
+            Human-readable explanation string.
+        """
+        parts: list[str] = []
+
+        if query.sectors:
+            parts.append(f"Sector: {' or '.join(query.sectors)}")
+
+        if query.market_cap_min is not None or query.market_cap_max is not None:
+            lo = f"${query.market_cap_min/1e9:.1f}B" if query.market_cap_min else "any"
+            hi = f"${query.market_cap_max/1e9:.1f}B" if query.market_cap_max else "any"
+            parts.append(f"Market cap {lo} – {hi}")
+
+        if query.requires_profitable:
+            parts.append("must be profitable")
+
+        if query.requires_dividend:
+            parts.append("must pay a dividend")
+
+        # Format each filter in plain English
+        _OP_WORDS = {
+            "<": "<", "<=": "≤", ">": ">", ">=": "≥", "==": "=",
+        }
+        for f in query.filters:
+            # Reverse-lookup a readable metric name
+            readable = f.metric.replace("_", " ")
+            if f.operator == "between" and isinstance(f.value, tuple):
+                parts.append(f"{readable} between {f.value[0]} and {f.value[1]}")
+            elif f.operator == "not_null":
+                parts.append(f"{readable} is present")
+            else:
+                op_str = _OP_WORDS.get(f.operator, f.operator)
+                val = f.value
+                # Format percentages
+                if f.metric in {
+                    "dividend_yield", "net_margin", "gross_margin",
+                    "operating_margin", "roe", "roa", "roic",
+                    "revenue_growth_yoy", "fcf_yield", "payout_ratio",
+                } and isinstance(val, float) and abs(val) < 10:
+                    val_str = f"{val:.0%}"
+                else:
+                    val_str = str(val)
+                parts.append(f"{readable} {op_str} {val_str}")
+
+        if query.sort_by:
+            direction = "descending" if query.sort_desc else "ascending"
+            parts.append(f"sorted by {query.sort_by.replace('_', ' ')} ({direction})")
+
+        base = f"Showing top {query.limit} stocks"
+        if parts:
+            return base + " with " + " AND ".join(parts)
+        return base
 
     def explain_parse(self, query: str) -> str:
         """Return human-readable explanation of how the query was interpreted."""

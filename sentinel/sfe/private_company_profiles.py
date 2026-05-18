@@ -1895,3 +1895,127 @@ async def api_geographic_hubs():
         return {"hubs": df.to_dict(orient="records"), "count": len(df)}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# dim_097 wave-9 additions: implied valuation, growth stage, acquisition likelihood
+# ---------------------------------------------------------------------------
+
+# Revenue multiples by sector for implied EV estimation
+_SECTOR_REVENUE_MULTIPLES: dict[str, float] = {
+    "Software":       3.0,   # SaaS multiple
+    "SaaS":           3.0,
+    "Technology":     3.0,
+    "Industrial":     2.0,
+    "Manufacturing":  2.0,
+    "Healthcare":     2.0,
+    "Retail":         1.5,
+    "Consumer":       1.5,
+    "Restaurant":     1.5,
+    "Real Estate":    1.5,
+    "Energy":         2.0,
+    "Finance":        2.0,
+    "Other":          2.0,
+}
+
+# Sectors with known strategic acquirers (used in acquisition likelihood)
+_STRATEGIC_ACQUIRER_SECTORS: set[str] = {
+    "Software", "SaaS", "Technology", "Healthcare", "Finance", "Industrial",
+}
+
+
+def compute_implied_valuation(
+    disclosed_revenue: float,
+    sector: str,
+) -> dict:
+    """
+    Compute implied enterprise value from disclosed revenue using sector multiples.
+
+    Revenue multiples:
+      - SaaS / Software : 3×
+      - Industrial       : 2×
+      - Retail           : 1.5×
+      - default          : 2× (industrial)
+
+    Parameters
+    ----------
+    disclosed_revenue : Annual revenue in USD (from Form D or company disclosure)
+    sector            : Company sector string (matched against _SECTOR_REVENUE_MULTIPLES)
+
+    Returns
+    -------
+    dict with keys: revenue_multiple, implied_ev, sector
+    """
+    multiple = _SECTOR_REVENUE_MULTIPLES.get(sector, 2.0)
+    implied_ev = disclosed_revenue * multiple
+    return {
+        "revenue_multiple": multiple,
+        "implied_ev": round(implied_ev, 2),
+        "sector": sector,
+        "disclosed_revenue": disclosed_revenue,
+    }
+
+
+def estimate_growth_stage(prior_year_revenue: float) -> str:
+    """
+    Estimate company growth stage based on prior-year revenue (from Form D disclosure).
+
+    Stage thresholds:
+      - prior_year_revenue == 0        → "seed"
+      - prior_year_revenue < 5,000,000 → "early"
+      - prior_year_revenue < 50,000,000→ "growth"
+      - else                           → "late"
+
+    Parameters
+    ----------
+    prior_year_revenue : Prior year revenue in USD (0 if no revenues reported)
+
+    Returns
+    -------
+    str: one of "seed", "early", "growth", "late"
+    """
+    if prior_year_revenue == 0:
+        return "seed"
+    if prior_year_revenue < 5_000_000:
+        return "early"
+    if prior_year_revenue < 50_000_000:
+        return "growth"
+    return "late"
+
+
+def compute_acquisition_likelihood_score(
+    company_size_tier: str,
+    has_strong_fcf: bool,
+    sector: str,
+) -> float:
+    """
+    Score the likelihood (0-100) that a private company is an acquisition target.
+
+    Factors:
+      - Company size tier: "small" companies are more acquirable than large ones
+      - Strong free cash flow: FCF-generating companies attract strategic buyers
+      - Strategic acquirers in sector: if sector has active M&A buyers, score higher
+
+    Scoring:
+      Base score   = 30 if small, else 10
+      FCF bonus    = +30 if strong FCF
+      Sector bonus = +40 if strategic acquirers active in sector
+
+    Result is capped at 100.
+
+    Parameters
+    ----------
+    company_size_tier : "small" | "mid" | "large"
+    has_strong_fcf    : True if company generates positive FCF above threshold
+    sector            : Company sector string
+
+    Returns
+    -------
+    float: acquisition likelihood score 0-100
+    """
+    score = 30.0 if company_size_tier == "small" else 10.0
+    if has_strong_fcf:
+        score += 30.0
+    if sector in _STRATEGIC_ACQUIRER_SECTORS:
+        score += 40.0
+    return min(100.0, round(score, 1))

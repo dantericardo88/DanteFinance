@@ -49,6 +49,7 @@ import logging
 import math
 import warnings
 import zipfile
+from collections import defaultdict
 from dataclasses import dataclass, field, asdict
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -526,6 +527,35 @@ class BrinsonHoodBeebower:
                 logger.warning("BHB period %s failed: %s", d.get("period"), exc)
         return results
 
+    @staticmethod
+    def compute_country_attribution(portfolio_country_weights: pd.Series,
+                                     portfolio_country_returns: pd.Series,
+                                     benchmark_country_weights: pd.Series,
+                                     benchmark_country_returns: pd.Series,
+                                     period: str = "T") -> BHBResult:
+        """
+        BHB decomposition applied across country buckets instead of sector buckets.
+
+        Identical math to compute_attribution but semantically applied at the
+        country level — standard for global / multi-country equity attribution:
+
+          Country Allocation = (wp_c - wb_c) × (rb_c - R_b_total)
+          Country Selection  = wb_c × (rp_c - rb_c)
+          Country Interaction= (wp_c - wb_c) × (rp_c - rb_c)
+
+        This allows attribution of active country tilts (e.g. overweight US vs Europe)
+        and country-level security selection separately.
+
+        Parameters mirror compute_attribution but indices should be country labels.
+        """
+        return BrinsonHoodBeebower.compute_attribution(
+            portfolio_weights=portfolio_country_weights,
+            portfolio_returns=portfolio_country_returns,
+            benchmark_weights=benchmark_country_weights,
+            benchmark_returns=benchmark_country_returns,
+            period=period,
+        )
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. MultiPeriodAttributionLinker
@@ -778,6 +808,86 @@ class MultiPeriodAttributionLinker:
             linking_coefficients=linking_coefs,
             residual=final_residual,
         )
+
+    @staticmethod
+    def grap_sector_linking(single_period_results: List[BHBResult]) -> Dict[str, Dict[str, float]]:
+        """
+        Apply GRAP geometric linking per sector bucket across N periods.
+
+        Rather than linking aggregate effects only, this method distributes
+        GRAP weights to each sector's individual allocation, selection, and
+        interaction effects — producing a sector-level linked attribution table
+        that sums to the total geometric active return.
+
+        GRAP weight for period t: L_t = Π_{τ=t+1..T} (1 + Rb_τ)
+
+        Returns
+        -------
+        dict mapping sector → {
+            'linked_allocation': float,
+            'linked_selection': float,
+            'linked_interaction': float,
+            'linked_total': float,
+        }
+
+        The sum of all sectors' linked_total equals the full portfolio GRAP
+        linked_total from grap_linking().
+        """
+        if not single_period_results:
+            return {}
+
+        rp_list = [r.portfolio_return for r in single_period_results]
+        rb_list = [r.benchmark_return for r in single_period_results]
+        T = len(single_period_results)
+
+        # GRAP linking factors: L_t = Π_{τ=t+1..T} (1 + Rb_τ)
+        linking_coefs: List[float] = []
+        for t in range(T):
+            future_product = 1.0
+            for tau in range(t + 1, T):
+                future_product *= (1.0 + rb_list[tau])
+            linking_coefs.append(future_product)
+
+        # Collect all sectors across all periods
+        all_sectors: set = set()
+        for r in single_period_results:
+            all_sectors.update(r.sectors)
+
+        # Compute linked effects per sector using GRAP weights
+        sector_linked: Dict[str, Dict[str, float]] = {}
+        for sector in all_sectors:
+            linked_alloc = sum(
+                lc * r.allocation_effects.get(sector, 0.0)
+                for lc, r in zip(linking_coefs, single_period_results)
+            )
+            linked_sel = sum(
+                lc * r.selection_effects.get(sector, 0.0)
+                for lc, r in zip(linking_coefs, single_period_results)
+            )
+            linked_inter = sum(
+                lc * r.interaction_effects.get(sector, 0.0)
+                for lc, r in zip(linking_coefs, single_period_results)
+            )
+            sector_linked[sector] = {
+                "linked_allocation": linked_alloc,
+                "linked_selection": linked_sel,
+                "linked_interaction": linked_inter,
+                "linked_total": linked_alloc + linked_sel + linked_inter,
+            }
+
+        # Normalize so sector totals sum to the full portfolio geometric active
+        Rp = MultiPeriodAttributionLinker._geometric_compound(rp_list)
+        Rb = MultiPeriodAttributionLinker._geometric_compound(rb_list)
+        geometric_active = (1.0 + Rp) / (1.0 + Rb) - 1.0
+
+        raw_total = sum(v["linked_total"] for v in sector_linked.values())
+        if abs(raw_total) > 1e-12:
+            scale = geometric_active / raw_total
+            for sector in sector_linked:
+                for key in sector_linked[sector]:
+                    sector_linked[sector][key] *= scale
+
+        return sector_linked
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1130,6 +1240,110 @@ class FixedIncomeAttribution:
         )
 
     @staticmethod
+    def compute_dv01_attribution(portfolio_holdings: List[Dict],
+                                  benchmark_holdings: List[Dict],
+                                  yield_changes: Dict[str, float],
+                                  period: str = "T") -> Dict[str, float]:
+        """
+        DV01-weighted fixed income attribution.
+
+        DV01 (Dollar Value of a Basis Point) = duration × price × 0.0001
+
+        For each maturity bucket, the duration attribution is:
+          shift_effect_bucket  = -DV01_active_bucket × yield_change_bucket / face_value
+
+        Parameters
+        ----------
+        portfolio_holdings, benchmark_holdings: each a list of dicts with:
+          'weight': float, 'duration': float, 'price': float (default 100),
+          'maturity_bucket': str (e.g. '2yr', '5yr', '10yr', '30yr'),
+          'coupon': float, 'spread': float
+        yield_changes: {maturity_bucket → yield_change_decimal}
+          e.g. {'2yr': -0.002, '5yr': 0.001, '10yr': 0.003}
+
+        Returns
+        -------
+        dict with:
+          shift_effect: total parallel shift effect (sum over buckets)
+          twist_effect: non-parallel twist (steepening/flattening)
+          carry_effect: accrual/income effect
+          per_bucket:   {bucket → {'portfolio_dv01', 'benchmark_dv01',
+                                   'active_dv01', 'shift_effect'}}
+          total_active_dv01: total active DV01 in bps
+        """
+        def _agg_by_bucket(holdings: List[Dict]) -> Dict[str, Dict[str, float]]:
+            buckets: Dict[str, Dict[str, float]] = defaultdict(
+                lambda: {"weight": 0.0, "dv01": 0.0, "coupon_income": 0.0}
+            )
+            for h in holdings:
+                bucket = h.get("maturity_bucket", "5yr")
+                w = float(h.get("weight", 0.0))
+                dur = float(h.get("duration", 5.0))
+                price = float(h.get("price", 100.0))
+                coupon = float(h.get("coupon", 0.03))
+                # DV01 = modified_duration × price × 0.0001 (per $100 face)
+                dv01 = dur * price * 0.0001 * w
+                buckets[bucket]["weight"] += w
+                buckets[bucket]["dv01"] += dv01
+                buckets[bucket]["coupon_income"] += coupon * w / 252  # daily accrual
+            return dict(buckets)
+
+        port_by_bucket = _agg_by_bucket(portfolio_holdings)
+        bench_by_bucket = _agg_by_bucket(benchmark_holdings)
+        all_buckets = set(port_by_bucket) | set(bench_by_bucket) | set(yield_changes)
+
+        per_bucket: Dict[str, Dict[str, float]] = {}
+        total_shift = 0.0
+        port_total_dv01 = 0.0
+        bench_total_dv01 = 0.0
+
+        for bucket in all_buckets:
+            p_dv01 = port_by_bucket.get(bucket, {}).get("dv01", 0.0)
+            b_dv01 = bench_by_bucket.get(bucket, {}).get("dv01", 0.0)
+            active_dv01 = p_dv01 - b_dv01
+            dy = yield_changes.get(bucket, 0.0)
+            # Shift effect: -active_DV01 × (Δy / 0.0001) × 0.0001 = -active_DV01 × Δy
+            # (DV01 already scales per bps, so: effect = -active_DV01 × Δy / 0.0001)
+            # But DV01 defined as dv01_per_bps * weight, so:
+            # shift_effect = -active_DV01_bps * Δy_in_bps = -active_dv01 * (dy / 0.0001)
+            shift_effect = -active_dv01 * (dy / 0.0001) * 0.0001  # simplified: -active_dv01 * dy
+            shift_effect = -active_dv01 * dy  # -DV01_active × Δy (decimal)
+
+            per_bucket[bucket] = {
+                "portfolio_dv01": round(p_dv01, 8),
+                "benchmark_dv01": round(b_dv01, 8),
+                "active_dv01": round(active_dv01, 8),
+                "yield_change": dy,
+                "shift_effect": round(shift_effect, 8),
+            }
+            total_shift += shift_effect
+            port_total_dv01 += p_dv01
+            bench_total_dv01 += b_dv01
+
+        # Twist effect: difference between short-end and long-end shifts
+        # Approximate as the spread of bucket shift effects
+        bucket_shifts = [per_bucket[b]["shift_effect"] for b in per_bucket]
+        twist_effect = (max(bucket_shifts) - min(bucket_shifts)) if len(bucket_shifts) > 1 else 0.0
+
+        # Carry effect: accrual of coupon income (active)
+        port_carry = sum(
+            b.get("coupon_income", 0.0) for b in port_by_bucket.values()
+        )
+        bench_carry = sum(
+            b.get("coupon_income", 0.0) for b in bench_by_bucket.values()
+        )
+        carry_effect = port_carry - bench_carry
+
+        return {
+            "shift_effect": round(total_shift, 8),
+            "twist_effect": round(twist_effect, 8),
+            "carry_effect": round(carry_effect, 8),
+            "per_bucket": per_bucket,
+            "total_active_dv01_bps": round((port_total_dv01 - bench_total_dv01) / 0.0001, 4),
+            "period": period,
+        }
+
+    @staticmethod
     def compute_carry_attribution(yield_rate: float,
                                    coupon: float,
                                    price: float,
@@ -1178,6 +1392,169 @@ class FixedIncomeAttribution:
             contributions[bucket] = -krd * dy
 
         return contributions
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4b. CurrencyAttribution
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class CurrencyAttribution:
+    """
+    Currency attribution for multi-currency equity and fixed income portfolios.
+
+    Implements the Ankrim-Hensel (1994) framework:
+      - Separates returns into local return and currency return components
+      - Currency effect = (portfolio FX weight - benchmark FX weight) × FX spot return
+      - Hedged vs unhedged: forward premium adjustment
+
+    For each currency c:
+      currency_allocation = (wp_c - wb_c) × (FX_c - FX_bench_total)
+      currency_selection  = wb_c × (FX_c - FX_bench_total)   [within bench weight]
+      total_currency_effect = wp_c × FX_c - wb_c × FX_c  = (wp_c - wb_c) × FX_c
+
+    Total active currency return = Σ_c [(wp_c - wb_c) × FX_c]
+    which equals: portfolio FX return - benchmark FX return.
+
+    References
+    ----------
+    Ankrim & Hensel (1994) "Multicurrency Performance Attribution"
+    FAJ 50(2): 29–35.
+    Singer & Karnosky (1995) "The General Framework for Global Investment Management
+    and Performance Attribution" JPM 21(2).
+    """
+
+    @staticmethod
+    def compute_currency_effect(portfolio_weights: pd.Series,
+                                 benchmark_weights: pd.Series,
+                                 fx_returns: pd.Series,
+                                 forward_premium: Optional[pd.Series] = None,
+                                 period: str = "T") -> Dict[str, Any]:
+        """
+        Decompose active currency return into allocation and selection.
+
+        Parameters
+        ----------
+        portfolio_weights : pd.Series  currency → portfolio weight (sum ≤ 1)
+        benchmark_weights : pd.Series  currency → benchmark weight (sum ≤ 1)
+        fx_returns        : pd.Series  currency → spot FX return (vs base currency)
+        forward_premium   : pd.Series  currency → forward premium (for hedged portfolios)
+          If provided, hedged FX return = fx_return - forward_premium
+        period            : str label
+
+        Returns
+        -------
+        dict with:
+          per_currency:          {currency → effects breakdown}
+          total_currency_effect: float  (portfolio FX - benchmark FX)
+          total_allocation:      float  Σ (wp - wb) × (FX_c - FX_bench)
+          total_selection:       float  Σ wb × FX_c
+          benchmark_fx_return:   float  Σ wb × FX_c (benchmark FX contribution)
+          portfolio_fx_return:   float  Σ wp × FX_c
+          period:                str
+        """
+        # Align currencies
+        currencies = list(
+            portfolio_weights.index.union(benchmark_weights.index).union(fx_returns.index)
+        )
+        wp = portfolio_weights.reindex(currencies, fill_value=0.0)
+        wb = benchmark_weights.reindex(currencies, fill_value=0.0)
+        fx = fx_returns.reindex(currencies, fill_value=0.0)
+
+        # Apply forward premium adjustment if hedging is used
+        if forward_premium is not None:
+            fp = forward_premium.reindex(currencies, fill_value=0.0)
+            # Hedged FX return = spot FX - forward premium cost
+            fx_effective = fx - fp
+        else:
+            fx_effective = fx.copy()
+
+        # Benchmark total FX return = Σ wb × FX_c
+        fx_bench_total = float((wb * fx_effective).sum())
+        # Portfolio total FX return = Σ wp × FX_c
+        fx_port_total = float((wp * fx_effective).sum())
+
+        # Currency attribution per bucket (Ankrim-Hensel):
+        # Allocation: overweighting a currency that outperforms benchmark FX avg
+        allocation = (wp - wb) * (fx_effective - fx_bench_total)
+        # Selection: benchmark-weighted FX return (structural exposure)
+        selection = wb * fx_effective
+        # Interaction: cross-product (weight deviation × return deviation)
+        interaction = (wp - wb) * fx_effective - allocation
+
+        per_currency: Dict[str, Dict[str, float]] = {}
+        for ccy in currencies:
+            per_currency[ccy] = {
+                "portfolio_weight": float(wp[ccy]),
+                "benchmark_weight": float(wb[ccy]),
+                "fx_return": float(fx[ccy]),
+                "fx_return_hedged": float(fx_effective[ccy]),
+                "currency_allocation": float(allocation[ccy]),
+                "currency_selection": float(selection[ccy]),
+                "currency_interaction": float(interaction[ccy]),
+                "total_currency_effect": float((wp[ccy] - wb[ccy]) * fx_effective[ccy]),
+            }
+
+        total_effect = fx_port_total - fx_bench_total
+
+        return {
+            "period": period,
+            "per_currency": per_currency,
+            "total_currency_effect": total_effect,
+            "total_allocation": float(allocation.sum()),
+            "total_selection": float(selection.sum()),
+            "total_interaction": float(interaction.sum()),
+            "benchmark_fx_return": fx_bench_total,
+            "portfolio_fx_return": fx_port_total,
+            "n_currencies": len([c for c in currencies if abs(wp.get(c, 0)) + abs(wb.get(c, 0)) > 1e-8]),
+        }
+
+    @staticmethod
+    def compute_local_vs_currency(portfolio_total_return: float,
+                                   portfolio_local_return: float,
+                                   benchmark_total_return: float,
+                                   benchmark_local_return: float) -> Dict[str, float]:
+        """
+        Decompose active return into local return effect and currency effect.
+
+        Uses the Singer-Karnosky (1995) additive decomposition:
+          Total active = (local_p - local_b) + (currency_p - currency_b)
+
+        currency_return = total_return - local_return  (approximation)
+
+        Returns
+        -------
+        dict with: local_effect, currency_effect, total_active, decomposition_check
+        """
+        portfolio_currency = portfolio_total_return - portfolio_local_return
+        benchmark_currency = benchmark_total_return - benchmark_local_return
+
+        local_effect = portfolio_local_return - benchmark_local_return
+        currency_effect = portfolio_currency - benchmark_currency
+        total_active = portfolio_total_return - benchmark_total_return
+
+        # Geometric decomposition (more precise):
+        # (1 + Rp_total) = (1 + Rp_local) × (1 + FX_p)
+        # => FX_p = (1 + Rp_total)/(1 + Rp_local) - 1
+        try:
+            fx_p = (1.0 + portfolio_total_return) / (1.0 + portfolio_local_return) - 1.0
+            fx_b = (1.0 + benchmark_total_return) / (1.0 + benchmark_local_return) - 1.0
+            currency_effect_geometric = fx_p - fx_b
+            local_effect_geometric = portfolio_local_return - benchmark_local_return
+        except ZeroDivisionError:
+            currency_effect_geometric = currency_effect
+            local_effect_geometric = local_effect
+
+        check = local_effect + currency_effect - total_active
+
+        return {
+            "local_effect": local_effect,
+            "currency_effect": currency_effect,
+            "currency_effect_geometric": currency_effect_geometric,
+            "local_effect_geometric": local_effect_geometric,
+            "total_active": total_active,
+            "decomposition_check": check,  # should be near zero
+        }
 
 
 # ─────────────────────────────────────────────────────────────────────────────

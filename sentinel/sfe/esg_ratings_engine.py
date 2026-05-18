@@ -1603,3 +1603,127 @@ if __name__ == "__main__":
     import sys
     t = sys.argv[1] if len(sys.argv) > 1 else "MSFT"
     asyncio.run(_cli_demo(t))
+
+
+# ---------------------------------------------------------------------------
+# dim_102 wave-9 additions: ESG momentum, greenwashing risk, controversy-adjusted ESG
+# ---------------------------------------------------------------------------
+
+
+def compute_esg_momentum(
+    current_score: float,
+    prior_quarter_score: float,
+) -> dict:
+    """
+    Compute ESG score momentum as the quarter-over-quarter delta.
+
+    A positive delta indicates improving ESG performance (momentum signal).
+
+    Parameters
+    ----------
+    current_score       : ESG composite score this quarter (0–10)
+    prior_quarter_score : ESG composite score last quarter (0–10)
+
+    Returns
+    -------
+    dict with keys:
+        delta          : score change (positive = improving)
+        momentum_signal: "positive" | "neutral" | "negative"
+        pct_change     : percentage change relative to prior score
+    """
+    delta = round(current_score - prior_quarter_score, 4)
+    if prior_quarter_score > 0:
+        pct_change = round(delta / prior_quarter_score * 100, 2)
+    else:
+        pct_change = 0.0
+    if delta > 0:
+        momentum_signal = "positive"
+    elif delta < 0:
+        momentum_signal = "negative"
+    else:
+        momentum_signal = "neutral"
+    return {
+        "delta": delta,
+        "momentum_signal": momentum_signal,
+        "pct_change": pct_change,
+        "current_score": current_score,
+        "prior_quarter_score": prior_quarter_score,
+    }
+
+
+def detect_greenwashing_risk(
+    marketing_claims_score: float,
+    esg_actual_score: float,
+) -> dict:
+    """
+    Detect potential greenwashing risk when marketing claims exceed actual ESG performance.
+
+    If marketing_claims_score exceeds esg_actual_score by > 15 points → greenwashing flag.
+
+    Parameters
+    ----------
+    marketing_claims_score : Score (0–100) for strength of company's marketing ESG claims
+    esg_actual_score       : Actual measured ESG score (0–100) from structured data
+
+    Returns
+    -------
+    dict with keys:
+        gap               : difference between claims and actual (marketing - actual)
+        greenwashing_risk : bool — True if gap > 15 pts
+        risk_level        : "high" | "moderate" | "low" | "none"
+    """
+    gap = round(marketing_claims_score - esg_actual_score, 2)
+    greenwashing_risk = gap > 15.0
+    if gap > 25.0:
+        risk_level = "high"
+    elif gap > 15.0:
+        risk_level = "moderate"
+    elif gap > 5.0:
+        risk_level = "low"
+    else:
+        risk_level = "none"
+    return {
+        "gap": gap,
+        "greenwashing_risk": greenwashing_risk,
+        "risk_level": risk_level,
+        "marketing_claims_score": marketing_claims_score,
+        "esg_actual_score": esg_actual_score,
+    }
+
+
+def compute_controversy_adjusted_esg(
+    base_score: float,
+    num_controversies: int,
+    penalty_per_controversy: float = 0.05,
+    max_penalty: float = 0.30,
+) -> dict:
+    """
+    Compute controversy-adjusted ESG score.
+
+    Formula:
+        penalty = min(num_controversies * penalty_per_controversy, max_penalty)
+        adjusted_score = base_score * (1 - penalty)
+
+    Parameters
+    ----------
+    base_score              : Raw ESG composite score (0–10 or 0–100 scale)
+    num_controversies       : Number of active controversies
+    penalty_per_controversy : Penalty fraction per controversy (default 0.05 = 5%)
+    max_penalty             : Maximum total penalty fraction (default 0.30 = 30%)
+
+    Returns
+    -------
+    dict with keys:
+        controversy_penalty    : fraction applied (0.0 – max_penalty)
+        controversy_adjusted   : final adjusted score
+        num_controversies      : input controversy count
+        base_score             : input base score
+    """
+    controversy_penalty = min(num_controversies * penalty_per_controversy, max_penalty)
+    adjusted_score = round(base_score * (1.0 - controversy_penalty), 4)
+    return {
+        "controversy_penalty": round(controversy_penalty, 4),
+        "controversy_adjusted": adjusted_score,
+        "num_controversies": num_controversies,
+        "base_score": base_score,
+    }

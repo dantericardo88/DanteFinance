@@ -1643,6 +1643,221 @@ class MarketReactionPredictor:
         ic = 1.0 - (6.0 * d_sq) / (n * (n**2 - 1) + 1e-10)
         return float(np.clip(ic, -1.0, 1.0))
 
+    @staticmethod
+    def compute_market_reaction_model(
+        sentiment_zscore: float,
+        news_volume: int,
+        alpha: float = 0.001,
+    ) -> float:
+        """
+        Compute expected 1-day return effect from sentiment and news volume.
+
+        Model: expected_move = alpha * sentiment_zscore * log(1 + volume)
+
+        alpha: regression coefficient (hardcoded 0.001; ~0.1% move per
+               1-std sentiment signal with log-volume=1).
+        sentiment_zscore: z-score of current sentiment vs 30-day rolling mean.
+        news_volume: number of articles published in the window.
+
+        Returns: expected 1-day return as a decimal (e.g. 0.002 = +0.2%).
+        """
+        if news_volume < 0:
+            news_volume = 0
+        log_volume = math.log(1.0 + news_volume)
+        expected_move = alpha * sentiment_zscore * log_volume
+        return float(expected_move)
+
+    @staticmethod
+    def compute_rolling_ic(
+        sentiment_series: List[float],
+        return_series: List[float],
+        window: int = 30,
+    ) -> float:
+        """
+        Compute rolling 30-day Information Coefficient (IC).
+
+        IC = Spearman correlation between sentiment_t and return_t+1.
+
+        sentiment_series: list of daily sentiment scores (index 0 = oldest)
+        return_series:    list of daily returns (same length)
+        window:           lookback in days (default 30)
+
+        Returns: IC as float in [-1, +1]. Positive = sentiment predicts
+                 next-day return in the correct direction.
+        """
+        n = min(len(sentiment_series), len(return_series))
+        if n < 3:
+            return 0.0
+
+        # Use the most recent `window` days that have both t and t+1
+        end = n
+        start = max(0, end - window)
+        sent = np.array(sentiment_series[start: end - 1], dtype=float)
+        rets = np.array(return_series[start + 1: end], dtype=float)
+
+        if len(sent) < 2:
+            return 0.0
+
+        # Spearman rank correlation
+        sent_ranks = _rank_array(sent)
+        ret_ranks = _rank_array(rets)
+        n_pairs = len(sent)
+        d_sq = np.sum((sent_ranks - ret_ranks) ** 2)
+        ic = 1.0 - (6.0 * d_sq) / (n_pairs * (n_pairs**2 - 1) + 1e-10)
+        return float(np.clip(ic, -1.0, 1.0))
+
+
+def detect_narrative_shift_from_series(
+    sentiment_series: List[float],
+    window: int = 3,
+    lookback: int = 90,
+) -> bool:
+    """
+    Detect structural narrative shift from a flat sentiment series.
+
+    Condition: 3-day delta of sentiment > 1 std of the 90-day distribution.
+
+    sentiment_series: list of daily scores (oldest first)
+    window: number of days for the 'recent' average (default 3)
+    lookback: days to compute the reference distribution (default 90)
+
+    Returns: True if a structural shift is detected.
+    """
+    n = len(sentiment_series)
+    if n < window + 1:
+        return False
+
+    # Reference distribution
+    ref_start = max(0, n - lookback)
+    ref_series = np.array(sentiment_series[ref_start:], dtype=float)
+    if len(ref_series) < window + 1:
+        return False
+
+    ref_std = float(ref_series.std())
+    if ref_std < 1e-8:
+        return False
+
+    # 3-day delta: latest value vs value window days ago
+    latest = sentiment_series[-1]
+    prior = sentiment_series[-(window + 1)]
+    delta = abs(latest - prior)
+
+    return delta > ref_std
+
+
+# ---------------------------------------------------------------------------
+# Entity Linker — normalize company mentions to canonical ticker
+# ---------------------------------------------------------------------------
+
+# Canonical entity lookup: maps common name variants → ticker symbol
+_ENTITY_LINK_MAP: Dict[str, str] = {
+    # Apple
+    "apple": "AAPL", "apple inc": "AAPL", "apple inc.": "AAPL",
+    "aapl": "AAPL",
+    # Microsoft
+    "microsoft": "MSFT", "microsoft corporation": "MSFT", "msft": "MSFT",
+    "windows": "MSFT", "azure": "MSFT",
+    # Google / Alphabet
+    "google": "GOOGL", "alphabet": "GOOGL", "alphabet inc": "GOOGL",
+    "googl": "GOOGL", "goog": "GOOGL",
+    # Amazon
+    "amazon": "AMZN", "amazon.com": "AMZN", "amazon.com inc": "AMZN",
+    "amzn": "AMZN", "aws": "AMZN",
+    # Tesla
+    "tesla": "TSLA", "tesla inc": "TSLA", "tesla motors": "TSLA",
+    "tsla": "TSLA",
+    # NVIDIA
+    "nvidia": "NVDA", "nvidia corporation": "NVDA", "nvda": "NVDA",
+    # Meta
+    "meta": "META", "meta platforms": "META", "facebook": "META",
+    "instagram": "META",
+    # JPMorgan
+    "jpmorgan": "JPM", "jp morgan": "JPM", "jpmorgan chase": "JPM",
+    "chase bank": "JPM", "jpm": "JPM",
+    # Goldman Sachs
+    "goldman sachs": "GS", "goldman": "GS", "gs": "GS",
+    # Morgan Stanley
+    "morgan stanley": "MS", "ms": "MS",
+    # Netflix
+    "netflix": "NFLX", "nflx": "NFLX",
+    # Johnson & Johnson
+    "johnson & johnson": "JNJ", "johnson and johnson": "JNJ", "jnj": "JNJ",
+    # Pfizer
+    "pfizer": "PFE", "pfe": "PFE",
+    # Walmart
+    "walmart": "WMT", "wal-mart": "WMT", "wmt": "WMT",
+    # Exxon
+    "exxon": "XOM", "exxonmobil": "XOM", "exxon mobil": "XOM", "xom": "XOM",
+    # Boeing
+    "boeing": "BA", "ba": "BA",
+    # Berkshire
+    "berkshire": "BRK.B", "berkshire hathaway": "BRK.B",
+}
+
+
+def normalize_entity_to_ticker(mention: str) -> Optional[str]:
+    """
+    Normalize a company mention to a canonical ticker symbol.
+
+    Handles case-insensitive matching and common suffixes (Inc, Corp, Ltd).
+    Returns None if no mapping is found.
+
+    Examples:
+        "Apple"     → "AAPL"
+        "AAPL"      → "AAPL"
+        "Apple Inc" → "AAPL"
+        "UNKNOWN"   → None
+    """
+    if not mention:
+        return None
+
+    # Remove common legal suffixes and strip whitespace
+    normalized = mention.strip()
+    for suffix in (" Inc.", " Inc", " Corp.", " Corp", " Ltd.", " Ltd",
+                   " LLC", " PLC", " plc", " Co.", " Co", " Group",
+                   " Holdings", " International"):
+        if normalized.endswith(suffix):
+            normalized = normalized[: -len(suffix)].strip()
+
+    key = normalized.lower()
+    return _ENTITY_LINK_MAP.get(key)
+
+
+def compute_volume_weighted_sentiment(
+    sentiments: List[float],
+    article_counts: List[int],
+) -> float:
+    """
+    Compute volume-weighted average sentiment.
+
+    Weight each sentiment score by the number of articles it represents.
+    Falls back to simple average if all counts are zero.
+
+    Args:
+        sentiments:    list of sentiment scores (e.g. [-1, +1])
+        article_counts: list of article counts corresponding to each score
+
+    Returns: weighted average sentiment as float.
+
+    Example:
+        3 articles at sentiment=0.1 + 1 article at sentiment=0.5:
+        weighted_avg = (3*0.1 + 1*0.5) / (3+1) = 0.8/4 = 0.2
+    """
+    if not sentiments or not article_counts:
+        return 0.0
+    if len(sentiments) != len(article_counts):
+        raise ValueError(
+            f"sentiments and article_counts must have same length: "
+            f"{len(sentiments)} vs {len(article_counts)}"
+        )
+
+    total_weight = sum(article_counts)
+    if total_weight <= 0:
+        return sum(sentiments) / len(sentiments) if sentiments else 0.0
+
+    weighted_sum = sum(s * w for s, w in zip(sentiments, article_counts))
+    return weighted_sum / total_weight
+
 
 # ---------------------------------------------------------------------------
 # News Sentiment Pipeline (Orchestrator)

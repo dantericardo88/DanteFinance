@@ -28,6 +28,7 @@ from sentinel.sbx.strategy_promotion_v3 import (
     CapitalAllocator,
     StateMachine,
     StrategyLifecycleManager,
+    PromotionScoreCalculator,
 )
 
 # 1. StrategyState enum
@@ -154,5 +155,66 @@ slm = StrategyLifecycleManager
 assert hasattr(slm, '__init__')
 print(f"[OK] StrategyLifecycleManager class exists")
 
-print("\n[PASS] dim_067: Strategy promotion v3 -- FSM states, criteria, registry verified")
+# ---- New math: PromotionScoreCalculator ----
+calc = PromotionScoreCalculator()
+
+# -- compute_capacity_estimate --
+daily_vol   = 50_000_000.0   # $50M daily volume
+ann_ret     = 0.20           # 20% annual return
+threshold   = 0.10           # 10% impact threshold
+cap = calc.compute_capacity_estimate(daily_vol, ann_ret, threshold)
+expected_capacity = daily_vol * threshold / ann_ret   # = 25_000_000
+assert cap["strategy_capacity_usd"] == expected_capacity, \
+    f"Capacity expected {expected_capacity}, got {cap['strategy_capacity_usd']}"
+print(f"[OK] compute_capacity_estimate: capacity=${cap['strategy_capacity_usd']:,.0f} (expected ${expected_capacity:,.0f})")
+
+# zero annual_return returns 0 capacity
+cap_zero = calc.compute_capacity_estimate(50_000_000, 0.0)
+assert cap_zero["strategy_capacity_usd"] == 0.0
+print("[OK] compute_capacity_estimate with zero return gives 0.0")
+
+# -- simulate_paper_to_live_transition --
+paper_m = PerformanceMetrics(strategy_id="test", period="all", sufficient_data=True,
+                              sharpe_ratio=1.4, slippage_ratio=0.05)
+sim = calc.simulate_paper_to_live_transition(
+    paper_metrics=paper_m,
+    proposed_aum=10_000_000,
+    daily_volume=50_000_000.0,
+    annual_return=0.20,
+)
+assert abs(sim["live_slippage_premium"] - 0.075) < 1e-9, \
+    f"slippage premium expected 0.075, got {sim['live_slippage_premium']}"
+assert sim["slippage_multiplier"] == 1.5
+assert sim["capacity_ok"] == True   # 10M < 25M capacity
+print(f"[OK] simulate_paper_to_live: live_sharpe={sim['adjusted_live_sharpe']:.4f}, capacity_ok={sim['capacity_ok']}")
+print(f"[OK]   slippage premium={sim['live_slippage_premium']:.4f} (0.05 x 1.5 = 0.075)")
+
+# -- compute_promotion_score formula verification --
+# All inputs = 1.0 -> total = 1.0 (weights sum to 1)
+score_max = calc.compute_promotion_score(1.0, 1.0, 1.0, 1.0)
+assert abs(score_max["total_score"] - 1.0) < 1e-9, \
+    f"Max score expected 1.0, got {score_max['total_score']}"
+print(f"[OK] compute_promotion_score (all=1.0) = {score_max['total_score']:.8f}  (expected 1.0)")
+
+# All inputs = 0.0 -> total = 0.0
+score_min = calc.compute_promotion_score(0.0, 0.0, 0.0, 0.0)
+assert abs(score_min["total_score"] - 0.0) < 1e-9
+print(f"[OK] compute_promotion_score (all=0.0) = {score_min['total_score']:.8f}  (expected 0.0)")
+
+# Specific weighted formula: 0.30*s + 0.30*d + 0.20*st + 0.20*c
+s, d, st, c = 0.8, 0.7, 0.9, 0.6
+expected_score = 0.30*s + 0.30*d + 0.20*st + 0.20*c
+result_score = calc.compute_promotion_score(s, d, st, c)
+assert abs(result_score["total_score"] - expected_score) < 1e-9, \
+    f"Score expected {expected_score:.8f}, got {result_score['total_score']:.8f}"
+print(f"[OK] compute_promotion_score({s},{d},{st},{c}) = {result_score['total_score']:.8f}  (expected {expected_score:.8f})")
+
+# Verify weight contributions individually
+assert abs(result_score["contributions"]["sharpe"]    - 0.30*s)  < 1e-9
+assert abs(result_score["contributions"]["dsr"]       - 0.30*d)  < 1e-9
+assert abs(result_score["contributions"]["stability"] - 0.20*st) < 1e-9
+assert abs(result_score["contributions"]["capacity"]  - 0.20*c)  < 1e-9
+print("[OK] Individual weight contributions verified")
+
+print("\n[PASS] dim_067: Strategy promotion v3 -- FSM + PromotionScoreCalculator verified")
 PYEOF

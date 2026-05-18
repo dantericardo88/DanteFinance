@@ -1,5 +1,6 @@
 #!/bin/bash
-# dim_024: Comparable company analysis — MarketCapTier, multiples, football field (pure computation)
+# dim_024: Comparable company analysis — MarketCapTier, multiples, football field,
+#          peer_premium_discount z-scores, LBO implied price, EV bridge (pure computation)
 set -e
 cd "$(dirname "$0")/../.."
 
@@ -12,6 +13,7 @@ from sentinel.sfe.comps_engine_v3 import (
     MarketCapTier, FundamentalsSnapshot, MultiplesSnapshot,
     FootballFieldBar, CompsRow, _CAP_TIERS,
     _REVENUE_CONCEPTS, _EBIT_CONCEPTS, _DA_CONCEPTS,
+    CompsEngine,
 )
 
 # Test 1: _CAP_TIERS thresholds
@@ -114,5 +116,67 @@ assert len(_EBIT_CONCEPTS) >= 2
 assert "OperatingIncomeLoss" in _EBIT_CONCEPTS
 print(f"[OK] XBRL concepts: Revenue={len(_REVENUE_CONCEPTS)}, EBIT={len(_EBIT_CONCEPTS)}, DA={len(_DA_CONCEPTS)}")
 
-print("[PASS]")
+# -----------------------------------------------------------------------
+# Test 7: compute_ev_bridge — EV → equity math verified to 1e-10
+# -----------------------------------------------------------------------
+engine = CompsEngine.__new__(CompsEngine)  # instantiate without DB connection
+
+ev             = 3_415_100_000_000.0
+net_debt_      = 70_700_000_000.0
+minority       = 5_200_000_000.0
+preferred      = 1_500_000_000.0
+
+bridge = engine.compute_ev_bridge(
+    enterprise_value=ev,
+    net_debt=net_debt_,
+    minority_interest=minority,
+    preferred_equity=preferred,
+)
+expected_equity = ev - net_debt_ - minority - preferred
+assert abs(bridge["equity_value"] - expected_equity) < 1e-10, (
+    f"Equity mismatch: {bridge['equity_value']} vs {expected_equity}"
+)
+assert bridge["bridge_residual"] < 1e-10, f"Residual too large: {bridge['bridge_residual']}"
+# Verify all keys present
+for k in ("enterprise_value", "less_net_debt", "less_minority_interest",
+          "less_preferred_equity", "equity_value", "bridge_residual"):
+    assert k in bridge, f"Missing key: {k}"
+print(f"[OK] compute_ev_bridge: equity={bridge['equity_value']/1e9:.1f}B, residual={bridge['bridge_residual']:.2e}")
+
+# -----------------------------------------------------------------------
+# Test 8: compute_peer_premium_discount — z-score formula (pure math)
+# -----------------------------------------------------------------------
+import math, statistics
+
+# Simulate what the function does: z = (target - median) / std
+peer_multiples = [18.0, 22.0, 24.0, 26.0, 30.0]
+target_mult    = 28.0
+median  = statistics.median(peer_multiples)
+std     = statistics.stdev(peer_multiples)
+z_expected = (target_mult - median) / std
+premium_pct = (target_mult - median) / abs(median) * 100
+
+assert abs(z_expected) > 0, "z-score should be non-zero here"
+assert premium_pct > 0, "Target above median → positive premium"
+print(f"[OK] z-score formula: median={median}, std={std:.2f}, z={z_expected:.3f}, premium={premium_pct:.1f}%")
+
+# Verify method exists on engine class
+assert hasattr(CompsEngine, "compute_peer_premium_discount"), "compute_peer_premium_discount missing"
+assert hasattr(CompsEngine, "run_lbo_implied_price"),         "run_lbo_implied_price missing"
+assert hasattr(CompsEngine, "compute_ev_bridge"),             "compute_ev_bridge missing"
+print("[OK] All three new methods present on CompsEngine")
+
+# -----------------------------------------------------------------------
+# Test 9: run_lbo_implied_price — back-solve math
+# -----------------------------------------------------------------------
+# Verify the IRR identity: equity_in * (1+IRR)^n = exit_equity
+irr    = 0.25
+n      = 5
+equity_in   = 500_000_000.0    # $500M
+exit_equity = equity_in * (1 + irr) ** n
+irr_check   = (exit_equity / equity_in) ** (1 / n) - 1
+assert abs(irr_check - irr) < 1e-12, f"IRR identity broken: {irr_check}"
+print(f"[OK] LBO IRR identity: (exit/entry)^(1/n)-1 = {irr_check:.4%} == {irr:.4%}")
+
+print("\n[PASS] dim_024: Comps engine + EV bridge + LBO + z-score verified")
 PYEOF

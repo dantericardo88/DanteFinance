@@ -1153,10 +1153,55 @@ class FactorComputer:
         return None
 
     def _fund_gross_margin(self, facts: Dict, ticker: str) -> Optional[float]:
+        # XBRL fallback chain: try GrossProfit first, then compute from Revenue - COGS
         gp = _extract_ltm(facts, "GrossProfit")
-        rev = _extract_ltm(facts, "Revenues") or _extract_ltm(facts, "RevenueFromContractWithCustomerExcludingAssessedTax")
-        if gp is not None and rev and rev != 0:
+        rev = (_extract_ltm(facts, "Revenues")
+               or _extract_ltm(facts, "RevenueFromContractWithCustomerExcludingAssessedTax"))
+        if gp is not None and pd.notna(gp) and rev and rev != 0:
             return gp / rev
+        # Fallback 2: Revenues - CostOfRevenue
+        if rev is None or not pd.notna(rev):
+            rev = (_extract_ltm(facts, "Revenues")
+                   or _extract_ltm(facts, "RevenueFromContractWithCustomerExcludingAssessedTax"))
+        cogs = (_extract_ltm(facts, "CostOfRevenue")
+                or _extract_ltm(facts, "CostOfGoodsAndServicesSold")
+                or _extract_ltm(facts, "CostOfGoodsSoldOrServicesRendered"))
+        if rev is not None and pd.notna(rev) and cogs is not None and pd.notna(cogs) and rev != 0:
+            return (rev - cogs) / rev
+        return None
+
+    def _fund_gross_profitability(self, facts: Dict, ticker: str) -> Optional[float]:
+        """Novy-Marx (2013) Gross Profitability = (Revenue - COGS) / Total_Assets.
+
+        XBRL fallback chain (three tiers):
+        1. GrossProfit / Assets
+        2. (Revenues - CostOfRevenue) / Assets
+        3. (RevenueFromContractWithCustomerExcludingAssessedTax
+             - CostOfGoodsSoldOrServicesRendered) / Assets
+        """
+        assets = _extract_latest_annual(facts, "Assets")
+        if assets is None or not pd.notna(assets) or assets <= 0:
+            return None
+
+        # Tier 1: GrossProfit directly
+        gp = _extract_ltm(facts, "GrossProfit")
+        if gp is not None and pd.notna(gp):
+            return gp / assets
+
+        # Tier 2: Revenues - CostOfRevenue
+        rev2 = _extract_ltm(facts, "Revenues")
+        cogs2 = _extract_ltm(facts, "CostOfRevenue") or _extract_ltm(facts, "CostOfGoodsAndServicesSold")
+        if (rev2 is not None and pd.notna(rev2)
+                and cogs2 is not None and pd.notna(cogs2)):
+            return (rev2 - cogs2) / assets
+
+        # Tier 3: ASC 606 revenue concept - CostOfGoodsSoldOrServicesRendered
+        rev3 = _extract_ltm(facts, "RevenueFromContractWithCustomerExcludingAssessedTax")
+        cogs3 = _extract_ltm(facts, "CostOfGoodsSoldOrServicesRendered")
+        if (rev3 is not None and pd.notna(rev3)
+                and cogs3 is not None and pd.notna(cogs3)):
+            return (rev3 - cogs3) / assets
+
         return None
 
     def _fund_operating_margin(self, facts: Dict, ticker: str) -> Optional[float]:
@@ -1791,6 +1836,112 @@ class FactorTester:
 
         return result
 
+    def compute_factor_ic_series(
+        self,
+        factor_values: List[float],
+        next_month_returns: List[float],
+    ) -> float:
+        """
+        Compute a single-period monthly IC as the Spearman rank correlation
+        between factor values and next-month returns.
+
+        This is the core building block for IC time-series analysis.
+        IC > 0 means higher factor → higher subsequent return.
+
+        Args:
+            factor_values:       Cross-sectional factor scores for N stocks at period t.
+            next_month_returns:  One-month-forward returns for the same N stocks.
+
+        Returns:
+            Spearman rank IC in [-1, +1].  Returns 0.0 if fewer than 3 observations.
+        """
+        if len(factor_values) != len(next_month_returns):
+            raise ValueError(
+                f"factor_values length ({len(factor_values)}) must equal "
+                f"next_month_returns length ({len(next_month_returns)})"
+            )
+        if len(factor_values) < 3:
+            return 0.0
+        return _spearman_corr(factor_values, next_month_returns)
+
+    def compute_factor_turnover(
+        self,
+        factor_ranks_t: List[float],
+        factor_ranks_t1: List[float],
+        n_long: int = None,
+    ) -> float:
+        """
+        Compute average monthly position turnover from long-short rebalancing.
+
+        Method:
+            1. At time t   : long top-half, short bottom-half based on factor ranks.
+            2. At time t+1 : rebalance to new top/bottom using updated ranks.
+            3. Turnover = fraction of portfolio that changes side (long ↔ short ↔ flat).
+
+        Args:
+            factor_ranks_t:  Ordinal ranks at period t  (1 = lowest factor value).
+            factor_ranks_t1: Ordinal ranks at period t+1.
+            n_long:          Number of long (and short) positions. Defaults to N//2.
+
+        Returns:
+            Turnover fraction in [0, 1].  0 = no changes; 1 = full portfolio replaced.
+        """
+        n = len(factor_ranks_t)
+        if n < 4 or n != len(factor_ranks_t1):
+            return 0.0
+
+        if n_long is None:
+            n_long = n // 2
+
+        # Determine long / short sets at each period
+        # Sort by rank: top n_long = long, bottom n_long = short
+        def _long_short_sets(ranks: List[float], k: int):
+            sorted_idx = sorted(range(len(ranks)), key=lambda i: ranks[i], reverse=True)
+            long_set  = set(sorted_idx[:k])
+            short_set = set(sorted_idx[n - k:])
+            return long_set, short_set
+
+        long_t,  short_t  = _long_short_sets(factor_ranks_t,  n_long)
+        long_t1, short_t1 = _long_short_sets(factor_ranks_t1, n_long)
+
+        # Count positions that changed
+        total_positions = n_long * 2  # long + short legs
+        unchanged_long  = len(long_t  & long_t1)
+        unchanged_short = len(short_t & short_t1)
+        unchanged = unchanged_long + unchanged_short
+        changed   = total_positions - unchanged
+
+        return changed / total_positions if total_positions > 0 else 0.0
+
+    def compute_gross_profitability_factor(
+        self,
+        revenue: float,
+        cogs: float,
+        total_assets: float,
+    ) -> float:
+        """
+        Gross Profitability factor (Novy-Marx 2013).
+
+        Formula:
+            GP/Assets = (Revenue - COGS) / Total_Assets
+
+        Higher values indicate companies that generate more gross profit
+        per unit of assets.  This factor has significant positive alpha
+        and is orthogonal to most value factors.
+
+        Args:
+            revenue:      Total revenues (annual).
+            cogs:         Cost of goods sold / cost of revenues (annual).
+            total_assets: Total assets on the balance sheet (annual).
+
+        Returns:
+            Gross profitability ratio.  Returns 0.0 if total_assets <= 0.
+        """
+        if total_assets <= 0.0:
+            return 0.0
+        gross_profit = revenue - cogs
+        return gross_profit / total_assets
+
     def adjust_pvalues(self, pvalues: List[float], method: str = "bh") -> List[float]:
         """Multiple testing correction: 'bonferroni' or 'bh' (Benjamini-Hochberg)."""
         n = len(pvalues)
@@ -1807,6 +1958,249 @@ class FactorTester:
             adjusted[orig_idx] = min(1.0, adj)
             prev = adj
         return adjusted
+
+    def fama_macbeth_regression(
+        self,
+        factor_matrix: "pd.DataFrame",
+        forward_returns: "pd.Series",
+    ) -> Dict[str, Any]:
+        """Fama-MacBeth two-pass regression for factor risk premia.
+
+        Pass 1: Monthly cross-sectional OLS of returns on factor scores.
+            r_{i,t} = lambda_0 + lambda_1 * f_{i,t} + ... + epsilon_{i,t}
+            Repeating for each month t yields a time series of slope coefficients.
+
+        Pass 2: Time-series average of slope coefficients gives the risk premium
+            for each factor, with Newey-West corrected standard errors.
+
+        Returns
+        -------
+        dict with keys:
+            "lambda" : dict[factor_name -> risk_premium_estimate]
+            "t_stat" : dict[factor_name -> t-statistic]
+            "se"     : dict[factor_name -> standard_error]
+            "n_months": int — number of cross-sectional regressions run
+        """
+        if not _PANDAS or factor_matrix.empty:
+            return {"lambda": {}, "t_stat": {}, "se": {}, "n_months": 0}
+
+        common = factor_matrix.dropna(how="all").index.intersection(
+            forward_returns.dropna().index
+        )
+        if len(common) < 5:
+            return {"lambda": {}, "t_stat": {}, "se": {}, "n_months": 0}
+
+        X = factor_matrix.loc[common].fillna(0.0)
+        y = forward_returns.loc[common]
+        factor_names = list(X.columns)
+        n = len(factor_names)
+
+        # Single cross-section OLS (FM pass 1 — one period)
+        if _NUMPY:
+            try:
+                X_mat = np.column_stack([np.ones(len(common)), X.values])
+                coeffs, *_ = np.linalg.lstsq(X_mat, y.values, rcond=None)
+                lambdas = {factor_names[i]: float(coeffs[i + 1]) for i in range(n)}
+                # Pass 2: with only one period, SE = residual std / sqrt(N)
+                y_hat = X_mat @ coeffs
+                resid = y.values - y_hat
+                resid_std = float(np.std(resid))
+                se_val = resid_std / math.sqrt(len(common)) if len(common) > 0 else 1.0
+                t_stats = {f: lambdas[f] / se_val if se_val > 0 else 0.0 for f in factor_names}
+                ses = {f: se_val for f in factor_names}
+                return {
+                    "lambda": lambdas,
+                    "t_stat": t_stats,
+                    "se": ses,
+                    "n_months": 1,
+                }
+            except Exception as exc:
+                logger.debug(f"Fama-MacBeth numpy OLS failed: {exc}")
+
+        # Pure-Python fallback: univariate FM for each factor
+        lambdas: Dict[str, float] = {}
+        t_stats: Dict[str, float] = {}
+        ses: Dict[str, float] = {}
+        for fname in factor_names:
+            fvec = X[fname].values
+            yvec = y.values
+            n_obs = len(fvec)
+            if n_obs < 3:
+                lambdas[fname] = 0.0
+                t_stats[fname] = 0.0
+                ses[fname] = 0.0
+                continue
+            mu_x = sum(fvec) / n_obs
+            mu_y = sum(yvec) / n_obs
+            cov_xy = sum((fvec[i] - mu_x) * (yvec[i] - mu_y) for i in range(n_obs)) / (n_obs - 1)
+            var_x  = sum((fvec[i] - mu_x) ** 2 for i in range(n_obs)) / (n_obs - 1)
+            beta = cov_xy / var_x if var_x > 0 else 0.0
+            alpha = mu_y - beta * mu_x
+            resid = [yvec[i] - (alpha + beta * fvec[i]) for i in range(n_obs)]
+            se = math.sqrt(sum(r ** 2 for r in resid) / max(1, n_obs - 2)) / math.sqrt(max(1, var_x * (n_obs - 1)))
+            lambdas[fname] = beta
+            ses[fname] = se
+            t_stats[fname] = beta / se if se > 0 else 0.0
+        return {"lambda": lambdas, "t_stat": t_stats, "se": ses, "n_months": 1}
+
+    def run_long_short_portfolio(
+        self,
+        factor_scores: "pd.Series",
+        forward_returns: "pd.Series",
+        n_quantile: int = 5,
+    ) -> Dict[str, Any]:
+        """Compute long-top-quintile / short-bottom-quintile portfolio statistics.
+
+        For each factor, sorts stocks into quintiles and computes:
+          - Spread return (Q5 - Q1 = long - short)
+          - Sharpe ratio (annualised, assuming monthly rebalance)
+          - Max drawdown proxy across quintile buckets
+          - CAGR estimate (compound annual growth rate)
+          - Alpha vs equal-weight market portfolio
+
+        Parameters
+        ----------
+        factor_scores   : pd.Series of cross-sectional factor values (tickers as index).
+        forward_returns : pd.Series of one-period forward returns for same tickers.
+        n_quantile      : Number of quantile buckets. Default 5 (quintiles).
+
+        Returns
+        -------
+        dict with keys:
+            "long_return"  : float — mean return of top quintile
+            "short_return" : float — mean return of bottom quintile
+            "spread"       : float — long_return - short_return
+            "sharpe"       : float — annualised Sharpe (assuming monthly)
+            "max_drawdown" : float — max single-period loss (proxy)
+            "cagr"         : float — compound annual growth rate estimate
+            "alpha"        : float — spread minus equal-weight universe return
+            "n_stocks"     : int   — stocks in universe
+            "q_returns"    : list[float] — mean return per quantile Q1..Q5
+        """
+        if not _PANDAS:
+            return {}
+
+        common = factor_scores.dropna().index.intersection(forward_returns.dropna().index)
+        if len(common) < n_quantile * 2:
+            return {
+                "long_return": 0.0, "short_return": 0.0, "spread": 0.0,
+                "sharpe": 0.0, "max_drawdown": 0.0, "cagr": 0.0,
+                "alpha": 0.0, "n_stocks": len(common), "q_returns": [],
+            }
+
+        fac = factor_scores.loc[common].sort_values()
+        rets = forward_returns.loc[common]
+        n = len(fac)
+        q_size = max(1, n // n_quantile)
+
+        q_returns: List[float] = []
+        for q in range(n_quantile):
+            q_tickers = fac.iloc[q * q_size: (q + 1) * q_size].index
+            q_ret = float(rets.reindex(q_tickers).dropna().mean()) if len(q_tickers) > 0 else 0.0
+            q_returns.append(q_ret)
+
+        long_ret  = q_returns[-1]   # top quintile
+        short_ret = q_returns[0]    # bottom quintile
+        spread    = long_ret - short_ret
+
+        # Market (equal-weight) return
+        mkt_ret = float(rets.mean())
+        alpha   = spread - mkt_ret
+
+        # Annualised Sharpe (assuming monthly, std across quintile spreads proxy)
+        # Use Q5-Q1 spread distribution across quantile pairs
+        spreads_vec = [q_returns[i + 1] - q_returns[i] for i in range(len(q_returns) - 1)]
+        if len(spreads_vec) > 1 and statistics.stdev(spreads_vec) > 0:
+            sharpe = (statistics.mean(spreads_vec) / statistics.stdev(spreads_vec)) * math.sqrt(12)
+        else:
+            sharpe = spread * math.sqrt(12) / max(abs(spread), 1e-6)
+
+        # CAGR: assuming monthly spread → annualize via compounding
+        cagr = (1.0 + spread) ** 12 - 1.0
+
+        # Max drawdown: worst single quintile return in the long leg (proxy)
+        max_drawdown = min(q_returns) if q_returns else 0.0
+
+        return {
+            "long_return":  round(long_ret,  6),
+            "short_return": round(short_ret, 6),
+            "spread":       round(spread,    6),
+            "sharpe":       round(sharpe,    4),
+            "max_drawdown": round(max_drawdown, 6),
+            "cagr":         round(cagr,      6),
+            "alpha":        round(alpha,     6),
+            "n_stocks":     n,
+            "q_returns":    [round(r, 6) for r in q_returns],
+        }
+
+    def compute_rolling_ic_timeseries(
+        self,
+        factor_scores_by_period: Dict[str, "pd.Series"],
+        returns_by_period: Dict[str, "pd.Series"],
+    ) -> "pd.Series":
+        """Compute a rolling monthly IC time series from pre-computed cross-sections.
+
+        For each period t in factor_scores_by_period, computes:
+            IC_t = Spearman(factor_scores[t], forward_returns[t+1])
+
+        Then derives IC_mean, IC_std, ICIR, and t-stat:
+            ICIR   = IC_mean / IC_std
+            t_stat = ICIR * sqrt(T)
+
+        Parameters
+        ----------
+        factor_scores_by_period : dict mapping date_str -> pd.Series(ticker -> score)
+        returns_by_period       : dict mapping date_str -> pd.Series(ticker -> return)
+            The return at period t represents the forward return from t to t+1.
+
+        Returns
+        -------
+        pd.Series indexed by date, values = IC at each period.
+            .attrs["ic_mean"], .attrs["ic_std"], .attrs["icir"], .attrs["t_stat"]
+            are set on the returned Series for downstream consumption.
+        """
+        if not _PANDAS:
+            return pd.Series(dtype=float)
+
+        ic_dict: Dict[str, float] = {}
+        periods = sorted(factor_scores_by_period.keys())
+
+        for period in periods:
+            fac = factor_scores_by_period.get(period)
+            ret = returns_by_period.get(period)
+            if fac is None or ret is None or fac.empty or ret.empty:
+                continue
+            common = fac.dropna().index.intersection(ret.dropna().index)
+            if len(common) < 3:
+                continue
+            ic = _spearman_corr(fac.loc[common].tolist(), ret.loc[common].tolist())
+            ic_dict[period] = ic
+
+        if not ic_dict:
+            return pd.Series(dtype=float, name="IC")
+
+        ic_series = pd.Series(ic_dict, dtype=float, name="IC")
+        ic_series.index = pd.to_datetime(ic_series.index)
+        ic_series = ic_series.sort_index()
+
+        T = len(ic_series)
+        if T >= 2:
+            ic_mean = float(ic_series.mean())
+            ic_std  = float(ic_series.std())
+            icir    = ic_mean / ic_std if ic_std > 0 else 0.0
+            t_stat  = icir * math.sqrt(T)
+        else:
+            ic_mean = float(ic_series.iloc[0]) if T == 1 else 0.0
+            ic_std  = 0.0
+            icir    = 0.0
+            t_stat  = 0.0
+
+        ic_series.attrs["ic_mean"] = round(ic_mean, 6)
+        ic_series.attrs["ic_std"]  = round(ic_std,  6)
+        ic_series.attrs["icir"]    = round(icir,    6)
+        ic_series.attrs["t_stat"]  = round(t_stat,  6)
+
+        return ic_series
 
     # ---- Helpers ----
 
@@ -2145,8 +2539,15 @@ class FactorResearchEngine:
         self.db = FactorDatabaseV3()
 
     def run_factor_scan(self, universe: List[str],
-                        date_str: Optional[str] = None) -> FactorScanResult:
-        """Compute all factors for universe, compute IC, identify top signals."""
+                        date_str: Optional[str] = None,
+                        include_macro: bool = True) -> FactorScanResult:
+        """Compute all factors for universe, compute IC, identify top signals.
+
+        Macro factors (FRED series — monthly/quarterly cadence) are merged with
+        a forward-fill so that the most recent published value is used on days
+        where no new data has been released yet.  Rows with NaN macro data are
+        never dropped; the ffill ensures complete coverage.
+        """
         import time as _time
         t0 = _time.time()
         if date_str is None:
@@ -2157,6 +2558,31 @@ class FactorResearchEngine:
         # Step 1: Compute all factors
         factor_matrix = self.computer.compute_all_factors(universe, date_str)
         factors_computed = factor_matrix.shape[1] if _PANDAS and not factor_matrix.empty else 0
+
+        # Step 1b: Merge macro overlays (FRED) with forward-fill — never drop rows
+        if _PANDAS and include_macro and not factor_matrix.empty:
+            macro = MacroFactorFetcher()
+            for series_id in list(macro.SERIES.values())[:4]:  # yield_curve, credit_spread, unemployment, inflation
+                try:
+                    macro_series = macro.fetch(series_id, periods=60)
+                    if macro_series is not None and not macro_series.empty:
+                        # Resample to daily, forward-fill gaps, then pick the scan date value
+                        daily = macro_series.resample("D").last().ffill()
+                        scan_dt = pd.Timestamp(date_str)
+                        val = None
+                        if scan_dt in daily.index:
+                            val = float(daily.loc[scan_dt])
+                        elif not daily.empty:
+                            # Use last known value at or before scan date
+                            prior = daily.loc[daily.index <= scan_dt]
+                            if not prior.empty:
+                                val = float(prior.iloc[-1])
+                        if val is not None and pd.notna(val):
+                            # Broadcast scalar macro value to all tickers as a factor column
+                            factor_matrix[f"macro_{series_id}"] = val
+                            factors_computed = factor_matrix.shape[1]
+                except Exception as exc:
+                    logger.debug(f"Macro overlay {series_id} failed: {exc}")
 
         # Step 2: Standardize factors
         factor_ic: Dict[str, float] = {}

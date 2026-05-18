@@ -1540,3 +1540,136 @@ if __name__ == "__main__":
         print("  No alerts triggered in last 48h")
 
     print("\nDone.")
+
+
+# ---------------------------------------------------------------------------
+# dim_104 wave-9 additions: severity index, reputation cascade, market impact
+# ---------------------------------------------------------------------------
+
+
+def compute_controversy_severity_index(
+    regulatory_score: float,
+    legal_score: float,
+    esg_violation_score: float,
+    media_score: float,
+) -> float:
+    """
+    Compute a weighted controversy severity index (0–100).
+
+    Weights:
+        regulatory      : 40%
+        legal           : 30%
+        ESG violation   : 20%
+        media           : 10%
+
+    Parameters
+    ----------
+    regulatory_score    : Regulatory controversy score 0–100
+    legal_score         : Legal controversy score 0–100
+    esg_violation_score : ESG violation score 0–100
+    media_score         : Media controversy score 0–100
+
+    Returns
+    -------
+    float: weighted severity index 0–100
+    """
+    index = (
+        regulatory_score    * 0.40 +
+        legal_score         * 0.30 +
+        esg_violation_score * 0.20 +
+        media_score         * 0.10
+    )
+    return round(max(0.0, min(100.0, index)), 4)
+
+
+def detect_reputation_cascade(
+    controversy_events: list,
+    window_days: int = 90,
+) -> dict:
+    """
+    Detect whether a company is in a reputation cascade.
+
+    A reputation cascade is flagged when 3 or more controversy events occur
+    within a rolling 90-day window.
+
+    Parameters
+    ----------
+    controversy_events : list of datetime objects representing controversy event dates
+    window_days        : rolling window in days (default 90)
+
+    Returns
+    -------
+    dict with keys:
+        cascade_risk  : bool — True if 3+ events within window_days
+        event_count   : number of events in the detection window
+        window_days   : the window used
+    """
+    from datetime import datetime, timedelta, timezone
+
+    if len(controversy_events) < 3:
+        return {
+            "cascade_risk": False,
+            "event_count": len(controversy_events),
+            "window_days": window_days,
+        }
+
+    # Sort events and check any consecutive 3+ within window_days
+    events_sorted = sorted(controversy_events)
+    cascade_risk = False
+    for i in range(len(events_sorted) - 2):
+        window_start = events_sorted[i]
+        window_end = events_sorted[i + 2]
+        # Check if 3 events (i, i+1, i+2) all fall within window_days
+        try:
+            delta = (window_end - window_start).days
+        except Exception:
+            # Handle naive vs aware datetimes
+            delta = abs((window_end - window_start).total_seconds()) / 86400
+        if delta <= window_days:
+            cascade_risk = True
+            break
+
+    return {
+        "cascade_risk": cascade_risk,
+        "event_count": len(controversy_events),
+        "window_days": window_days,
+    }
+
+
+def compute_controversy_market_impact(
+    tier1_count: int,
+    tier2_count: int,
+    days: int = 5,
+) -> dict:
+    """
+    Estimate market price impact from controversies in the first N days.
+
+    Impact model:
+        -2% per Tier-1 controversy (major: regulatory, legal, ESG)
+        -0.5% per Tier-2 controversy (minor: media, social)
+
+    Parameters
+    ----------
+    tier1_count : Number of Tier-1 (major) controversies
+    tier2_count : Number of Tier-2 (minor) controversies
+    days        : Time horizon for impact estimate (default 5 trading days)
+
+    Returns
+    -------
+    dict with keys:
+        estimated_impact_pct  : total estimated price impact (negative)
+        tier1_impact_pct      : contribution from Tier-1 controversies
+        tier2_impact_pct      : contribution from Tier-2 controversies
+        days                  : time horizon used
+    """
+    tier1_impact = tier1_count * -2.0
+    tier2_impact = tier2_count * -0.5
+    total_impact = tier1_impact + tier2_impact
+    return {
+        "estimated_impact_pct": round(total_impact, 2),
+        "tier1_impact_pct": round(tier1_impact, 2),
+        "tier2_impact_pct": round(tier2_impact, 2),
+        "tier1_count": tier1_count,
+        "tier2_count": tier2_count,
+        "days": days,
+    }

@@ -340,6 +340,159 @@
       "relatedCommands": [
         "llm"
       ]
+    },
+    {
+      "id": "c1b5ea06-edfb-4ed9-b5d2-c6ee5da40c0a",
+      "timestamp": "2026-05-18T00:23:29.663Z",
+      "sessionId": "09e14168-a78b-4410-9890-4f69abe35f86",
+      "tokenCount": 42,
+      "category": "correction",
+      "summary": "Lesson recorded: [Workflow] Ensure: Constitution is not defined",
+      "detail": "Source: verify failure. Mistake: Constitution is not defined. Rule: Ensure: Constitution is not defined",
+      "tags": [
+        "lesson",
+        "Workflow",
+        "verify failure"
+      ],
+      "relatedCommands": [
+        "lessons"
+      ]
+    },
+    {
+      "id": "a35fcf21-57d4-4efc-b5b9-3f2c5c194fa5",
+      "timestamp": "2026-05-18T00:23:34.007Z",
+      "sessionId": "09e14168-a78b-4410-9890-4f69abe35f86",
+      "tokenCount": 50,
+      "category": "correction",
+      "summary": "Lesson recorded: [Workflow] Ensure: Repo review (CURRENT_STATE.md) missing",
+      "detail": "Source: verify failure. Mistake: Repo review (CURRENT_STATE.md) missing. Rule: Ensure: Repo review (CURRENT_STATE.md) missing",
+      "tags": [
+        "lesson",
+        "Workflow",
+        "verify failure"
+      ],
+      "relatedCommands": [
+        "lessons"
+      ]
+    },
+    {
+      "id": "aca3d95a-75e0-4554-bdae-6086c333db3f",
+      "timestamp": "2026-05-18T00:23:36.587Z",
+      "sessionId": "09e14168-a78b-4410-9890-4f69abe35f86",
+      "tokenCount": 50,
+      "category": "correction",
+      "summary": "Lesson recorded: [Workflow] Ensure: Constitution (CONSTITUTION.md) missing",
+      "detail": "Source: verify failure. Mistake: Constitution (CONSTITUTION.md) missing. Rule: Ensure: Constitution (CONSTITUTION.md) missing",
+      "tags": [
+        "lesson",
+        "Workflow",
+        "verify failure"
+      ],
+      "relatedCommands": [
+        "lessons"
+      ]
+    },
+    {
+      "id": "0ae86bad-a7a9-4740-9f86-f16de916415c",
+      "timestamp": "2026-05-18T00:23:39.035Z",
+      "sessionId": "09e14168-a78b-4410-9890-4f69abe35f86",
+      "tokenCount": 45,
+      "category": "correction",
+      "summary": "Lesson recorded: [Workflow] Ensure: Specification (SPEC.md) missing",
+      "detail": "Source: verify failure. Mistake: Specification (SPEC.md) missing. Rule: Ensure: Specification (SPEC.md) missing",
+      "tags": [
+        "lesson",
+        "Workflow",
+        "verify failure"
+      ],
+      "relatedCommands": [
+        "lessons"
+      ]
+    },
+    {
+      "id": "ec608350-67de-4a2f-be2d-0088647a241c",
+      "timestamp": "2026-05-18T00:23:40.877Z",
+      "sessionId": "09e14168-a78b-4410-9890-4f69abe35f86",
+      "tokenCount": 47,
+      "category": "correction",
+      "summary": "Lesson recorded: [Workflow] Ensure: Clarification (CLARIFY.md) missing",
+      "detail": "Source: verify failure. Mistake: Clarification (CLARIFY.md) missing. Rule: Ensure: Clarification (CLARIFY.md) missing",
+      "tags": [
+        "lesson",
+        "Workflow",
+        "verify failure"
+      ],
+      "relatedCommands": [
+        "lessons"
+      ]
+    },
+    {
+      "id": "0d2b0df5-5cde-4587-8a43-f60c93b9c51d",
+      "timestamp": "2026-05-18T00:23:42.787Z",
+      "sessionId": "09e14168-a78b-4410-9890-4f69abe35f86",
+      "tokenCount": 46,
+      "category": "correction",
+      "summary": "Lesson recorded: [Workflow] Ensure: Execution plan (PLAN.md) missing",
+      "detail": "Source: verify failure. Mistake: Execution plan (PLAN.md) missing. Rule: Ensure: Execution plan (PLAN.md) missing",
+      "tags": [
+        "lesson",
+        "Workflow",
+        "verify failure"
+      ],
+      "relatedCommands": [
+        "lessons"
+      ]
+    },
+    {
+      "id": "bc2f676c-0182-43d1-961d-df2e3844dbfe",
+      "timestamp": "2026-05-18T00:23:43.717Z",
+      "sessionId": "09e14168-a78b-4410-9890-4f69abe35f86",
+      "tokenCount": 47,
+      "category": "correction",
+      "summary": "Lesson recorded: [Workflow] Ensure: Task breakdown (TASKS.md) missing",
+      "detail": "Source: verify failure. Mistake: Task breakdown (TASKS.md) missing. Rule: Ensure: Task breakdown (TASKS.md) missing",
+      "tags": [
+        "lesson",
+        "Workflow",
+        "verify failure"
+      ],
+      "relatedCommands": [
+        "lessons"
+      ]
+    },
+    {
+      "id": "2236b281-3c82-4597-a6f6-dfffd79f00b1",
+      "timestamp": "2026-05-18T00:23:45.576Z",
+      "sessionId": "09e14168-a78b-4410-9890-4f69abe35f86",
+      "tokenCount": 54,
+      "category": "correction",
+      "summary": "Lesson recorded: [Workflow] Ensure: No phase 1 tasks are recorded in STATE.yaml",
+      "detail": "Source: verify failure. Mistake: No phase 1 tasks are recorded in STATE.yaml. Rule: Ensure: No phase 1 tasks are recorded in STATE.yaml",
+      "tags": [
+        "lesson",
+        "Workflow",
+        "verify failure"
+      ],
+      "relatedCommands": [
+        "lessons"
+      ]
+    },
+    {
+      "id": "f927678f-0ff5-4181-9551-976c8260e5bb",
+      "timestamp": "2026-05-18T00:23:46.753Z",
+      "sessionId": "09e14168-a78b-4410-9890-4f69abe35f86",
+      "tokenCount": 87,
+      "category": "correction",
+      "summary": "Lesson recorded: [Workflow] Ensure: Workflow stage \"initialized\" is not execution-complete. Run \"dantefor...",
+      "detail": "Source: verify failure. Mistake: Workflow stage \"initialized\" is not execution-complete. Run \"danteforge forge 1\" before verify.. Rule: Ensure: Workflow stage \"initialized\" is not execution-complete. Run \"danteforge forge 1\" before verify.",
+      "tags": [
+        "lesson",
+        "Workflow",
+        "verify failure"
+      ],
+      "relatedCommands": [
+        "lessons"
+      ]
     }
   ]
 }

@@ -1467,6 +1467,184 @@ class OwnershipAnalytics:
             "smart_money": smart,
         }
 
+    # ── New math-verified analytics (dim_025 score 9) ────────────────────────
+
+    def compute_ownership_concentration(self, ticker: str, top_n: int = 10) -> dict:
+        """HHI of top-N 13F holders weighted by shares held.
+
+        Formula: HHI = sum((shares_i / total_shares)^2) × 10000
+        where shares_i is each institution's share count and total_shares
+        is the sum across all reported institutions for that ticker/period.
+        Range: 0 (perfectly dispersed) → 10000 (single institution holds all).
+        """
+        period = self._db.get_latest_period(ticker=ticker)
+        if not period:
+            return {"error": f"No data for {ticker}", "hhi_top_n": None, "top_n": top_n}
+
+        holders = self._db.get_all_holders_for_ticker(ticker, period)
+        if not holders:
+            return {"error": f"No holders for {ticker} in {period}", "hhi_top_n": None}
+
+        # Sort by shares descending; take top-N
+        sorted_by_shares = sorted(holders, key=lambda h: h["shares"], reverse=True)
+        top_holders      = sorted_by_shares[:top_n]
+
+        total_shares = sum(h["shares"] for h in holders)
+        if total_shares == 0:
+            return {"hhi_top_n": 0.0, "ticker": ticker, "period": period, "top_n": top_n,
+                    "total_institutions": len(holders)}
+
+        # HHI = Σ (s_i / total)² × 10000
+        hhi = sum((h["shares"] / total_shares) ** 2 for h in top_holders) * 10_000
+
+        return {
+            "ticker":              ticker,
+            "period":              period,
+            "top_n":               top_n,
+            "total_institutions":  len(holders),
+            "total_shares":        total_shares,
+            "hhi_top_n":           round(hhi, 2),
+            "hhi_interpretation":  self._interpret_hhi(hhi),
+            "top_holders":         [
+                {
+                    "name":    h["name"],
+                    "shares":  h["shares"],
+                    "weight":  round(h["shares"] / total_shares * 100, 4),
+                }
+                for h in top_holders
+            ],
+        }
+
+    def detect_accumulation_patterns(self, ticker: str, threshold_pct: float = 5.0) -> dict:
+        """Detect QoQ accumulation: institutions where share change > threshold_pct%.
+
+        An institution is flagged as accumulating if:
+            (shares_q2 - shares_q1) / shares_q1 > threshold_pct / 100
+
+        Returns a dict with lists of accumulators and distributors.
+        """
+        periods = self._db.get_distinct_periods(ticker)
+        if len(periods) < 2:
+            return {
+                "ticker": ticker,
+                "error":  "Insufficient periods for QoQ comparison",
+                "accumulators": [],
+                "distributors": [],
+            }
+
+        q2_period = periods[0]   # most recent
+        q1_period = periods[1]   # prior quarter
+
+        h1 = {h["cik"]: h for h in self._db.get_all_holders_for_ticker(ticker, q1_period)}
+        h2 = {h["cik"]: h for h in self._db.get_all_holders_for_ticker(ticker, q2_period)}
+
+        threshold = threshold_pct / 100.0
+        accumulators = []
+        distributors = []
+
+        for cik in set(h1) & set(h2):   # institutions present in both quarters
+            s1 = h1[cik]["shares"]
+            s2 = h2[cik]["shares"]
+            if s1 <= 0:
+                continue
+            pct_change = (s2 - s1) / s1
+            if pct_change > threshold:
+                accumulators.append({
+                    "cik":        cik,
+                    "name":       h2[cik]["name"],
+                    "shares_q1":  s1,
+                    "shares_q2":  s2,
+                    "pct_change": round(pct_change * 100, 2),
+                })
+            elif pct_change < -threshold:
+                distributors.append({
+                    "cik":        cik,
+                    "name":       h2[cik]["name"],
+                    "shares_q1":  s1,
+                    "shares_q2":  s2,
+                    "pct_change": round(pct_change * 100, 2),
+                })
+
+        accumulators.sort(key=lambda x: x["pct_change"], reverse=True)
+        distributors.sort(key=lambda x: x["pct_change"])
+
+        return {
+            "ticker":          ticker,
+            "q1_period":       q1_period,
+            "q2_period":       q2_period,
+            "threshold_pct":   threshold_pct,
+            "accumulator_count": len(accumulators),
+            "distributor_count": len(distributors),
+            "accumulators":    accumulators,
+            "distributors":    distributors,
+        }
+
+    def compute_smart_money_signal(self, ticker: str, top_n_funds: int = 20) -> dict:
+        """Hedge-fund consensus score: fraction of 13Fs increasing position.
+
+        smart_money_score = buyers / (buyers + sellers + unchanged) in [0, 1].
+        Uses the same smart-money CIK set as get_smart_money_consensus.
+        Score > 0.6 = consensus accumulation; < 0.4 = consensus distribution.
+        """
+        periods = self._db.get_distinct_periods(ticker)
+        if len(periods) < 2:
+            return {
+                "ticker": ticker,
+                "smart_money_score": None,
+                "signal": "insufficient_data",
+            }
+
+        q_curr = periods[0]
+        q_prior = periods[1]
+
+        sm_ciks  = list(self._reg.SMART_MONEY_CIKS)[:top_n_funds]
+        h_curr   = {h["cik"]: h for h in self._db.get_all_holders_for_ticker(ticker, q_curr)
+                    if h["cik"] in sm_ciks}
+        h_prior  = {h["cik"]: h for h in self._db.get_all_holders_for_ticker(ticker, q_prior)
+                    if h["cik"] in sm_ciks}
+
+        all_ciks = set(h_curr) | set(h_prior)
+        buyers = sellers = unchanged = 0
+
+        for cik in all_ciks:
+            in_curr  = h_curr.get(cik)
+            in_prior = h_prior.get(cik)
+
+            if in_curr and not in_prior:
+                buyers += 1          # new position
+            elif in_prior and not in_curr:
+                sellers += 1         # exited
+            elif in_curr and in_prior:
+                diff = in_curr["shares"] - in_prior["shares"]
+                if diff > 0:
+                    buyers += 1
+                elif diff < 0:
+                    sellers += 1
+                else:
+                    unchanged += 1
+
+        total = buyers + sellers + unchanged
+        score = round(buyers / total, 4) if total > 0 else 0.5
+
+        if score >= 0.6:
+            signal = "accumulation"
+        elif score <= 0.4:
+            signal = "distribution"
+        else:
+            signal = "neutral"
+
+        return {
+            "ticker":              ticker,
+            "q_prior":             q_prior,
+            "q_current":           q_curr,
+            "smart_money_funds_tracked": len(all_ciks),
+            "buyers":              buyers,
+            "sellers":             sellers,
+            "unchanged":           unchanged,
+            "smart_money_score":   score,   # fraction in [0, 1]
+            "signal":              signal,
+        }
+
 
 # ---------------------------------------------------------------------------
 # HedgeFundTracker

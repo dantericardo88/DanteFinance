@@ -1600,3 +1600,260 @@ def trigger_aggregation(ticker: str) -> Dict[str, Any]:
         return aggregate_corporate_actions(ticker)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# M&A Analytics — deal quality, arb spread, accretion/dilution, outcome tracker
+# ---------------------------------------------------------------------------
+
+def score_deal_quality(
+    current_price: float,
+    acquisition_price: float,
+    week_52_high: float,
+    consideration_type: str,         # "cash" | "stock" | "mixed"
+    is_cross_border: bool = False,
+    acquirer_market_share_pct: float = 0.0,
+    target_revenue: float = 0.0,
+    deal_value: float = 0.0,
+) -> Dict[str, Any]:
+    """
+    Compute a multi-factor M&A deal quality score (0–100) and component sub-scores.
+
+    Components:
+    - premium_to_52w_high: how much the offer exceeds the 52-week high (>0 = rich premium)
+    - synergy_multiple: deal_value / target_revenue (EV/Revenue proxy for synergy pricing)
+    - deal_certainty: higher for all-cash (no financing / share price risk vs stock)
+    - regulatory_risk: penalised for cross-border deals and high combined market share
+
+    Returns a dict with each component score (0–100) and a composite score.
+    """
+    if current_price <= 0 or acquisition_price <= 0:
+        raise ValueError("Prices must be positive")
+
+    # Premium to 52-week high: negative means bid is below prior high (stale price)
+    if week_52_high > 0:
+        premium_to_52w_high = (acquisition_price / week_52_high - 1.0) * 100
+    else:
+        premium_to_52w_high = 0.0
+
+    # Premium to 52w high score: 0 = at/below 52w high, 100 = 25%+ above
+    p52_score = min(100.0, max(0.0, (premium_to_52w_high / 25.0) * 100.0))
+
+    # Synergy multiple: EV/Revenue. Score 100 = multiple >= 5x (rich synergies implied)
+    if target_revenue > 0 and deal_value > 0:
+        synergy_multiple = deal_value / target_revenue
+        synergy_score = min(100.0, (synergy_multiple / 5.0) * 100.0)
+    else:
+        synergy_multiple = None
+        synergy_score = 50.0   # neutral when not provided
+
+    # Deal certainty score: cash = 100, mixed = 70, stock = 40
+    # Cash deals have no financing risk or exchange ratio risk
+    consideration_lower = consideration_type.lower()
+    if "cash" in consideration_lower and "stock" not in consideration_lower:
+        deal_certainty_score = 100.0
+    elif "mixed" in consideration_lower or (
+        "cash" in consideration_lower and "stock" in consideration_lower
+    ):
+        deal_certainty_score = 70.0
+    else:  # stock-for-stock
+        deal_certainty_score = 40.0
+
+    # Regulatory risk: penalise cross-border and high market share
+    regulatory_risk_score = 100.0  # start at no-risk
+    if is_cross_border:
+        regulatory_risk_score -= 30.0   # CFIUS / foreign regulatory review
+    if acquirer_market_share_pct >= 30:
+        regulatory_risk_score -= 40.0   # near-monopoly concerns
+    elif acquirer_market_share_pct >= 15:
+        regulatory_risk_score -= 20.0   # moderate antitrust scrutiny
+    regulatory_risk_score = max(0.0, regulatory_risk_score)
+
+    # Composite: weighted average of four components
+    # Certainty and regulatory_risk dominate (deal completion)
+    composite = (
+        0.20 * p52_score
+        + 0.20 * synergy_score
+        + 0.35 * deal_certainty_score
+        + 0.25 * regulatory_risk_score
+    )
+
+    return {
+        "composite_score": round(composite, 2),
+        "premium_to_52w_high_pct": round(premium_to_52w_high, 4),
+        "premium_to_52w_high_score": round(p52_score, 2),
+        "synergy_multiple": round(synergy_multiple, 4) if synergy_multiple is not None else None,
+        "synergy_score": round(synergy_score, 2),
+        "deal_certainty_score": round(deal_certainty_score, 2),
+        "regulatory_risk_score": round(regulatory_risk_score, 2),
+        "is_cross_border": is_cross_border,
+        "consideration_type": consideration_type,
+    }
+
+
+def compute_arb_spread(
+    current_price: float,
+    acquisition_price: float,
+    annualise: bool = False,
+    days_to_close: Optional[int] = None,
+) -> Dict[str, float]:
+    """
+    M&A arbitrage spread: return available to risk-arb investors.
+
+    arb_spread_pct = (acquisition_price / current_price - 1) * 100
+
+    For cash deals: current_price should be the market price of the target.
+    A positive spread means the market still prices in deal risk.
+    A negative spread (deal premium eroded) signals anticipated failure.
+
+    Optionally annualises the spread given expected days to close.
+    """
+    if current_price <= 0:
+        raise ValueError("current_price must be positive")
+    if acquisition_price <= 0:
+        raise ValueError("acquisition_price must be positive")
+
+    arb_spread_pct = (acquisition_price / current_price - 1.0) * 100.0
+    result: Dict[str, float] = {
+        "current_price": current_price,
+        "acquisition_price": acquisition_price,
+        "arb_spread_pct": round(arb_spread_pct, 6),
+    }
+
+    if annualise and days_to_close and days_to_close > 0:
+        # Annualised: (1 + spread)^(365/days) - 1
+        annualised_pct = ((1.0 + arb_spread_pct / 100.0) ** (365.0 / days_to_close) - 1.0) * 100.0
+        result["days_to_close"] = float(days_to_close)
+        result["annualised_arb_spread_pct"] = round(annualised_pct, 4)
+
+    return result
+
+
+def compute_eps_accretion_dilution(
+    acquirer_eps: float,
+    target_earnings: float,
+    share_exchange_ratio: float,
+    new_shares_issued: float = 0.0,
+    acquirer_shares_outstanding: float = 1.0,
+    financing_cost_after_tax: float = 0.0,
+) -> Dict[str, float]:
+    """
+    Accretion/dilution model for stock-for-stock M&A deals.
+
+    EPS accretion = (target_earnings / share_exchange_ratio) / acquirer_shares_outstanding
+    Net: adds target_earnings, dilutes with new shares, subtracts financing cost.
+
+    Parameters
+    ----------
+    acquirer_eps          : Acquirer's current earnings per share (diluted)
+    target_earnings       : Target's total net income (same currency as acquirer EPS × shares)
+    share_exchange_ratio  : Shares of acquirer per share of target offered
+    new_shares_issued     : New acquirer shares issued to fund the deal (stock consideration)
+    acquirer_shares_outstanding : Pre-deal diluted shares outstanding
+    financing_cost_after_tax    : After-tax cost of any cash/debt financing used
+
+    Returns
+    -------
+    pro_forma_eps, eps_change, eps_change_pct, is_accretive
+    """
+    if share_exchange_ratio <= 0:
+        raise ValueError("share_exchange_ratio must be positive")
+    if acquirer_shares_outstanding <= 0:
+        raise ValueError("acquirer_shares_outstanding must be positive")
+
+    # Current total acquirer earnings
+    acquirer_total_earnings = acquirer_eps * acquirer_shares_outstanding
+
+    # Pro-forma combined earnings
+    combined_earnings = acquirer_total_earnings + target_earnings - financing_cost_after_tax
+
+    # Pro-forma shares (including newly issued)
+    pro_forma_shares = acquirer_shares_outstanding + new_shares_issued
+
+    pro_forma_eps = combined_earnings / pro_forma_shares if pro_forma_shares > 0 else 0.0
+    eps_change = pro_forma_eps - acquirer_eps
+    eps_change_pct = (eps_change / acquirer_eps * 100.0) if acquirer_eps != 0 else 0.0
+
+    # Simplified: target_earnings per acquirer share issued = target_earnings / share_exchange_ratio
+    # This is the "EPS contribution" metric referenced in the spec
+    eps_contribution_per_acquirer_share = (
+        target_earnings / share_exchange_ratio if share_exchange_ratio > 0 else 0.0
+    )
+
+    return {
+        "acquirer_eps": round(acquirer_eps, 6),
+        "target_earnings": round(target_earnings, 6),
+        "share_exchange_ratio": round(share_exchange_ratio, 6),
+        "eps_contribution_per_acquirer_share": round(eps_contribution_per_acquirer_share, 6),
+        "pro_forma_eps": round(pro_forma_eps, 6),
+        "eps_change": round(eps_change, 6),
+        "eps_change_pct": round(eps_change_pct, 4),
+        "is_accretive": eps_change > 0,
+    }
+
+
+class DealOutcomeTracker:
+    """
+    Tracks M&A deal outcomes (closed/failed) and computes completion rates by deal type.
+
+    Stores deal records in-memory (and optionally persists to SQLite via ma_actions table).
+    """
+
+    def __init__(self) -> None:
+        self._deals: List[Dict[str, Any]] = []
+
+    def record_deal(
+        self,
+        ticker: str,
+        deal_type: str,          # "tender_offer" | "merger_completion" | "going_private"
+        consideration_type: str, # "cash" | "stock" | "mixed"
+        outcome: str,            # "closed" | "failed" | "pending"
+        announced_date: Optional[date] = None,
+        closed_date: Optional[date] = None,
+    ) -> None:
+        """Record a deal outcome."""
+        self._deals.append({
+            "ticker": ticker.upper(),
+            "deal_type": deal_type,
+            "consideration_type": consideration_type,
+            "outcome": outcome,
+            "announced_date": announced_date,
+            "closed_date": closed_date,
+        })
+
+    def get_completion_rate(
+        self,
+        deal_type: Optional[str] = None,
+        consideration_type: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Compute completion rate (closed / (closed + failed)) for historical deals.
+
+        Filters by deal_type and/or consideration_type if provided.
+        Pending deals are excluded from the denominator.
+        """
+        deals = self._deals
+        if deal_type:
+            deals = [d for d in deals if d["deal_type"] == deal_type]
+        if consideration_type:
+            deals = [d for d in deals if d["consideration_type"] == consideration_type]
+
+        closed = sum(1 for d in deals if d["outcome"] == "closed")
+        failed = sum(1 for d in deals if d["outcome"] == "failed")
+        pending = sum(1 for d in deals if d["outcome"] == "pending")
+        total_resolved = closed + failed
+
+        completion_rate = (closed / total_resolved) if total_resolved > 0 else None
+
+        return {
+            "total_deals_tracked": len(deals),
+            "closed": closed,
+            "failed": failed,
+            "pending": pending,
+            "total_resolved": total_resolved,
+            "completion_rate": round(completion_rate, 4) if completion_rate is not None else None,
+            "completion_rate_pct": round(completion_rate * 100, 2) if completion_rate is not None else None,
+        }
+
+    def get_all_deals(self) -> List[Dict[str, Any]]:
+        return list(self._deals)

@@ -572,6 +572,169 @@ class ExtractiveSummarizer:
             "PERCENT": list({m.group() for m in self.PERCENT_PATTERN.finditer(text)}),
         }
 
+    # ------------------------------------------------------------------
+    # dim_055 additions
+    # ------------------------------------------------------------------
+
+    def compute_text_density_score(self, text: str) -> float:
+        """Compute information density as unique_words / total_words.
+
+        Higher score → more substantive text (less repetition).
+        Returns a float in [0, 1]. Empty text returns 0.0.
+
+        Identity: density = len(set(words)) / len(words)
+        """
+        if not text or not text.strip():
+            return 0.0
+        # Normalize: lowercase, split on whitespace
+        words = text.lower().split()
+        if not words:
+            return 0.0
+        unique_words = set(words)
+        density = len(unique_words) / len(words)
+        return round(density, 6)
+
+    def extract_key_numbers(self, text: str) -> Dict[str, List[Dict]]:
+        """Extract all dollar amounts, percentages, and basis points from text.
+
+        Returns a structured dict:
+        {
+            "dollar_amounts": [{"raw": "$89 billion", "value": 89e9, "context": "..."}],
+            "percentages":    [{"raw": "12%", "value": 0.12, "context": "..."}],
+            "basis_points":   [{"raw": "25 bps", "value": 25, "context": "..."}],
+        }
+        """
+        result: Dict[str, List[Dict]] = {
+            "dollar_amounts": [],
+            "percentages":    [],
+            "basis_points":   [],
+        }
+
+        # Dollar amounts: $X [billion|million|thousand|B|M|K]?
+        dollar_re = re.compile(
+            r'\$\s*([\d,]+(?:\.\d+)?)\s*(billion|million|thousand|trillion|B|M|T|K)?',
+            re.IGNORECASE,
+        )
+        for m in dollar_re.finditer(text):
+            raw_num = m.group(1).replace(",", "")
+            try:
+                val = float(raw_num)
+            except ValueError:
+                continue
+            unit = (m.group(2) or "").lower()
+            mult = {"billion": 1e9, "b": 1e9, "million": 1e6, "m": 1e6,
+                    "trillion": 1e12, "t": 1e12, "thousand": 1e3, "k": 1e3}.get(unit, 1.0)
+            val *= mult
+            ctx_start = max(0, m.start() - 50)
+            ctx_end   = min(len(text), m.end() + 30)
+            result["dollar_amounts"].append({
+                "raw":     m.group(0),
+                "value":   val,
+                "context": text[ctx_start:ctx_end].strip(),
+            })
+
+        # Percentages: X% or X percent
+        pct_re = re.compile(
+            r'([-+]?\d+(?:\.\d+)?)\s*(?:%|percent\b)',
+            re.IGNORECASE,
+        )
+        for m in pct_re.finditer(text):
+            try:
+                val = float(m.group(1)) / 100.0
+            except ValueError:
+                continue
+            ctx_start = max(0, m.start() - 50)
+            ctx_end   = min(len(text), m.end() + 30)
+            result["percentages"].append({
+                "raw":     m.group(0),
+                "value":   val,
+                "context": text[ctx_start:ctx_end].strip(),
+            })
+
+        # Basis points: X bps / X bp / X basis points
+        bps_re = re.compile(
+            r'([-+]?\d+(?:\.\d+)?)\s*(?:bps?|basis\s+points?)',
+            re.IGNORECASE,
+        )
+        for m in bps_re.finditer(text):
+            try:
+                val = float(m.group(1))
+            except ValueError:
+                continue
+            ctx_start = max(0, m.start() - 50)
+            ctx_end   = min(len(text), m.end() + 30)
+            result["basis_points"].append({
+                "raw":     m.group(0),
+                "value":   val,
+                "context": text[ctx_start:ctx_end].strip(),
+            })
+
+        return result
+
+    def compute_sentiment_arc(self, text: str) -> Dict[str, Any]:
+        """Divide document into thirds; score each for sentiment direction.
+
+        Returns:
+        {
+            "thirds": [
+                {"label": "beginning", "pos": p, "neg": n, "score": s},
+                {"label": "middle",    "pos": p, "neg": n, "score": s},
+                {"label": "end",       "pos": p, "neg": n, "score": s},
+            ],
+            "arc": "improving" | "deteriorating" | "stable" | "mixed",
+            "delta": end_score - beginning_score,
+        }
+
+        score per third = (pos_count - neg_count) / max(pos_count + neg_count, 1)
+        arc is "improving" if end_score > beginning_score + 0.05, etc.
+        """
+        _POS = [
+            "growth", "increase", "strong", "record", "expand", "improve",
+            "positive", "outperform", "exceed", "accelerat", "gain", "beat",
+            "robust", "momentum", "confident", "opportunity", "upside",
+        ]
+        _NEG = [
+            "decline", "decrease", "challenging", "headwind", "pressure",
+            "weakness", "miss", "deteriorat", "uncertain", "concern", "risk",
+            "warn", "loss", "below", "disappoint", "difficult", "volatile",
+        ]
+
+        words = text.split()
+        n = len(words)
+        if n == 0:
+            return {"thirds": [], "arc": "stable", "delta": 0.0}
+
+        third = max(1, n // 3)
+        segments = [
+            ("beginning", words[:third]),
+            ("middle",    words[third: 2 * third]),
+            ("end",       words[2 * third:]),
+        ]
+
+        thirds_data = []
+        for label, seg in segments:
+            seg_lower = " ".join(seg).lower()
+            pos = sum(1 for p in _POS if p in seg_lower)
+            neg = sum(1 for p in _NEG if p in seg_lower)
+            total = pos + neg
+            score = (pos - neg) / max(total, 1)
+            thirds_data.append({"label": label, "pos": pos, "neg": neg, "score": round(score, 4)})
+
+        begin_score = thirds_data[0]["score"]
+        end_score   = thirds_data[2]["score"]
+        delta       = round(end_score - begin_score, 4)
+
+        if delta > 0.05:
+            arc = "improving"
+        elif delta < -0.05:
+            arc = "deteriorating"
+        elif abs(thirds_data[1]["score"] - begin_score) > 0.1:
+            arc = "mixed"
+        else:
+            arc = "stable"
+
+        return {"thirds": thirds_data, "arc": arc, "delta": delta}
+
 
 # ---------------------------------------------------------------------------
 # SEC EDGAR utilities

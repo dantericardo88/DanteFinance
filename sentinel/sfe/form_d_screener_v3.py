@@ -1613,6 +1613,170 @@ class FormDIntelligenceEngine:
 
 
 # ---------------------------------------------------------------------------
+# dim_031 additions: raise velocity, Reg A+ detection, investor count signal
+# ---------------------------------------------------------------------------
+
+
+def compute_raise_velocity(
+    total_raised: float,
+    days_since_formation: int,
+) -> dict:
+    """
+    Compute the annualised capital-raise velocity for a private company.
+
+    Formula
+    -------
+    raise_velocity = (total_raised / days_since_formation) × 365
+
+    This gives the annual run-rate of capital raised.  Higher velocity
+    suggests strong investor demand and rapid scaling.
+
+    Parameters
+    ----------
+    total_raised : float
+        Total capital raised across all Form D filings (dollars).
+    days_since_formation : int
+        Calendar days from company formation (or first Form D) to today.
+        Must be > 0.
+
+    Returns
+    -------
+    dict with keys:
+        raise_velocity_annual : float   annualised raise rate ($/year)
+        total_raised          : float
+        days_since_formation  : int
+        daily_rate            : float   $/day
+        formula               : str
+    """
+    if days_since_formation <= 0:
+        raise ValueError("days_since_formation must be > 0")
+    if total_raised < 0:
+        raise ValueError("total_raised must be >= 0")
+
+    daily_rate = total_raised / days_since_formation
+    raise_velocity_annual = daily_rate * 365
+
+    return {
+        "raise_velocity_annual": round(raise_velocity_annual, 2),
+        "total_raised": total_raised,
+        "days_since_formation": days_since_formation,
+        "daily_rate": round(daily_rate, 4),
+        "formula": "raise_velocity = (total_raised / days_since_formation) × 365",
+    }
+
+
+def detect_regulation_a_plus(
+    filing: "FormDFiling",
+) -> dict:
+    """
+    Detect Regulation A+ (Tier 1 or Tier 2) from a Form D filing and validate
+    the offering amount against the SEC caps.
+
+    Tier 1: maximum $20,000,000 in any 12-month period.
+    Tier 2: maximum $75,000,000 in any 12-month period.
+
+    Parameters
+    ----------
+    filing : FormDFiling
+        A parsed Form D filing.
+
+    Returns
+    -------
+    dict with keys:
+        is_reg_a_plus   : bool
+        tier            : str | None   "Tier 1" | "Tier 2" | None
+        max_amount      : float | None  SEC cap for the detected tier
+        amount          : float | None  claimed offering amount
+        within_cap      : bool | None   True if amount <= cap
+        exemption_code  : str
+    """
+    exemption = filing.exemption_normalized or ""
+    amount = filing.total_offering_amount
+
+    tier: Optional[str] = None
+    max_amount: Optional[float] = None
+    within_cap: Optional[bool] = None
+
+    if exemption == "rega_tier1":
+        tier = "Tier 1"
+        max_amount = 20_000_000.0
+    elif exemption == "rega_tier2":
+        tier = "Tier 2"
+        max_amount = 75_000_000.0
+
+    is_reg_a_plus = tier is not None
+
+    if is_reg_a_plus and amount is not None and max_amount is not None:
+        within_cap = amount <= max_amount
+
+    return {
+        "is_reg_a_plus": is_reg_a_plus,
+        "tier": tier,
+        "max_amount": max_amount,
+        "amount": amount,
+        "within_cap": within_cap,
+        "exemption_code": exemption,
+    }
+
+
+def compute_investor_count_signal(
+    num_investors: int,
+    total_assets_under_management: float,
+) -> dict:
+    """
+    Detect whether an offering triggers mandatory Exchange Act registration
+    under Section 12(g) of the Securities Exchange Act of 1934.
+
+    Threshold: >500 investors of record AND >$10,000,000 AUM
+    → mandatory Exchange Act registration signal.
+
+    Note: The JOBS Act raised the threshold to 2,000 investors (or 500
+    non-accredited) for most issuers, but the classic 500-investor test
+    remains relevant for older filings and smaller issuers that have not
+    opted into the new rules.
+
+    Parameters
+    ----------
+    num_investors : int
+        Total number of investors in the current round (all types combined).
+    total_assets_under_management : float
+        Total AUM / total assets of the issuer (dollars).
+
+    Returns
+    -------
+    dict with keys:
+        mandatory_registration_signal : bool
+        num_investors                 : int
+        total_aum                     : float
+        investor_threshold            : int     (500)
+        aum_threshold                 : float   ($10,000,000)
+        note                          : str
+    """
+    INVESTOR_THRESHOLD = 500
+    AUM_THRESHOLD = 10_000_000.0
+
+    triggers = (
+        num_investors > INVESTOR_THRESHOLD
+        and total_assets_under_management > AUM_THRESHOLD
+    )
+
+    return {
+        "mandatory_registration_signal": triggers,
+        "num_investors": num_investors,
+        "total_aum": total_assets_under_management,
+        "investor_threshold": INVESTOR_THRESHOLD,
+        "aum_threshold": AUM_THRESHOLD,
+        "note": (
+            "Exceeds classic 500-investor / $10M AUM threshold — may trigger "
+            "mandatory Exchange Act Section 12(g) registration."
+            if triggers
+            else
+            "Below mandatory Exchange Act registration threshold."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
 # FastAPI router
 # ---------------------------------------------------------------------------
 

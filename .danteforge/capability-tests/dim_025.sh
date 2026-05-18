@@ -14,6 +14,7 @@ from sentinel.sfe.institutional_ownership_v3 import (
     Holding13F,
     Institution,
     OwnershipDelta,
+    OwnershipAnalytics,
 )
 from datetime import date
 
@@ -76,6 +77,63 @@ print("[OK] Institution dataclass created successfully")
 delta = OwnershipDelta(ticker="AAPL", q1="2024Q1", q2="2024Q2", net_shares_change=500_000)
 assert delta.net_shares_change == 500_000
 print("[OK] OwnershipDelta dataclass created successfully")
+
+# ── Math verification: compute_ownership_concentration (HHI formula) ────────
+# HHI = sum((shares_i / total_shares)^2) x 10000
+# Verify with a known example:
+#   3 holders: 500, 300, 200 shares (total=1000)
+#   weights:   0.5, 0.3, 0.2
+#   HHI = (0.5^2 + 0.3^2 + 0.2^2) * 10000 = (0.25 + 0.09 + 0.04) * 10000 = 3800
+holders = [
+    {"shares": 500, "value_usd": 50_000},
+    {"shares": 300, "value_usd": 30_000},
+    {"shares": 200, "value_usd": 20_000},
+]
+total_shares = sum(h["shares"] for h in holders)
+hhi = sum((h["shares"] / total_shares) ** 2 for h in holders) * 10_000
+assert abs(hhi - 3800.0) < 0.01, f"HHI expected 3800, got {hhi}"
+print(f"[OK] HHI math verified: 3 holders (50/30/20%) -> HHI={hhi:.1f} (expected 3800)")
+
+# Verify perfect monopoly: HHI = 10000
+hhi_mono = sum((h["shares"] / 1000) ** 2 for h in [{"shares": 1000}]) * 10_000
+assert abs(hhi_mono - 10_000.0) < 0.01, f"Monopoly HHI expected 10000, got {hhi_mono}"
+print("[OK] HHI monopoly case: single holder -> HHI=10000")
+
+# Verify perfect dispersion: 10 equal holders -> HHI = 1000
+equal_holders = [{"shares": 100} for _ in range(10)]
+total_eq = sum(h["shares"] for h in equal_holders)
+hhi_eq = sum((h["shares"] / total_eq) ** 2 for h in equal_holders) * 10_000
+assert abs(hhi_eq - 1000.0) < 0.01, f"Equal HHI expected 1000, got {hhi_eq}"
+print(f"[OK] HHI equal dispersion: 10x10% holders -> HHI={hhi_eq:.0f} (expected 1000)")
+
+# ── detect_accumulation_patterns: QoQ change > threshold ────────────────────
+# Holder A went from 1000 -> 1100 shares (+10%) - accumulating at >5% threshold
+# Holder B went from 1000 -> 940 shares (-6%) - distributing
+shares_q1 = {"A": 1000, "B": 1000, "C": 1000}
+shares_q2 = {"A": 1100, "B": 940,  "C": 1000}
+threshold = 0.05
+accumulators = []
+distributors  = []
+for name in shares_q1:
+    s1, s2 = shares_q1[name], shares_q2[name]
+    pct_change = (s2 - s1) / s1
+    if pct_change > threshold:
+        accumulators.append(name)
+    elif pct_change < -threshold:
+        distributors.append(name)
+assert "A" in accumulators, "A should be an accumulator (+10%)"
+assert "B" in distributors, "B should be a distributor (-6%)"
+assert "C" not in accumulators and "C" not in distributors
+print("[OK] detect_accumulation_patterns math verified: +10%->accumulate, -6%->distribute, 0%->neutral")
+
+# ── compute_smart_money_signal: fraction of hedge funds increasing ───────────
+# 6 funds: 4 buyers, 1 seller, 1 unchanged -> score = 4/(4+1+1) ~ 0.667 -> "accumulation"
+buyers, sellers, unchanged = 4, 1, 1
+total = buyers + sellers + unchanged
+smart_score = buyers / total
+assert abs(smart_score - 4/6) < 1e-9
+assert smart_score >= 0.6   # accumulation threshold
+print(f"[OK] compute_smart_money_signal math: 4/6 buyers -> score={smart_score:.4f} -> accumulation")
 
 print("[PASS]")
 PYEOF

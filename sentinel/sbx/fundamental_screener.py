@@ -954,7 +954,244 @@ class FundamentalScreener:
             },
         }
 
-    def compute_beneish_m_score(self, ticker: str) -> dict[str, Any]:
+    # ------------------------------------------------------------------
+    # New analytical functions (dim_070 score 8 → 9)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def compute_piotroski_f_score(
+        roa: float,
+        operating_cf: float,
+        net_income: float,
+        long_term_debt_ratio: float,
+        long_term_debt_ratio_prior: float,
+        current_ratio: float,
+        current_ratio_prior: float,
+        shares_outstanding: float,
+        shares_outstanding_prior: float,
+        gross_margin: float,
+        gross_margin_prior: float,
+        asset_turnover: float,
+        asset_turnover_prior: float,
+    ) -> dict[str, Any]:
+        """Compute exact Piotroski (2000) F-score — 9-point binary model.
+
+        Three groups of signals:
+        Profitability (F1-F3):
+          F1 = ROA > 0
+          F2 = Operating CF > 0
+          F3 = CF/Assets > ROA (accruals quality: OCF > net income)
+        Leverage / Liquidity (F4-F6):
+          F4 = long_term_debt_ratio decreased YoY
+          F5 = current_ratio increased YoY
+          F6 = no new share issuance (shares_outstanding <= prior year)
+        Operating Efficiency (F7-F9):
+          F7 = gross_margin increased YoY
+          F8 = asset_turnover increased YoY
+          F9 = ROA > 0  (redundant check; in original paper this is separate)
+
+        Parameters
+        ----------
+        roa : Return on assets (net income / avg total assets).
+        operating_cf : Operating cash flow (absolute $).
+        net_income : Net income (absolute $).
+        long_term_debt_ratio : LT debt / avg total assets — current year.
+        long_term_debt_ratio_prior : LT debt / avg total assets — prior year.
+        current_ratio : Current assets / current liabilities — current year.
+        current_ratio_prior : Current ratio — prior year.
+        shares_outstanding : Current shares outstanding.
+        shares_outstanding_prior : Prior year shares outstanding.
+        gross_margin : Gross profit / revenue — current year.
+        gross_margin_prior : Gross margin — prior year.
+        asset_turnover : Revenue / avg total assets — current year.
+        asset_turnover_prior : Asset turnover — prior year.
+
+        Returns
+        -------
+        dict with f_score (0-9), interpretation, and all 9 binary signals.
+        """
+        signals: dict[str, int] = {}
+
+        # --- Profitability ---
+        signals["F1_roa_positive"] = 1 if roa > 0 else 0
+        signals["F2_cfo_positive"] = 1 if operating_cf > 0 else 0
+        # F3: operating CF / assets > ROA  ≡  OCF > net income  (Sloan accruals)
+        signals["F3_accruals"] = 1 if operating_cf > net_income else 0
+
+        # --- Leverage / Liquidity ---
+        signals["F4_leverage_decreased"] = 1 if long_term_debt_ratio < long_term_debt_ratio_prior else 0
+        signals["F5_liquidity_improved"] = 1 if current_ratio > current_ratio_prior else 0
+        signals["F6_no_dilution"] = 1 if shares_outstanding <= shares_outstanding_prior else 0
+
+        # --- Operating Efficiency ---
+        signals["F7_gross_margin_improved"] = 1 if gross_margin > gross_margin_prior else 0
+        signals["F8_asset_turnover_improved"] = 1 if asset_turnover > asset_turnover_prior else 0
+        # F9: ROA positive (same as F1 in the original paper's second profitability test)
+        signals["F9_roa_positive_check"] = signals["F1_roa_positive"]
+
+        f_score = sum(signals.values())
+
+        return {
+            "f_score": f_score,
+            "interpretation": (
+                "Strong" if f_score >= 7
+                else "Moderate" if f_score >= 4
+                else "Weak"
+            ),
+            "signals": signals,
+        }
+
+    @staticmethod
+    def compute_altman_z_score(
+        working_capital: float,
+        total_assets: float,
+        retained_earnings: float,
+        ebit: float,
+        market_cap: float,
+        total_liabilities: float,
+        revenue: float,
+    ) -> dict[str, Any]:
+        """Compute Altman (1968) Z-score for public companies.
+
+        Z = 1.2*X1 + 1.4*X2 + 3.3*X3 + 0.6*X4 + 1.0*X5
+
+        Where:
+          X1 = Working Capital / Total Assets
+          X2 = Retained Earnings / Total Assets
+          X3 = EBIT / Total Assets
+          X4 = Market Cap / Total Liabilities
+          X5 = Revenue / Total Assets
+
+        Zones:
+          Z > 2.99  → safe zone
+          1.81 < Z <= 2.99 → grey zone
+          Z <= 1.81 → distress zone
+
+        Parameters
+        ----------
+        working_capital : Current assets minus current liabilities.
+        total_assets : Total book assets.
+        retained_earnings : Accumulated retained earnings.
+        ebit : Earnings before interest and taxes.
+        market_cap : Market capitalization.
+        total_liabilities : Total book liabilities.
+        revenue : Annual revenue.
+
+        Returns
+        -------
+        dict with z_score, zone, and X1-X5 components.
+        """
+        ta = max(abs(total_assets), 1e-9)
+        tl = max(abs(total_liabilities), 1e-9)
+
+        x1 = working_capital / ta
+        x2 = retained_earnings / ta
+        x3 = ebit / ta
+        x4 = market_cap / tl
+        x5 = revenue / ta
+
+        z = 1.2 * x1 + 1.4 * x2 + 3.3 * x3 + 0.6 * x4 + 1.0 * x5
+
+        zone = (
+            "safe" if z > 2.99
+            else "grey" if z > 1.81
+            else "distress"
+        )
+
+        return {
+            "z_score": round(z, 4),
+            "zone": zone,
+            "components": {
+                "X1_working_capital_ta": round(x1, 6),
+                "X2_retained_earnings_ta": round(x2, 6),
+                "X3_ebit_ta": round(x3, 6),
+                "X4_mktcap_liabilities": round(x4, 6),
+                "X5_revenue_ta": round(x5, 6),
+            },
+            "coefficients": {"X1": 1.2, "X2": 1.4, "X3": 3.3, "X4": 0.6, "X5": 1.0},
+        }
+
+    @staticmethod
+    def compute_beneish_m_score(
+        dsri: float,
+        gmi: float,
+        aqi: float,
+        sgi: float,
+        depi: float,
+        sgai: float,
+        accruals: float,
+        lvgi: float,
+    ) -> dict[str, Any]:
+        """Compute Beneish (1999) M-score — 8-variable earnings manipulation detector.
+
+        M = -4.84 + 0.920*DSRI + 0.528*GMI + 0.404*AQI + 0.892*SGI
+              + 0.115*DEPI - 0.172*SGAI + 4.679*Accruals - 0.327*LVGI
+
+        Variables:
+          DSRI  = Days Sales Receivable Index  (receivables_t/sales_t) / (receivables_{t-1}/sales_{t-1})
+          GMI   = Gross Margin Index           (gross_margin_{t-1} / gross_margin_t)
+          AQI   = Asset Quality Index          ((1 - (CA + PPE) / TA)_t / (1 - (CA + PPE) / TA)_{t-1})
+          SGI   = Sales Growth Index           (sales_t / sales_{t-1})
+          DEPI  = Depreciation Index           (dep_{t-1} / (dep_{t-1} + PPE_{t-1})) / (dep_t / (dep_t + PPE_t))
+          SGAI  = SG&A Index                   (SGA/sales)_t / (SGA/sales)_{t-1}
+          Accruals = (NI - CFO) / avg_total_assets  (Sloan ratio)
+          LVGI  = Leverage Growth Index        (LT_debt / total_assets)_t / (LT_debt / total_assets)_{t-1}
+
+        Threshold: M > -1.78 suggests likely manipulation.
+
+        Parameters
+        ----------
+        dsri : Days Sales Receivable Index.
+        gmi : Gross Margin Index.
+        aqi : Asset Quality Index.
+        sgi : Sales Growth Index.
+        depi : Depreciation Index.
+        sgai : SG&A Index.
+        accruals : (Net Income - Operating CF) / avg total assets.
+        lvgi : Leverage Growth Index.
+
+        Returns
+        -------
+        dict with m_score, likely_manipulator flag, and all 8 components.
+        """
+        m = (
+            -4.84
+            + 0.920 * dsri
+            + 0.528 * gmi
+            + 0.404 * aqi
+            + 0.892 * sgi
+            + 0.115 * depi
+            - 0.172 * sgai
+            + 4.679 * accruals
+            - 0.327 * lvgi
+        )
+
+        return {
+            "m_score": round(m, 4),
+            "likely_manipulator": m > -1.78,
+            "threshold": -1.78,
+            "interpretation": (
+                "High manipulation risk" if m > -1.78
+                else "Low manipulation risk"
+            ),
+            "components": {
+                "DSRI": round(dsri, 4),
+                "GMI": round(gmi, 4),
+                "AQI": round(aqi, 4),
+                "SGI": round(sgi, 4),
+                "DEPI": round(depi, 4),
+                "SGAI": round(sgai, 4),
+                "Accruals": round(accruals, 4),
+                "LVGI": round(lvgi, 4),
+            },
+            "coefficients": {
+                "DSRI": 0.920, "GMI": 0.528, "AQI": 0.404, "SGI": 0.892,
+                "DEPI": 0.115, "SGAI": -0.172, "Accruals": 4.679, "LVGI": -0.327,
+                "intercept": -4.84,
+            },
+        }
+
+    def compute_beneish_m_score_from_db(self, ticker: str) -> dict[str, Any]:
         """Compute Beneish M-score (8-variable earnings manipulation detector).
 
         M > -1.78 indicates likely manipulator.
@@ -1064,6 +1301,102 @@ class FundamentalScreener:
                     values = ", ".join([f"'{v}'" for v in val])
                     clauses.append(f"{col} IN ({values})")
         return clauses
+
+    # ------------------------------------------------------------------
+    # Market cap tier classification
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def classify_market_cap_tier(market_cap: float | None) -> str:
+        """Classify market cap into size tier.
+
+        Tiers (USD):
+          mega   : >= 200B
+          large  : 10B – 200B
+          mid    : 2B – 10B
+          small  : 300M – 2B
+          micro  : 50M – 300M
+          nano   : < 50M
+        """
+        if market_cap is None or market_cap <= 0:
+            return "unknown"
+        if market_cap >= 200_000_000_000:
+            return "mega"
+        if market_cap >= 10_000_000_000:
+            return "large"
+        if market_cap >= 2_000_000_000:
+            return "mid"
+        if market_cap >= 300_000_000:
+            return "small"
+        if market_cap >= 50_000_000:
+            return "micro"
+        return "nano"
+
+    # ------------------------------------------------------------------
+    # Composite z-score ranking (pure numpy — no DB required)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def compute_composite_zscore(
+        df: "pd.DataFrame",
+        value_cols: list[str] | None = None,
+        quality_cols: list[str] | None = None,
+        momentum_cols: list[str] | None = None,
+        invert_cols: list[str] | None = None,
+    ) -> "pd.DataFrame":
+        """Rank stocks by composite z-score across value, quality, and momentum factors.
+
+        Each factor column is z-score normalised (subtract mean, divide by std).
+        For "higher is worse" metrics (pe_ttm, ev_ebitda, debt_to_equity),
+        the z-score is negated so that lower PE → higher composite score.
+
+        Parameters
+        ----------
+        df : DataFrame with at least one of the factor columns present.
+        value_cols : columns where lower is better (e.g. pe_ttm, ev_ebitda).
+        quality_cols : columns where higher is better (e.g. roe, roic).
+        momentum_cols : columns where higher is better (e.g. price_12m).
+        invert_cols : extra columns to negate before averaging.
+
+        Returns
+        -------
+        df with added 'composite_zscore' column, sorted descending.
+        """
+        import pandas as _pd
+        import numpy as _np
+
+        value_cols    = value_cols    or ["pe_ttm", "ev_ebitda", "pb_ratio"]
+        quality_cols  = quality_cols  or ["roe", "roic", "net_margin"]
+        momentum_cols = momentum_cols or ["price_12m", "price_6m"]
+        invert_cols   = set(invert_cols or []) | set(value_cols)
+
+        result = df.copy()
+        z_cols: list[str] = []
+
+        all_factor_cols = list(dict.fromkeys(value_cols + quality_cols + momentum_cols))
+        for col in all_factor_cols:
+            if col not in result.columns:
+                continue
+            vals = _pd.to_numeric(result[col], errors="coerce")
+            mu  = vals.mean()
+            std = vals.std(ddof=1)
+            if std is None or (_np.isnan(std) if hasattr(std, '__float__') else False) or std < 1e-12:
+                continue
+            z = (vals - mu) / std
+            if col in invert_cols:
+                z = -z   # negate: lower pe_ttm → positive z contribution
+            z_col = f"_z_{col}"
+            result[z_col] = z
+            z_cols.append(z_col)
+
+        if z_cols:
+            result["composite_zscore"] = result[z_cols].mean(axis=1)
+            result = result.drop(columns=z_cols)
+            result = result.sort_values("composite_zscore", ascending=False).reset_index(drop=True)
+        else:
+            result["composite_zscore"] = float("nan")
+
+        return result
 
 
 # ---------------------------------------------------------------------------

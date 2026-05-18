@@ -39,7 +39,6 @@ import logging
 import os
 import sys
 import traceback
-import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -429,10 +428,12 @@ class MCPToolHandler:
     @staticmethod
     def get_segment_breakdown(ticker: str) -> dict:
         try:
-            from sentinel.sfe.institutional_ownership_v3 import InstitutionalOwnershipV3  # type: ignore
-            # Not exactly the right module, but try
-            pass
-        except ImportError:
+            from sentinel.sfe.segment_analytics import SegmentAnalytics  # type: ignore
+            sa = SegmentAnalytics()
+            result = sa.get_segments(ticker.upper())
+            if result:
+                return result
+        except (ImportError, Exception):
             pass
         try:
             import yfinance as yf
@@ -934,11 +935,32 @@ class MCPToolHandler:
 
     @staticmethod
     def compute_portfolio_var(holdings: dict, confidence: float = 0.95) -> dict:
+        # Primary: use SENTINEL PortfolioRiskEngine v3 (GARCH + Basel III)
+        try:
+            from sentinel.spm.portfolio_risk_v3 import PortfolioRiskEngine  # type: ignore
+            engine = PortfolioRiskEngine()
+            report = engine.analyze_portfolio(holdings, portfolio_value=1_000_000.0)
+            return {
+                "holdings": holdings,
+                "confidence": confidence,
+                "var_daily": report.get("var_95", report.get("historical_var_95")),
+                "cvar_daily": report.get("cvar_95", report.get("historical_cvar_95")),
+                "garch_var": report.get("garch_var_95"),
+                "parametric_var": report.get("parametric_var_95"),
+                "annualized_vol": report.get("annualized_vol"),
+                "sharpe_ratio": report.get("sharpe_ratio"),
+                "max_drawdown": report.get("max_drawdown"),
+                "method": "GARCH+historical_simulation",
+                "source": "sentinel.spm.portfolio_risk_v3",
+            }
+        except (ImportError, Exception):
+            pass
+        # Secondary: legacy risk_analytics
         try:
             from sentinel.sbx.risk_analytics import RiskAnalytics  # type: ignore
             ra = RiskAnalytics()
             return ra.compute_var(holdings, confidence)
-        except ImportError:
+        except (ImportError, Exception):
             pass
         try:
             import yfinance as yf
@@ -966,11 +988,47 @@ class MCPToolHandler:
 
     @staticmethod
     def run_stress_test(holdings: dict, scenario: str = "2008_crisis") -> dict:
+        # Primary: use SENTINEL StressTestEngine v3 (full scenario library)
         try:
-            from sentinel.sbx.stress_testing import StressTester  # type: ignore
-            st = StressTester()
-            return st.run(holdings, scenario)
-        except ImportError:
+            from sentinel.spm.stress_testing_v3 import StressTestEngine, ScenarioLibrary  # type: ignore
+            engine = StressTestEngine()
+            port_value = float(sum(holdings.values())) or 1_000_000.0
+            # Find matching historical scenario or use worst case
+            try:
+                results = engine.run_all_historical_scenarios(holdings, port_value)
+                # Match by name (fuzzy)
+                scenario_map = {
+                    "2008_crisis": "GFC",
+                    "covid_crash": "COVID",
+                    "rate_spike_200bps": "Rate",
+                    "tech_correction_30pct": "Tech",
+                }
+                keyword = scenario_map.get(scenario, scenario)
+                matched = next((r for r in results if keyword.lower() in r.name.lower()), results[0] if results else None)
+                if matched:
+                    return {
+                        "scenario": scenario,
+                        "scenario_name": matched.name,
+                        "portfolio_value": port_value,
+                        "stressed_value": round(port_value + matched.pnl, 2),
+                        "estimated_loss": round(matched.pnl, 2),
+                        "loss_pct": f"{abs(matched.pnl / port_value * 100):.1f}%",
+                        "pnl_by_asset": matched.pnl_by_asset,
+                        "source": "sentinel.spm.stress_testing_v3",
+                    }
+            except Exception:
+                pass
+            worst = engine.find_worst_scenario(holdings, port_value)
+            return {
+                "scenario": scenario,
+                "worst_scenario": worst.name,
+                "portfolio_value": port_value,
+                "stressed_value": round(port_value + worst.pnl, 2),
+                "estimated_loss": round(worst.pnl, 2),
+                "loss_pct": f"{abs(worst.pnl / port_value * 100):.1f}%",
+                "source": "sentinel.spm.stress_testing_v3",
+            }
+        except (ImportError, Exception):
             pass
         SCENARIOS = {
             "2008_crisis": {"equity_shock": -0.50, "credit_spread": +0.03, "vix_spike": 80},
@@ -992,11 +1050,38 @@ class MCPToolHandler:
 
     @staticmethod
     def optimize_portfolio(tickers: List[str], method: str = "mean_variance") -> dict:
+        # Primary: use SENTINEL PortfolioOptimizerEngine v3 (Markowitz, HRP, BL, CVaR, etc.)
         try:
-            from sentinel.sbx.portfolio_optimizer import PortfolioOptimizer  # type: ignore
-            po = PortfolioOptimizer()
-            return po.optimize(tickers, method)
-        except ImportError:
+            from sentinel.spm.portfolio_optimizer_v3 import PortfolioOptimizerEngine, fetch_returns  # type: ignore
+            returns = fetch_returns(tickers, years=3)
+            engine = PortfolioOptimizerEngine()
+            method_map = {
+                "mean_variance": "mean_variance",
+                "hrp": "hrp",
+                "hierarchical_risk_parity": "hrp",
+                "min_variance": "min_variance",
+                "max_sharpe": "max_sharpe",
+                "equal_weight": "equal_weight",
+                "risk_parity": "risk_budgeting",
+                "black_litterman": "black_litterman",
+                "max_diversification": "max_diversification",
+                "cvar": "min_cvar",
+            }
+            opt_method = method_map.get(method.lower(), "mean_variance")
+            result = engine.optimize(opt_method, returns)
+            weights = result.weights if hasattr(result, "weights") else {}
+            metrics = result.metrics if hasattr(result, "metrics") else {}
+            return {
+                "method": opt_method,
+                "tickers": tickers,
+                "weights": {t: round(float(w), 6) for t, w in zip(tickers, weights)} if hasattr(weights, "__len__") else weights,
+                "expected_return": round(float(metrics.annual_return), 4) if hasattr(metrics, "annual_return") else None,
+                "expected_volatility": round(float(metrics.annual_vol), 4) if hasattr(metrics, "annual_vol") else None,
+                "sharpe": round(float(metrics.sharpe), 4) if hasattr(metrics, "sharpe") else None,
+                "max_drawdown": round(float(metrics.max_drawdown), 4) if hasattr(metrics, "max_drawdown") else None,
+                "source": "sentinel.spm.portfolio_optimizer_v3",
+            }
+        except (ImportError, Exception):
             pass
         try:
             import yfinance as yf
@@ -1017,33 +1102,66 @@ class MCPToolHandler:
                 "expected_return": round(port_return, 4),
                 "expected_volatility": round(port_vol, 4),
                 "sharpe": round(port_return / port_vol, 4) if port_vol else None,
-                "note": "Equal-weight shown; mean-variance optimization requires scipy",
+                "note": "Equal-weight shown; optimizer v3 not available",
             }
         except ImportError:
             return {"tickers": tickers, "error": "pip install yfinance numpy"}
 
     @staticmethod
     def compute_factor_exposures(holdings: dict) -> dict:
+        # Primary: use SENTINEL PortfolioFactorAnalyzer v3 (Fama-French 5-factor)
         try:
-            from sentinel.sbx.multifactor_risk_model import MultifactorRiskModel  # type: ignore
-            mrm = MultifactorRiskModel()
-            return mrm.compute_exposures(holdings)
-        except ImportError:
+            from sentinel.spm.factor_risk_v3 import PortfolioFactorAnalyzer  # type: ignore
+            analyzer = PortfolioFactorAnalyzer()
+            exposures = analyzer.compute_portfolio_exposures(holdings)
+            decomp = analyzer.decompose_variance(exposures)
+            factor_var = analyzer.compute_factor_var(exposures)
+            return {
+                "holdings": holdings,
+                "factors": exposures.factor_names if hasattr(exposures, "factor_names") else list(exposures.betas.index) if hasattr(exposures, "betas") else [],
+                "betas": exposures.betas.to_dict() if hasattr(exposures, "betas") and hasattr(exposures.betas, "to_dict") else {},
+                "r_squared": exposures.r_squared if hasattr(exposures, "r_squared") else None,
+                "variance_decomposition": decomp,
+                "factor_var_95": factor_var.get("var_95") if isinstance(factor_var, dict) else None,
+                "source": "sentinel.spm.factor_risk_v3",
+            }
+        except (ImportError, Exception):
             pass
         return {
             "holdings": holdings,
             "factors": ["Market", "Size", "Value", "Profitability", "Investment"],
             "exposures": {},
-            "note": "Factor model requires sentinel.sbx.multifactor_risk_model",
+            "note": "Factor model requires sentinel.spm.factor_risk_v3",
         }
 
     @staticmethod
     def compute_attribution(portfolio: dict, benchmark: str = "SPY") -> dict:
+        # Primary: use SENTINEL attribution_v3 (BHB, FactorAttribution, StyleAttribution)
         try:
-            from sentinel.sbx.bhb_attribution import BHBAttribution  # type: ignore
-            bhb = BHBAttribution()
-            return bhb.compute(portfolio, benchmark)
-        except ImportError:
+            from sentinel.spm.attribution_v3 import AttributionDashboard  # type: ignore
+            dashboard = AttributionDashboard()
+            report = dashboard.run_full_report(portfolio, benchmark)
+            if hasattr(report, "__dict__"):
+                return {"portfolio": portfolio, "benchmark": benchmark, "report": report.__dict__, "source": "sentinel.spm.attribution_v3"}
+            return {"portfolio": portfolio, "benchmark": benchmark, "report": str(report), "source": "sentinel.spm.attribution_v3"}
+        except (ImportError, Exception):
+            pass
+        # Secondary: use portfolio_risk_v3 tracking / information ratio
+        try:
+            from sentinel.spm.portfolio_risk_v3 import PortfolioRiskEngine  # type: ignore
+            engine = PortfolioRiskEngine()
+            te = engine.compute_tracking_error(portfolio, benchmark)
+            ir = engine.compute_information_ratio(portfolio, benchmark)
+            decomp = engine.compute_risk_decomposition(portfolio)
+            return {
+                "portfolio": portfolio,
+                "benchmark": benchmark,
+                "tracking_error_annualized": round(float(te), 6) if te is not None else None,
+                "information_ratio": round(float(ir), 4) if ir is not None else None,
+                "risk_decomposition": decomp.to_dict() if hasattr(decomp, "to_dict") else {},
+                "source": "sentinel.spm.portfolio_risk_v3",
+            }
+        except (ImportError, Exception):
             pass
         return {
             "portfolio": portfolio,
@@ -1051,7 +1169,7 @@ class MCPToolHandler:
             "allocation_effect": None,
             "selection_effect": None,
             "interaction_effect": None,
-            "note": "BHB attribution requires sentinel.sbx.bhb_attribution",
+            "note": "Attribution requires sentinel.spm.attribution_v3 or portfolio_risk_v3",
         }
 
     @staticmethod
@@ -1061,6 +1179,17 @@ class MCPToolHandler:
 
     @staticmethod
     def get_risk_dashboard(portfolio: dict) -> dict:
+        # Primary: use SENTINEL PortfolioRiskEngine v3 risk dashboard
+        try:
+            from sentinel.spm.portfolio_risk_v3 import PortfolioRiskEngine  # type: ignore
+            engine = PortfolioRiskEngine()
+            dashboard = engine.get_risk_dashboard(portfolio, portfolio_value=1_000_000.0)
+            dashboard["portfolio"] = portfolio
+            dashboard["timestamp"] = datetime.now(timezone.utc).isoformat()
+            dashboard["source"] = "sentinel.spm.portfolio_risk_v3"
+            return dashboard
+        except (ImportError, Exception):
+            pass
         tickers = list(portfolio.keys())
         var_result = MCPToolHandler.compute_portfolio_var(portfolio)
         mom = {t: MCPToolHandler.get_momentum_score(t) for t in tickers[:3]}
@@ -1075,6 +1204,27 @@ class MCPToolHandler:
     def compute_kelly_size(win_rate: float, avg_win: float, avg_loss: float) -> dict:
         if avg_loss == 0:
             return {"error": "avg_loss cannot be zero"}
+        # Primary: use SENTINEL KellyCriterion v3
+        try:
+            from sentinel.spm.position_sizing_v3 import KellyCriterion  # type: ignore
+            full_kelly = KellyCriterion.compute_full_kelly(win_rate, avg_win, avg_loss)
+            quarter_kelly = KellyCriterion.compute_fractional_kelly(full_kelly, 0.25)
+            half_kelly = KellyCriterion.compute_fractional_kelly(full_kelly, 0.50)
+            b = avg_win / avg_loss
+            return {
+                "win_rate": win_rate,
+                "avg_win": avg_win,
+                "avg_loss": avg_loss,
+                "win_loss_ratio": round(b, 4),
+                "full_kelly": round(float(full_kelly), 4),
+                "half_kelly": round(float(half_kelly), 4),
+                "quarter_kelly": round(float(quarter_kelly), 4),
+                "recommended": round(float(quarter_kelly), 4),
+                "note": "Quarter-Kelly (25%) recommended for robustness to estimation error",
+                "source": "sentinel.spm.position_sizing_v3",
+            }
+        except (ImportError, Exception):
+            pass
         b = avg_win / avg_loss
         kelly = (win_rate * (b + 1) - 1) / b
         half_kelly = kelly / 2
@@ -1128,17 +1278,36 @@ class MCPToolHandler:
 
     @staticmethod
     def get_regime_overlay(holdings: dict) -> dict:
+        # Primary: use SENTINEL RegimeDetectorEngine v3 (HMM + macro features)
+        try:
+            from sentinel.sma.regime_detector_v3 import RegimeDetectorEngine  # type: ignore
+            engine = RegimeDetectorEngine()
+            regime_name, prob, features = engine.get_current_regime()
+            recent_changes = engine.get_recent_regime_changes(n=3)
+            alert = engine.get_regime_transition_alert()
+            return {
+                "holdings": holdings,
+                "regime": regime_name,
+                "regime_probability": round(float(prob), 4),
+                "macro_features": features,
+                "recent_changes": recent_changes,
+                "transition_alert": alert.__dict__ if alert and hasattr(alert, "__dict__") else None,
+                "source": "sentinel.sma.regime_detector_v3",
+            }
+        except (ImportError, Exception):
+            pass
+        # Fallback: legacy regime_detector
         try:
             from sentinel.sbx.regime_detector import RegimeDetector  # type: ignore
             rd = RegimeDetector()
             regime = rd.current_regime()
             return {"holdings": holdings, "regime": regime}
-        except ImportError:
+        except (ImportError, Exception):
             pass
         return {
             "holdings": holdings,
             "regime": "unknown",
-            "note": "Regime detection requires sentinel.sbx.regime_detector",
+            "note": "Regime detection requires sentinel.sma.regime_detector_v3",
         }
 
     # -----------------------------------------------------------------------
@@ -1147,39 +1316,61 @@ class MCPToolHandler:
 
     @staticmethod
     def run_backtest(strategy: dict, symbols: List[str], start: str, end: str) -> dict:
+        # Primary: use SENTINEL VectorBTBacktestEngine v3
         try:
-            from sentinel.sbx.vectorized_backtest import VectorizedBacktester  # type: ignore
-            bt = VectorizedBacktester()
-            return bt.run(strategy, symbols, start, end)
-        except ImportError:
+            from sentinel.sbx.vectorbt_backtest_v3 import VectorBTBacktestEngine  # type: ignore
+            engine = VectorBTBacktestEngine()
+            strategy_name = strategy.get("name", "sma_crossover")
+            params = strategy.get("params", {})
+            result = engine.run_strategy(strategy_name, symbols, params, start, end)
+            if hasattr(result, "__dict__"):
+                return {"strategy": strategy, "symbols": symbols, "start": start, "end": end, "result": result.__dict__, "source": "sentinel.sbx.vectorbt_backtest_v3"}
+            return {"strategy": strategy, "symbols": symbols, "start": start, "end": end, "result": str(result), "source": "sentinel.sbx.vectorbt_backtest_v3"}
+        except (ImportError, Exception) as exc:
             pass
         return {
             "strategy": strategy,
             "symbols": symbols,
             "start": start,
             "end": end,
-            "note": "Backtest requires sentinel.sbx.vectorized_backtest",
+            "note": "Backtest requires sentinel.sbx.vectorbt_backtest_v3",
         }
 
     @staticmethod
     def run_parameter_optimization(strategy: str, param_grid: dict) -> dict:
+        # Primary: use VectorBTBacktestEngine v3 optimize_strategy
         try:
-            from sentinel.sbx.walk_forward_validator import WalkForwardValidator  # type: ignore
-            wfv = WalkForwardValidator()
-            return wfv.optimize(strategy, param_grid)
-        except ImportError:
+            from sentinel.sbx.vectorbt_backtest_v3 import VectorBTBacktestEngine  # type: ignore
+            engine = VectorBTBacktestEngine()
+            tickers = param_grid.pop("tickers", ["SPY"])
+            start = param_grid.pop("start", "2020-01-01")
+            end = param_grid.pop("end", "2024-01-01")
+            result = engine.optimize_strategy(strategy, tickers, param_grid, start, end)
+            if hasattr(result, "__dict__"):
+                return {"strategy": strategy, "result": result.__dict__, "source": "sentinel.sbx.vectorbt_backtest_v3"}
+            return {"strategy": strategy, "result": str(result), "source": "sentinel.sbx.vectorbt_backtest_v3"}
+        except (ImportError, Exception):
             pass
-        return {"strategy": strategy, "param_grid": param_grid, "note": "Install sentinel.sbx.walk_forward_validator"}
+        return {"strategy": strategy, "param_grid": param_grid, "note": "Install sentinel.sbx.vectorbt_backtest_v3 or walk_forward_validator"}
 
     @staticmethod
     def run_walk_forward_test(strategy: dict, periods: int = 5) -> dict:
+        # Primary: use VectorBTBacktestEngine v3 full pipeline
         try:
-            from sentinel.sbx.walk_forward_v2 import WalkForwardV2  # type: ignore
-            wf = WalkForwardV2()
-            return wf.run(strategy, periods)
-        except ImportError:
+            from sentinel.sbx.vectorbt_backtest_v3 import VectorBTBacktestEngine  # type: ignore
+            engine = VectorBTBacktestEngine()
+            strategy_name = strategy.get("name", "sma_crossover")
+            tickers = strategy.get("tickers", ["SPY"])
+            param_grid = strategy.get("param_grid", {"fast": [10, 20], "slow": [50, 100]})
+            start = strategy.get("start", "2018-01-01")
+            end = strategy.get("end", "2024-01-01")
+            result = engine.run_full_pipeline(strategy_name, tickers, param_grid, start, end)
+            if hasattr(result, "__dict__"):
+                return {"strategy": strategy, "periods": periods, "result": result.__dict__, "source": "sentinel.sbx.vectorbt_backtest_v3"}
+            return {"strategy": strategy, "periods": periods, "result": str(result), "source": "sentinel.sbx.vectorbt_backtest_v3"}
+        except (ImportError, Exception):
             pass
-        return {"strategy": strategy, "periods": periods, "note": "Install sentinel.sbx.walk_forward_v2"}
+        return {"strategy": strategy, "periods": periods, "note": "Install sentinel.sbx.vectorbt_backtest_v3 or walk_forward_v2"}
 
     @staticmethod
     def get_strategy_tearsheet(strategy_id: str) -> dict:
@@ -1212,25 +1403,177 @@ class MCPToolHandler:
         return {"strategy_id": strategy_id, "note": "strategy_promotion_v3 not available"}
 
     # -----------------------------------------------------------------------
+    # Overfitting / Backtesting Science
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def check_backtest_overfitting(returns_list: List[List[float]]) -> dict:
+        """Run PBO + DSR overfitting detection on a matrix of strategy returns."""
+        try:
+            import pandas as pd
+            import numpy as np
+            from sentinel.sbx.overfitting_detection_v3 import (  # type: ignore
+                ProbabilityOfBacktestOverfitting,
+                DeflatedSharpeRatio,
+            )
+            # Build returns matrix: each inner list is one strategy's daily returns
+            mat = pd.DataFrame(returns_list).T  # shape: n_obs x n_strategies
+            mat.columns = [f"s{i}" for i in range(len(returns_list))]
+            pbo_result = ProbabilityOfBacktestOverfitting.compute_pbo(mat, n_partitions=100)
+            # DSR on best strategy (max Sharpe)
+            best_returns = mat[mat.mean().idxmax()]
+            n_trials = len(returns_list)
+            dsr_result = DeflatedSharpeRatio.compute_dsr_from_returns(best_returns, n_trials)
+            return {
+                "n_strategies": len(returns_list),
+                "n_observations": len(returns_list[0]) if returns_list else 0,
+                "pbo": round(float(pbo_result.pbo), 4),
+                "pbo_interpretation": ProbabilityOfBacktestOverfitting.interpret_pbo(pbo_result.pbo),
+                "deflated_sharpe": round(float(dsr_result.deflated_sr), 4),
+                "haircut_sharpe": round(float(dsr_result.haircut_sharpe), 4),
+                "is_significant": bool(dsr_result.is_significant),
+                "interpretation": dsr_result.interpretation,
+                "source": "sentinel.sbx.overfitting_detection_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"error": str(exc), "note": "Install sentinel.sbx.overfitting_detection_v3"}
+
+    @staticmethod
+    def detect_market_regime() -> dict:
+        """Detect current macro regime using HMM + Fama-French factors."""
+        try:
+            from sentinel.sma.regime_detector_v3 import RegimeDetectorEngine  # type: ignore
+            engine = RegimeDetectorEngine()
+            regime_name, prob, features = engine.get_current_regime()
+            recent = engine.get_recent_regime_changes(n=5)
+            alert = engine.get_regime_transition_alert()
+            return {
+                "current_regime": regime_name,
+                "confidence": round(float(prob), 4),
+                "macro_features": features,
+                "recent_transitions": recent,
+                "transition_alert": alert.__dict__ if alert and hasattr(alert, "__dict__") else None,
+                "source": "sentinel.sma.regime_detector_v3",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        except (ImportError, Exception) as exc:
+            return {"error": str(exc), "regime": "unknown", "note": "Install sentinel.sma.regime_detector_v3"}
+
+    @staticmethod
+    def run_portfolio_risk_full(holdings: dict, portfolio_value: float = 1_000_000.0) -> dict:
+        """Full portfolio risk report: VaR, CVaR, GARCH, Basel III, stress tests, drawdown."""
+        try:
+            import dataclasses
+            from sentinel.spm.portfolio_risk_v3 import PortfolioRiskEngine  # type: ignore
+            engine = PortfolioRiskEngine()
+            report = engine.analyze_portfolio(holdings, portfolio_value=portfolio_value)
+            report_dict = dataclasses.asdict(report) if dataclasses.is_dataclass(report) else (
+                report if isinstance(report, dict) else vars(report)
+            )
+            return {
+                "holdings": holdings,
+                "portfolio_value": portfolio_value,
+                "report": report_dict,
+                "source": "sentinel.spm.portfolio_risk_v3",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        except (ImportError, Exception) as exc:
+            return {"error": str(exc), "holdings": holdings}
+
+    @staticmethod
+    def compute_position_size(
+        method: str = "kelly",
+        win_rate: float = 0.55,
+        avg_win: float = 0.10,
+        avg_loss: float = 0.07,
+        portfolio_equity: float = 100_000.0,
+        entry_price: float = 100.0,
+        stop_loss_price: float = 95.0,
+        risk_per_trade: float = 0.01,
+    ) -> dict:
+        """Compute position size using Kelly, fixed-fraction, or volatility-targeting."""
+        try:
+            from sentinel.spm.position_sizing_v3 import KellyCriterion, PositionSizingOrchestrator  # type: ignore
+            if method.lower() == "kelly":
+                full_k = KellyCriterion.compute_full_kelly(win_rate, avg_win, avg_loss)
+                quarter_k = KellyCriterion.compute_fractional_kelly(full_k, 0.25)
+                notional = portfolio_equity * quarter_k
+                shares = int(notional / entry_price) if entry_price > 0 else 0
+                return {
+                    "method": "kelly",
+                    "full_kelly_fraction": round(float(full_k), 4),
+                    "recommended_fraction": round(float(quarter_k), 4),
+                    "notional": round(float(notional), 2),
+                    "shares": shares,
+                    "portfolio_equity": portfolio_equity,
+                    "source": "sentinel.spm.position_sizing_v3",
+                }
+            elif method.lower() in ("fixed_fraction", "fixed"):
+                size = PositionSizingOrchestrator.compute_fixed_fraction_size(
+                    portfolio_equity, entry_price, stop_loss_price, risk_per_trade
+                )
+                return {
+                    "method": "fixed_fraction",
+                    "shares": int(size),
+                    "risk_per_trade_pct": risk_per_trade,
+                    "risk_dollar": portfolio_equity * risk_per_trade,
+                    "portfolio_equity": portfolio_equity,
+                    "source": "sentinel.spm.position_sizing_v3",
+                }
+        except (ImportError, Exception) as exc:
+            pass
+        # Fallback: basic Kelly
+        if avg_loss == 0:
+            return {"error": "avg_loss cannot be zero"}
+        b = avg_win / avg_loss
+        kelly = max(0.0, (win_rate * (b + 1) - 1) / b)
+        quarter_k = kelly * 0.25
+        return {
+            "method": method,
+            "full_kelly_fraction": round(kelly, 4),
+            "recommended_fraction": round(quarter_k, 4),
+            "notional": round(portfolio_equity * quarter_k, 2),
+        }
+
+    # -----------------------------------------------------------------------
     # AI & NLP
     # -----------------------------------------------------------------------
 
     @staticmethod
     def summarize_filing(ticker: str, form_type: str = "10-K") -> dict:
-        try:
-            from sentinel.sai.query_expander_v3 import QueryExpanderV3  # type: ignore
-            # Not exactly summarization, but leverage NLP tooling
-            pass
-        except ImportError:
-            pass
-        # Fetch filing metadata and provide link for further analysis
+        # Fetch filing metadata from EDGAR and extract key sections
         search = MCPToolHandler.search_edgar(ticker, form_type, ticker)
+        filings = search.get("results", [])[:3]
+        # Try to extract text from the most recent filing
+        summary_sections: dict = {}
+        if filings:
+            try:
+                import urllib.request
+                filing_id = filings[0].get("id", "")
+                if filing_id:
+                    doc_url = f"https://efts.sec.gov/LATEST/search-index?q=%22{ticker.upper()}%22&forms={form_type}&dateRange=custom&startdt=2023-01-01"
+                    req = urllib.request.Request(doc_url, headers={"User-Agent": "SENTINEL/3.0 research@sentinel.ai"})
+                    with urllib.request.urlopen(req, timeout=15) as resp:
+                        data = json.loads(resp.read())
+                    hits = data.get("hits", {}).get("hits", [])
+                    if hits:
+                        src = hits[0].get("_source", {})
+                        summary_sections = {
+                            "entity": src.get("entity_name"),
+                            "file_date": src.get("file_date"),
+                            "period": src.get("period_of_report"),
+                            "form": src.get("form_type"),
+                        }
+            except Exception:
+                pass
         return {
             "ticker": ticker.upper(),
             "form_type": form_type,
-            "filings_found": search.get("results", [])[:3],
-            "note": "Full summarization requires LLM integration. Use filing links for manual review.",
+            "filings_found": filings,
+            "latest_filing_metadata": summary_sections,
+            "note": "Full NLP summarization requires LLM integration. Structured metadata shown above.",
             "edgar_search_url": f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&company={ticker.upper()}&type={form_type}&dateb=&owner=include&count=10",
+            "source": "SEC EDGAR",
         }
 
     @staticmethod
@@ -1781,6 +2124,46 @@ class SentinelMCPServer:
         self._reg("promote_strategy", "Trigger strategy promotion to next lifecycle state.",
             {"properties": {"strategy_id": {"type": "string"}}, "required": ["strategy_id"]},
             h.promote_strategy, "backtesting", requires_ticker=False)
+
+        # --- Overfitting / Backtesting Science (3) ---
+        self._reg("check_backtest_overfitting",
+            "Run PBO (Probability of Backtest Overfitting) and Deflated Sharpe Ratio on strategy returns matrix.",
+            {"properties": {
+                "returns_list": {"type": "array", "items": {"type": "array", "items": {"type": "number"}},
+                                 "description": "List of strategy return series (each inner list = daily returns for one strategy)"},
+            }, "required": ["returns_list"]},
+            h.check_backtest_overfitting, "backtesting", requires_ticker=False,
+            tags=["overfitting", "pbo", "dsr", "sharpe"])
+
+        self._reg("detect_market_regime",
+            "Detect current macro market regime (expansion/contraction/crisis) using HMM + macro indicators.",
+            {"properties": {}, "required": []},
+            h.detect_market_regime, "alternative_data", requires_ticker=False,
+            tags=["regime", "macro", "hmm"])
+
+        self._reg("run_portfolio_risk_full",
+            "Full portfolio risk report: historical VaR, GARCH VaR, CVaR, Basel III metrics, stress tests, and drawdown analysis.",
+            {"properties": {
+                "holdings": {"type": "object", "description": "Dict of ticker -> weight or dollar allocation"},
+                "portfolio_value": {"type": "number", "default": 1000000.0},
+            }, "required": ["holdings"]},
+            h.run_portfolio_risk_full, "portfolio_risk", requires_ticker=False,
+            tags=["var", "cvar", "garch", "basel", "risk"])
+
+        self._reg("compute_position_size",
+            "Compute position size using Kelly Criterion, fixed-fraction, or volatility-targeting.",
+            {"properties": {
+                "method": {"type": "string", "default": "kelly", "enum": ["kelly", "fixed_fraction", "volatility_target"]},
+                "win_rate": {"type": "number", "default": 0.55},
+                "avg_win": {"type": "number", "default": 0.10},
+                "avg_loss": {"type": "number", "default": 0.07},
+                "portfolio_equity": {"type": "number", "default": 100000.0},
+                "entry_price": {"type": "number", "default": 100.0},
+                "stop_loss_price": {"type": "number", "default": 95.0},
+                "risk_per_trade": {"type": "number", "default": 0.01},
+            }, "required": []},
+            h.compute_position_size, "portfolio_risk", requires_ticker=False,
+            tags=["position_sizing", "kelly", "risk_management"])
 
         # --- AI & NLP (8) ---
         self._reg("summarize_filing", "Summarize an SEC filing (10-K, 10-Q, 8-K) for a ticker.",

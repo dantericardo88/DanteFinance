@@ -1009,6 +1009,169 @@ class PortfolioFactorAnalyzer:
             "factor_variance_contributions": factor_contributions,
         }
 
+    def compute_active_factor_exposure(
+        self,
+        portfolio_exposures: "FactorExposures",
+        benchmark_exposures: "FactorExposures",
+    ) -> dict[str, float]:
+        """
+        Compute active factor exposure: portfolio_beta - benchmark_beta for each FF5 factor.
+
+        Active exposure measures how differently the portfolio tilts relative to a benchmark
+        (e.g. SPY or a cap-weighted index).  Positive = overweight that factor.
+
+        Args:
+            portfolio_exposures:  FactorExposures fitted on the portfolio return series.
+            benchmark_exposures:  FactorExposures fitted on the benchmark return series.
+
+        Returns:
+            dict {factor_name: active_beta} for each factor in FACTOR_NAMES.
+        """
+        active: dict[str, float] = {}
+        all_factors = portfolio_exposures.factor_names or FACTOR_NAMES
+        for f in all_factors:
+            p_beta = portfolio_exposures.betas.get(f, 0.0)
+            b_beta = benchmark_exposures.betas.get(f, 0.0)
+            active[f] = round(p_beta - b_beta, 6)
+        return active
+
+    def compute_factor_timing_score(
+        self,
+        factor_returns: "pd.Series",
+        portfolio_exposures_series: "pd.Series",
+        factor_name: str = "HML",
+    ) -> dict:
+        """
+        Compute how well the portfolio loaded on a value/factor in periods when that
+        factor outperformed (factor timing score).
+
+        Method:
+            - Split factor return history into positive (UP) and negative (DOWN) periods.
+            - Measure average portfolio exposure (beta) in each regime.
+            - Timing score = (mean_exposure_in_UP - mean_exposure_in_DOWN).
+              Positive score → portfolio correctly loaded more on the factor when it paid off.
+
+        Args:
+            factor_returns:             pd.Series of daily factor returns (e.g. HML).
+            portfolio_exposures_series: pd.Series of rolling portfolio betas for that factor.
+            factor_name:                Name label for the factor.
+
+        Returns:
+            dict with timing_score, mean_exposure_up, mean_exposure_down.
+        """
+        # Align index
+        common = factor_returns.dropna().index.intersection(
+            portfolio_exposures_series.dropna().index
+        )
+        if len(common) < 20:
+            return {
+                "factor_name": factor_name,
+                "timing_score": 0.0,
+                "mean_exposure_up": 0.0,
+                "mean_exposure_down": 0.0,
+                "n_up_periods": 0,
+                "n_down_periods": 0,
+                "note": "Insufficient data",
+            }
+
+        f_ret = factor_returns.loc[common]
+        p_exp = portfolio_exposures_series.loc[common]
+
+        up_mask   = f_ret > 0
+        down_mask = f_ret <= 0
+
+        mean_up   = float(p_exp[up_mask].mean())   if up_mask.any()   else 0.0
+        mean_down = float(p_exp[down_mask].mean())  if down_mask.any() else 0.0
+        timing_score = mean_up - mean_down
+
+        return {
+            "factor_name": factor_name,
+            "timing_score": round(timing_score, 6),
+            "mean_exposure_up": round(mean_up, 6),
+            "mean_exposure_down": round(mean_down, 6),
+            "n_up_periods": int(up_mask.sum()),
+            "n_down_periods": int(down_mask.sum()),
+        }
+
+    def compute_residual_alpha(
+        self,
+        portfolio_returns: "pd.Series",
+        risk_free_rate: "pd.Series",
+        factor_returns: "pd.DataFrame",
+        exposures: "FactorExposures",
+    ) -> dict:
+        """
+        Jensen's alpha after FF5 regression: residual (unexplained) return.
+
+        Formula:
+            alpha_t = r_p,t - r_f,t - sum_i( beta_i * F_i,t )
+
+        where the sum is over all FF5+Mom factors in `exposures`.
+
+        Args:
+            portfolio_returns: Daily portfolio excess return series (r_p).
+            risk_free_rate:    Daily risk-free rate series (r_f). Aligned to portfolio_returns.
+            factor_returns:    DataFrame of daily factor returns (columns = FACTOR_NAMES).
+            exposures:         Fitted FactorExposures object containing betas.
+
+        Returns:
+            dict with annualized Jensen's alpha, daily alpha mean, t-stat, and residual series.
+        """
+        # Align all series to common dates
+        port_idx = pd.to_datetime(portfolio_returns.index).tz_localize(None)
+        portfolio_clean = portfolio_returns.copy()
+        portfolio_clean.index = port_idx
+
+        rf_idx = pd.to_datetime(risk_free_rate.index).tz_localize(None)
+        rf_clean = risk_free_rate.copy()
+        rf_clean.index = rf_idx
+
+        fac_idx = pd.to_datetime(factor_returns.index).tz_localize(None)
+        fac_clean = factor_returns.copy()
+        fac_clean.index = fac_idx
+
+        common = port_idx.intersection(rf_idx).intersection(fac_idx)
+        if len(common) < 10:
+            return {
+                "alpha_daily_mean": 0.0,
+                "alpha_annualized": 0.0,
+                "alpha_t_stat": 0.0,
+                "n_obs": len(common),
+                "note": "Insufficient aligned data",
+            }
+
+        r_p  = portfolio_clean.loc[common].values
+        r_f  = rf_clean.loc[common].values
+        F    = fac_clean.loc[common]
+
+        # Excess portfolio return
+        excess = r_p - r_f
+
+        # Factor-explained return: sum_i( beta_i * F_i,t )
+        factor_explained = np.zeros(len(common))
+        for fname, beta in exposures.betas.items():
+            if fname in F.columns:
+                factor_explained += beta * F[fname].values
+
+        # Residual alpha series
+        alpha_series = excess - factor_explained
+
+        alpha_mean   = float(np.mean(alpha_series))
+        alpha_ann    = alpha_mean * 252
+        alpha_std    = float(np.std(alpha_series, ddof=1))
+        alpha_t_stat = float(alpha_mean / (alpha_std / np.sqrt(len(alpha_series)))) if alpha_std > 0 else 0.0
+
+        residual_s = pd.Series(alpha_series, index=common, name="residual_alpha")
+
+        return {
+            "alpha_daily_mean": round(alpha_mean, 8),
+            "alpha_annualized": round(alpha_ann, 6),
+            "alpha_t_stat": round(alpha_t_stat, 4),
+            "alpha_vol_daily": round(alpha_std, 8),
+            "n_obs": len(common),
+            "residual_series": residual_s,
+        }
+
     def compute_factor_pnl_attribution(
         self,
         portfolio_returns: pd.Series,

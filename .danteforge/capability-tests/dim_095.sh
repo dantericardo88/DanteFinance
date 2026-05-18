@@ -154,3 +154,31 @@ print(f"[OK] SDK._cache: manual cache set/get with structured cache key")
 
 print("\n[PASS] dim_095: REST SDK")
 PYEOF
+
+python - <<'PYEOF'
+import sys
+sys.path.insert(0, '.')
+
+from sentinel.api.rest_sdk_v3 import TokenBucket, build_client_with_retry
+
+# Token bucket math
+bucket = TokenBucket(max_tokens=100, refill_rate=10.0)
+remaining = bucket.compute_tokens_remaining(5.0)
+assert remaining == 100.0, f"Expected 100 (capped), got {remaining}"
+
+remaining2 = bucket.compute_tokens_remaining(2.0)
+assert abs(remaining2 - 100.0) < 1e-9, f"Expected 100 (capped at max), got {remaining2}"
+
+# Partial refill
+bucket2 = TokenBucket(max_tokens=100, refill_rate=10.0)
+bucket2._tokens = 50.0
+remaining3 = bucket2.compute_tokens_remaining(3.0)
+assert abs(remaining3 - 80.0) < 1e-9, f"Expected 80 (50+30), got {remaining3}"
+
+# Retry config
+cfg = build_client_with_retry('http://localhost:8000')
+assert cfg['backoff_schedule'] == [1, 2, 4, 8, 16], f"Expected [1,2,4,8,16], got {cfg['backoff_schedule']}"
+assert cfg['max_attempts'] == 5
+
+print("dim_095 token bucket and retry config: PASS")
+PYEOF

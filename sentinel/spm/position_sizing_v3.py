@@ -18,7 +18,7 @@ from __future__ import annotations
 import warnings
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -188,6 +188,118 @@ class KellyCriterion:
         if not (0 < fraction <= 1):
             raise ValueError("fraction must be in (0, 1]")
         return float(np.clip(full_kelly * fraction, 0.0, 1.0))
+
+    @staticmethod
+    def compute_kelly_with_shrinkage(
+        full_kelly: float,
+        n_obs: int,
+        n_params: int = 1,
+    ) -> float:
+        """
+        Kelly with James-Stein shrinkage (estimation error correction).
+
+        When win rate and payoff are estimated from finite samples, the
+        Kelly fraction is over-estimated due to sampling noise.  The
+        James-Stein estimator shrinks the full Kelly toward zero:
+
+            lambda = n_params / (n_obs * full_kelly^2 + n_params)
+            f_shrunk = (1 - lambda) * full_kelly
+
+        where:
+            n_obs    : number of observations (trades) used to estimate parameters
+            n_params : number of estimated parameters (default 1 for scalar Kelly)
+            lambda   : shrinkage intensity ∈ [0, 1]
+
+        Properties:
+          - More observations → smaller lambda → less shrinkage
+          - Larger full_kelly → smaller lambda → less shrinkage
+          - f_shrunk ≤ full_kelly always
+          - f_shrunk → full_kelly as n_obs → ∞
+
+        Returns:
+            Shrinkage-adjusted Kelly fraction ∈ [0, full_kelly].
+        """
+        if full_kelly <= 0.0:
+            return 0.0
+        if n_obs < 1:
+            raise ValueError("n_obs must be >= 1")
+        if n_params < 1:
+            raise ValueError("n_params must be >= 1")
+
+        # James-Stein shrinkage intensity
+        lam = n_params / (n_obs * full_kelly ** 2 + n_params)
+        lam = float(np.clip(lam, 0.0, 1.0))
+
+        f_shrunk = (1.0 - lam) * full_kelly
+        return float(np.clip(f_shrunk, 0.0, 1.0))
+
+    @staticmethod
+    def compute_kelly_for_options(
+        delta: float,
+        option_price: float,
+        underlying_price: float,
+        win_rate: float,
+        avg_win_pct: float,
+        avg_loss_pct: float,
+        leverage_multiple: Optional[float] = None,
+    ) -> float:
+        """
+        Kelly criterion adjusted for options: accounts for leverage and
+        asymmetric payoff distribution.
+
+        Methodology:
+          1. Compute base Kelly on the option return distribution:
+                f_base = (p * b - q) / b  where b = avg_win_pct / avg_loss_pct
+          2. Adjust for effective leverage:
+                leverage = (delta * underlying_price) / option_price
+             (how many dollars of underlying exposure per dollar of premium)
+          3. Scale Kelly fraction by 1/leverage to get fraction of equity to allocate:
+                f_options = f_base / leverage
+          4. Clip to [0, 1]
+
+        Args:
+            delta           : option delta (0-1 for calls, 0-(-1) for puts)
+            option_price    : option premium (per share / per unit)
+            underlying_price: current underlying price
+            win_rate        : probability option expires profitable
+            avg_win_pct     : average return on option premium when winning (e.g. 1.5 = 150%)
+            avg_loss_pct    : average loss on option premium when losing (e.g. 1.0 = 100%)
+            leverage_multiple: optional override for leverage (e.g. 5.0 for 5x)
+
+        Returns:
+            Kelly fraction as fraction of portfolio equity to allocate to the option.
+        """
+        if option_price <= 0:
+            raise ValueError("option_price must be > 0")
+        if underlying_price <= 0:
+            raise ValueError("underlying_price must be > 0")
+        if not (0 < win_rate < 1):
+            raise ValueError("win_rate must be in (0, 1)")
+        if avg_loss_pct <= 0:
+            raise ValueError("avg_loss_pct must be > 0")
+        if avg_win_pct <= 0:
+            return 0.0
+
+        # Base Kelly on option return distribution
+        b = avg_win_pct / avg_loss_pct
+        q = 1.0 - win_rate
+        f_base = (win_rate * b - q) / b
+        f_base = float(np.clip(f_base, 0.0, 1.0))
+
+        if f_base <= 0.0:
+            return 0.0
+
+        # Effective leverage: delta-adjusted notional / premium
+        if leverage_multiple is not None and leverage_multiple > 0:
+            leverage = float(leverage_multiple)
+        else:
+            leverage = abs(delta) * underlying_price / max(option_price, 1e-9)
+
+        if leverage < 1.0:
+            leverage = 1.0  # minimum 1x (no negative leverage adjustment)
+
+        f_options = f_base / leverage
+        return float(np.clip(f_options, 0.0, 1.0))
 
     # ------------------------------------------------------------------
     # From trade history

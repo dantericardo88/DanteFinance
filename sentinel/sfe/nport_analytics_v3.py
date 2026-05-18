@@ -958,6 +958,249 @@ class NPortAnalyticsEngine:
             "top10":       top10,
         }
 
+    # ── Style box (Morningstar 3×3) ───────────────────────────────────────
+
+    @staticmethod
+    def compute_style_box(
+        df: pd.DataFrame,
+        pb_col: str = "pb_ratio",
+        mktcap_col: str = "mktcap_usd",
+        weight_col: str = "pct_val",
+    ) -> Dict[str, Any]:
+        """
+        Morningstar 3×3 style box: value/blend/growth × small/mid/large.
+
+        Value axis uses portfolio-weighted average P/B ratio:
+          - Value:  wt-avg P/B < 1.75
+          - Blend:  1.75 ≤ wt-avg P/B < 3.00
+          - Growth: wt-avg P/B ≥ 3.00
+
+        Size axis uses portfolio-weighted average market cap:
+          - Large:  wt-avg mktcap ≥ $10B
+          - Mid:    $2B ≤ wt-avg mktcap < $10B
+          - Small:  wt-avg mktcap < $2B
+
+        Thresholds follow Morningstar methodology (Morningstar Style Box
+        Methodology, June 2017).  If P/B or mktcap data are absent,
+        the axis falls back to 'Unknown'.
+        """
+        result: Dict[str, Any] = {
+            "value_axis": "Unknown",
+            "size_axis": "Unknown",
+            "style_box": "Unknown",
+            "weighted_avg_pb": None,
+            "weighted_avg_mktcap_b": None,
+        }
+
+        if df.empty:
+            return result
+
+        w = pd.to_numeric(df.get(weight_col, pd.Series(dtype=float)), errors="coerce").fillna(0)
+        total_w = w.sum()
+        if total_w <= 0:
+            return result
+        w_norm = w / total_w   # normalised weights (sum = 1)
+
+        # --- Value axis (P/B) ---
+        if pb_col in df.columns:
+            pb = pd.to_numeric(df[pb_col], errors="coerce")
+            valid = pb.notna() & (pb > 0)
+            if valid.sum() >= 1:
+                w_pb = w_norm.copy()
+                w_pb[~valid] = 0.0
+                w_pb_sum = w_pb.sum()
+                if w_pb_sum > 0:
+                    w_pb = w_pb / w_pb_sum
+                wt_pb = float((pb.fillna(0) * w_pb).sum())
+                result["weighted_avg_pb"] = round(wt_pb, 4)
+                if wt_pb < 1.75:
+                    result["value_axis"] = "Value"
+                elif wt_pb < 3.00:
+                    result["value_axis"] = "Blend"
+                else:
+                    result["value_axis"] = "Growth"
+
+        # --- Size axis (market cap) ---
+        if mktcap_col in df.columns:
+            mc = pd.to_numeric(df[mktcap_col], errors="coerce")
+            valid = mc.notna() & (mc > 0)
+            if valid.sum() >= 1:
+                w_mc = w_norm.copy()
+                w_mc[~valid] = 0.0
+                w_mc_sum = w_mc.sum()
+                if w_mc_sum > 0:
+                    w_mc = w_mc / w_mc_sum
+                wt_mc = float((mc.fillna(0) * w_mc).sum())   # USD
+                wt_mc_b = wt_mc / 1e9                         # convert to billions
+                result["weighted_avg_mktcap_b"] = round(wt_mc_b, 3)
+                if wt_mc_b >= 10.0:
+                    result["size_axis"] = "Large"
+                elif wt_mc_b >= 2.0:
+                    result["size_axis"] = "Mid"
+                else:
+                    result["size_axis"] = "Small"
+
+        # --- Composite label ---
+        if result["value_axis"] != "Unknown" and result["size_axis"] != "Unknown":
+            result["style_box"] = f"{result['size_axis']}-{result['value_axis']}"
+
+        return result
+
+    # ── Active share ──────────────────────────────────────────────────────
+
+    @staticmethod
+    def compute_active_share(
+        portfolio: pd.DataFrame,
+        benchmark: pd.DataFrame,
+        ticker_col: str = "ticker",
+        weight_col: str = "pct_val",
+    ) -> Dict[str, Any]:
+        """
+        Compute active share vs. a benchmark index.
+
+        Active Share = (1/2) × Σ |w_portfolio_i - w_benchmark_i|
+
+        Range: [0, 1].  0 = identical to benchmark; 1 = fully active.
+        Formula: Cremers & Petajisto (2009), "How Active Is Your Fund Manager?"
+
+        Parameters
+        ----------
+        portfolio  : DataFrame with ticker and portfolio weight columns.
+        benchmark  : DataFrame with ticker and benchmark weight columns.
+        ticker_col : column name for security identifiers (must be present in both).
+        weight_col : column name for weight (%).  Will be normalised to fractions.
+
+        Returns dict with active_share, n_active_positions, tracking_error_proxy.
+        """
+        def _normalise(df: pd.DataFrame) -> pd.Series:
+            w = pd.to_numeric(df[weight_col], errors="coerce").fillna(0)
+            total = w.sum()
+            return (w / total if total > 0 else w).values
+
+        if portfolio.empty or ticker_col not in portfolio.columns or weight_col not in portfolio.columns:
+            return {"active_share": 0.0, "n_active_positions": 0, "error": "invalid_portfolio"}
+        if benchmark.empty or ticker_col not in benchmark.columns or weight_col not in benchmark.columns:
+            return {"active_share": 1.0, "n_active_positions": len(portfolio), "error": "no_benchmark"}
+
+        p = portfolio[[ticker_col, weight_col]].copy()
+        b = benchmark[[ticker_col, weight_col]].copy()
+
+        # Normalise weights to fractions (not %)
+        p_w = pd.to_numeric(p[weight_col], errors="coerce").fillna(0)
+        p_total = p_w.sum()
+        p["_w"] = p_w / p_total if p_total > 0 else p_w
+
+        b_w = pd.to_numeric(b[weight_col], errors="coerce").fillna(0)
+        b_total = b_w.sum()
+        b["_w"] = b_w / b_total if b_total > 0 else b_w
+
+        # Merge on ticker
+        merged = pd.merge(
+            p[[ticker_col, "_w"]].rename(columns={"_w": "w_p"}),
+            b[[ticker_col, "_w"]].rename(columns={"_w": "w_b"}),
+            on=ticker_col,
+            how="outer",
+        ).fillna(0)
+
+        diff = (merged["w_p"] - merged["w_b"]).abs()
+        active_share = float(diff.sum() / 2.0)
+        active_share = max(0.0, min(1.0, active_share))   # clamp [0, 1]
+
+        # Positions where portfolio weight meaningfully exceeds benchmark
+        active_positions = merged[
+            (merged["w_p"] - merged["w_b"]).abs() > 0.001
+        ]
+
+        return {
+            "active_share": round(active_share, 6),
+            "active_share_pct": round(active_share * 100, 4),
+            "n_total_securities": len(merged),
+            "n_active_positions": len(active_positions),
+            "interpretation": (
+                "Closet indexer (<20%)" if active_share < 0.20 else
+                "Mildly active (20–40%)" if active_share < 0.40 else
+                "Moderately active (40–60%)" if active_share < 0.60 else
+                "Highly active (60–80%)" if active_share < 0.80 else
+                "Pure stock picker (>80%)"
+            ),
+        }
+
+    # ── Portfolio drift detection ─────────────────────────────────────────
+
+    @staticmethod
+    def detect_portfolio_drift(
+        current_weights: Dict[str, float],
+        target_weights: Dict[str, float],
+        drift_threshold: float = 0.05,
+    ) -> Dict[str, Any]:
+        """
+        Detect whether the current portfolio has drifted beyond threshold from targets.
+
+        Triggers a rebalancing signal when any position deviates more than
+        `drift_threshold` (default 5%) from its target weight.
+
+        Parameters
+        ----------
+        current_weights : {ticker: weight} where weights are fractions summing ≈ 1.
+        target_weights  : {ticker: target_weight} fractions.
+        drift_threshold : absolute deviation in weight fraction that triggers signal.
+                          Default 0.05 = 5 percentage points.
+
+        Returns
+        -------
+        dict with:
+          rebalance_required : bool
+          max_drift          : float (largest single absolute deviation)
+          drifted_positions  : list of {ticker, current, target, drift}
+          drift_details      : full per-position breakdown
+        """
+        if not current_weights or not target_weights:
+            return {"rebalance_required": False, "max_drift": 0.0,
+                    "drifted_positions": [], "drift_details": []}
+
+        # Normalise both weight dicts so they sum to 1
+        c_total = sum(current_weights.values())
+        t_total = sum(target_weights.values())
+        c_norm = {k: v / c_total for k, v in current_weights.items()} if c_total > 0 else current_weights
+        t_norm = {k: v / t_total for k, v in target_weights.items()} if t_total > 0 else target_weights
+
+        all_tickers = set(c_norm.keys()) | set(t_norm.keys())
+        details = []
+        drifted = []
+        max_drift = 0.0
+
+        for tkr in sorted(all_tickers):
+            cw = c_norm.get(tkr, 0.0)
+            tw = t_norm.get(tkr, 0.0)
+            drift = abs(cw - tw)
+            max_drift = max(max_drift, drift)
+            entry = {
+                "ticker": tkr,
+                "current_weight": round(cw, 6),
+                "target_weight": round(tw, 6),
+                "drift": round(drift, 6),
+                "drift_pct": round(drift * 100, 4),
+                "breaches_threshold": drift > drift_threshold,
+                "direction": "overweight" if cw > tw else "underweight" if cw < tw else "on_target",
+            }
+            details.append(entry)
+            if drift > drift_threshold:
+                drifted.append(entry)
+
+        rebalance_required = len(drifted) > 0
+
+        return {
+            "rebalance_required": rebalance_required,
+            "max_drift": round(max_drift, 6),
+            "max_drift_pct": round(max_drift * 100, 4),
+            "drift_threshold": drift_threshold,
+            "n_positions_checked": len(all_tickers),
+            "n_drifted": len(drifted),
+            "drifted_positions": drifted,
+            "drift_details": details,
+            "signal": "REBALANCE" if rebalance_required else "HOLD",
+        }
+
     # ── Sector exposure ───────────────────────────────────────────────────
 
     @staticmethod

@@ -53,11 +53,12 @@ except ImportError:
 # ---------------------------------------------------------------------------
 _TIER1_EXCHANGES = [
     "binance", "coinbase", "kraken", "okx", "bybit",
-    "bitfinex", "huobi", "kucoin", "gate", "mexc",
+    "bitfinex", "htx", "kucoin", "gate", "mexc",
 ]
 _TIER2_EXCHANGES = [
     "binanceus", "bitstamp", "gemini", "poloniex",
     "bittrex", "liquid", "bitflyer", "phemex",
+    "gateio", "cryptocom",
 ]
 _DEFUNCT_EXCHANGES = {"ftx", "bitmex_testnet"}
 
@@ -383,7 +384,8 @@ class CCXTExchangeManager:
         defaults = {
             "binance": 0.001, "coinbase": 0.005, "kraken": 0.0026,
             "okx": 0.001, "bybit": 0.001, "bitfinex": 0.002,
-            "kucoin": 0.001, "gate": 0.002, "mexc": 0.002,
+            "htx": 0.002, "kucoin": 0.001, "gate": 0.002, "mexc": 0.002,
+            "gateio": 0.002, "cryptocom": 0.004,
         }
         return defaults.get(exchange_id, 0.002)
 
@@ -1223,6 +1225,226 @@ class SmartOrderRouter:
 
         filled = quantity - remaining
         return cost / filled if filled > 0 else levels[0][0]
+
+    # ------------------------------------------------------------------
+    def split_order_by_liquidity(
+        self,
+        symbol: str,
+        side: str,
+        total_quantity: float,
+        exchanges: list[str],
+        liquidity_map: dict[str, float] | None = None,
+    ) -> list[dict]:
+        """
+        Route splitting: given order size, split across exchanges proportionally
+        to available liquidity at target price.
+
+        Algorithm:
+          1. For each exchange, determine available liquidity (from order book top-5
+             levels, or from liquidity_map if provided for testing).
+          2. Sort exchanges descending by liquidity.
+          3. Allocate proportionally: alloc_i = total_qty × (liq_i / total_liq).
+
+        Returns list of dicts: [{"exchange": str, "quantity": float, "liquidity": float}]
+        """
+        # Build liquidity map from order books if not provided
+        if liquidity_map is None:
+            liquidity_map = {}
+            for ex_id in exchanges:
+                try:
+                    book = self._oba.fetch_order_book(ex_id, symbol, limit=10)
+                    levels = book.asks if side == "buy" else book.bids
+                    liquidity_map[ex_id] = sum(v for _, v in levels[:5])
+                except Exception:
+                    liquidity_map[ex_id] = 0.0
+
+        # Filter to exchanges with positive liquidity
+        valid = {ex: liq for ex, liq in liquidity_map.items() if liq > 0 and ex in exchanges}
+        if not valid:
+            return []
+
+        total_liquidity = sum(valid.values())
+        # Sort descending by liquidity
+        sorted_exchanges = sorted(valid.items(), key=lambda x: -x[1])
+
+        allocations = []
+        for ex_id, liq in sorted_exchanges:
+            proportion = liq / total_liquidity
+            qty = total_quantity * proportion
+            allocations.append({
+                "exchange": ex_id,
+                "quantity": round(qty, 8),
+                "liquidity": liq,
+                "allocation_pct": round(proportion * 100, 2),
+            })
+
+        return allocations
+
+    # ------------------------------------------------------------------
+    def estimate_slippage(
+        self,
+        order_size_usd: float,
+        bid_ask_depth_usd: float,
+        market_impact_coeff: float = 0.1,
+    ) -> float:
+        """
+        Estimate slippage as a fraction of price.
+
+        Formula: slippage = order_size / (bid_ask_depth × market_impact_coeff)
+
+        Args:
+            order_size_usd:      Total order size in USD.
+            bid_ask_depth_usd:   Combined bid+ask depth within 1% of mid (USD).
+            market_impact_coeff: Default 0.1 — tunes impact sensitivity.
+
+        Returns:
+            Slippage as a decimal fraction (e.g., 0.005 = 0.5%).
+        """
+        if bid_ask_depth_usd <= 0 or market_impact_coeff <= 0:
+            return 1.0  # No liquidity = 100% slippage
+        denominator = bid_ask_depth_usd * market_impact_coeff
+        slippage = order_size_usd / denominator
+        # Cap at 100% slippage
+        return min(1.0, max(0.0, slippage))
+
+    # ------------------------------------------------------------------
+    def score_best_execution(
+        self,
+        symbol: str,
+        exchanges: list[str],
+        order_size_usd: float = 100_000.0,
+        side: str = "buy",
+    ) -> list[dict]:
+        """
+        Compute best execution score per exchange.
+
+        Score = price_improvement - fee_pct - slippage_estimate
+
+        For buy orders, price_improvement = (best_ask_across_all - exchange_ask) / best_ask_across_all
+        For sell orders, price_improvement = (exchange_bid - best_bid_across_all) / best_bid_across_all
+
+        Higher score = better execution venue.
+
+        Returns list sorted by score descending.
+        """
+        books: dict[str, OrderBook] = {}
+        for ex_id in exchanges:
+            try:
+                books[ex_id] = self._oba.fetch_order_book(ex_id, symbol, limit=10)
+            except Exception:
+                pass
+
+        # Determine reference price (global best)
+        if side == "buy":
+            best_prices = [books[ex].asks[0][0] for ex in books if books[ex].asks]
+            reference_price = min(best_prices) if best_prices else None
+        else:
+            best_prices = [books[ex].bids[0][0] for ex in books if books[ex].bids]
+            reference_price = max(best_prices) if best_prices else None
+
+        if reference_price is None or reference_price <= 0:
+            return []
+
+        results = []
+        for ex_id in exchanges:
+            if ex_id not in books:
+                continue
+            book = books[ex_id]
+
+            if side == "buy":
+                if not book.asks:
+                    continue
+                ex_price = book.asks[0][0]
+                # Price improvement: paying less than the worst ask
+                price_improvement = (reference_price - ex_price) / reference_price if reference_price > 0 else 0.0
+            else:
+                if not book.bids:
+                    continue
+                ex_price = book.bids[0][0]
+                price_improvement = (ex_price - reference_price) / reference_price if reference_price > 0 else 0.0
+
+            # Fee
+            fee_pct = self._mgr.get_exchange_taker_fee(ex_id)
+
+            # Slippage estimate
+            depth_info = self._oba.compute_market_depth(book, pct_from_mid=0.01)
+            depth_usd = depth_info.get("total_depth", 0) * (book.mid_price or ex_price)
+            slippage = self.estimate_slippage(order_size_usd, depth_usd)
+
+            score = price_improvement - fee_pct - slippage
+
+            results.append({
+                "exchange": ex_id,
+                "price": ex_price,
+                "price_improvement": round(price_improvement, 6),
+                "fee_pct": fee_pct,
+                "slippage_estimate": round(slippage, 6),
+                "execution_score": round(score, 6),
+            })
+
+        # Sort by execution score descending (higher = better)
+        results.sort(key=lambda x: -x["execution_score"])
+        return results
+
+    # ------------------------------------------------------------------
+    def generate_twap_schedule(
+        self,
+        symbol: str,
+        side: str,
+        total_quantity: float,
+        time_window_minutes: int,
+        num_slices: int | None = None,
+        jitter_pct: float = 0.10,
+    ) -> list[dict]:
+        """
+        Generate a TWAP (Time-Weighted Average Price) execution schedule.
+
+        Splits total_quantity into num_slices equal sub-orders spread over
+        time_window_minutes, with each interval randomized by ±jitter_pct
+        to avoid front-running patterns.
+
+        Args:
+            symbol:               Trading pair.
+            side:                 'buy' or 'sell'.
+            total_quantity:       Total order size.
+            time_window_minutes:  Total execution window in minutes.
+            num_slices:           Number of sub-orders (default: max(2, window//6)).
+            jitter_pct:           Random timing jitter as fraction of interval (default 0.10 = ±10%).
+
+        Returns:
+            List of dicts with keys: slice_index, quantity, scheduled_offset_minutes,
+            jitter_minutes, execute_at_minutes.
+        """
+        import random
+
+        if num_slices is None:
+            num_slices = max(2, time_window_minutes // 6)
+
+        num_slices = max(1, num_slices)
+        slice_qty = total_quantity / num_slices
+        base_interval = time_window_minutes / num_slices
+
+        schedule = []
+        for i in range(num_slices):
+            # Nominal offset: i × interval
+            nominal_offset = i * base_interval
+            # Jitter: ±jitter_pct of interval
+            max_jitter = base_interval * jitter_pct
+            jitter = random.uniform(-max_jitter, max_jitter)
+            # Clamp execute_at to [0, time_window_minutes]
+            execute_at = max(0.0, min(time_window_minutes, nominal_offset + jitter))
+
+            schedule.append({
+                "slice_index": i,
+                "symbol": symbol,
+                "side": side,
+                "quantity": round(slice_qty, 8),
+                "scheduled_offset_minutes": round(nominal_offset, 4),
+                "jitter_minutes": round(jitter, 4),
+                "execute_at_minutes": round(execute_at, 4),
+            })
+
+        return schedule
 
 
 # ---------------------------------------------------------------------------

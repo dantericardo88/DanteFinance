@@ -62,8 +62,9 @@ class OrderSide(str, Enum):
 
 class OrderStatus(str, Enum):
     PENDING = "PENDING"
-    FILLED = "FILLED"
+    SUBMITTED = "SUBMITTED"
     PARTIALLY_FILLED = "PARTIALLY_FILLED"
+    FILLED = "FILLED"
     CANCELLED = "CANCELLED"
     REJECTED = "REJECTED"
     EXPIRED = "EXPIRED"
@@ -93,9 +94,24 @@ class Order:
     filled_quantity: int = 0
     filled_price: Optional[float] = None
     commission_paid: float = 0.0
-    submitted_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    slippage_cost: float = 0.0       # dollar slippage vs mid-price
+    market_impact_cost: float = 0.0  # dollar market impact (Almgren-Chriss)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    submitted_at: Optional[datetime] = None
+    partially_filled_at: Optional[datetime] = None
     filled_at: Optional[datetime] = None
     notes: str = ""
+
+    def transition(self, new_status: OrderStatus) -> None:
+        """Record status transition with timestamp."""
+        now = datetime.now(timezone.utc)
+        self.status = new_status
+        if new_status == OrderStatus.SUBMITTED and self.submitted_at is None:
+            self.submitted_at = now
+        elif new_status == OrderStatus.PARTIALLY_FILLED and self.partially_filled_at is None:
+            self.partially_filled_at = now
+        elif new_status == OrderStatus.FILLED and self.filled_at is None:
+            self.filled_at = now
 
 
 @dataclass
@@ -109,7 +125,32 @@ class Trade:
     commission: float
     timestamp: datetime
     realized_pnl: float = 0.0
+    slippage_cost: float = 0.0
+    market_impact_cost: float = 0.0
     strategy_tag: str = ""
+
+
+@dataclass
+class PnLAttribution:
+    """Full P&L breakdown separating realized, unrealized, commissions, slippage, impact."""
+    ticker: str
+    realized_pnl: float
+    unrealized_pnl: float
+    commission_total: float
+    slippage_total: float
+    market_impact_total: float
+
+    @property
+    def gross_pnl(self) -> float:
+        return self.realized_pnl + self.unrealized_pnl
+
+    @property
+    def net_pnl(self) -> float:
+        return self.gross_pnl - self.commission_total - self.slippage_total - self.market_impact_total
+
+    @property
+    def total_costs(self) -> float:
+        return self.commission_total + self.slippage_total + self.market_impact_total
 
 
 @dataclass
@@ -364,6 +405,7 @@ class MarketSimulator:
         self.slippage_model = slippage_model
         self._price_cache: Dict[str, float] = {}
         self._adv_cache: Dict[str, float] = {}   # avg daily volume × price
+        self._vol_cache: Dict[str, float] = {}   # realized daily volatility
 
     # ── Price Fetching ─────────────────────────────────────────────────────────
 
@@ -405,21 +447,40 @@ class MarketSimulator:
 
     # ── Bid-Ask Estimation ─────────────────────────────────────────────────────
 
-    def get_bid_ask(self, ticker: str) -> Tuple[float, float]:
-        """Estimate bid-ask. Liquid stocks: ≈0.02% spread. Illiquid: 0.1-0.5%."""
+    def get_bid_ask(self, ticker: str, realized_vol: Optional[float] = None) -> Tuple[float, float]:
+        """
+        Estimate bid-ask from realized volatility.
+        Formula: spread_bps = max(5, realized_vol * 100)
+        bid = close * (1 - 0.5 * spread_bps / 10000)
+        ask = close * (1 + 0.5 * spread_bps / 10000)
+        Higher vol stocks have wider spreads (captures information asymmetry).
+        """
         price = self._price_cache.get(ticker) or self.get_current_price(ticker)
         if price <= 0:
             return 0.0, 0.0
-        # Use minimum tick of $0.01 and percentage-based spread
-        if price >= 100:
-            spread_pct = 0.0002   # 2bps
-        elif price >= 10:
-            spread_pct = 0.0005   # 5bps
+        # Use cached vol or fallback to price-tier heuristic
+        vol = realized_vol or self._vol_cache.get(ticker)
+        if vol is not None and vol > 0:
+            spread_bps = max(5.0, vol * 100.0)
         else:
-            spread_pct = 0.002    # 20bps for penny/micro
-        spread = max(0.01, price * spread_pct)
+            # Fallback heuristic by price tier
+            if price >= 100:
+                spread_bps = 5.0
+            elif price >= 10:
+                spread_bps = 10.0
+            else:
+                spread_bps = 50.0   # penny stocks very wide
+        half_spread_frac = 0.5 * spread_bps / 10_000
+        bid = price * (1.0 - half_spread_frac)
+        ask = price * (1.0 + half_spread_frac)
+        # Enforce minimum tick of $0.01
+        spread = max(0.01, ask - bid)
         half = spread / 2
         return price - half, price + half
+
+    def cache_realized_vol(self, ticker: str, vol: float) -> None:
+        """Store realized daily volatility for a ticker (used in spread computation)."""
+        self._vol_cache[ticker] = vol
 
     # ── Slippage ───────────────────────────────────────────────────────────────
 
@@ -439,14 +500,15 @@ class MarketSimulator:
             return base_price + sign * (0.5 * spread)
 
         if self.slippage_model == SlippageModel.MARKET_IMPACT:
-            # Almgren-Chriss simplified: impact = σ × sqrt(order_size / ADV) × price
-            sigma = 0.015  # daily vol estimate; ideally computed from history
-            order_value = base_price * order.quantity
-            adv = self._adv_cache.get(order.ticker, 10_000_000)  # default $10M ADV
-            if order_value > 10_000 and adv > 0:
-                impact = sigma * math.sqrt(order_value / adv) * base_price
-            else:
-                impact = base_price * 0.0001
+            # Almgren-Chriss square root law: impact = 0.1 * sqrt(order_size / avg_volume)
+            # Returns impact as a fraction of price; sign applied for direction
+            avg_volume = self._adv_cache.get(order.ticker, 1_000_000)  # shares (not dollars)
+            if avg_volume <= 0:
+                avg_volume = 1_000_000
+            # Compute fraction of ADV (using share count, not dollars)
+            order_shares = float(order.quantity)
+            impact_frac = 0.1 * math.sqrt(order_shares / avg_volume)
+            impact = impact_frac * base_price
             return base_price + sign * impact
 
         return base_price
@@ -528,6 +590,7 @@ class PaperBroker:
             self._rejected_orders.append(order)
             return order
 
+        order.transition(OrderStatus.SUBMITTED)
         self._orders[order.order_id] = order
         logger.debug("Order submitted: %s %s %s×%s", order.order_type, order.side, order.quantity, order.ticker)
         return order
@@ -614,11 +677,29 @@ class PaperBroker:
 
     def _execute_fill(self, order: Order, fill_price: float, bar: pd.Series) -> Trade:
         commission = self._compute_commission(order)
+        mid_price = float(bar.get("Close", fill_price))
+
+        # Compute slippage (dollar cost vs mid/close)
+        sign = 1.0 if order.side == OrderSide.BUY else -1.0
+        slippage_per_share = sign * (fill_price - mid_price)
+        slippage_cost = max(0.0, slippage_per_share * order.quantity)
+
+        # Compute market impact cost (Almgren-Chriss)
+        avg_volume = self.market_sim._adv_cache.get(order.ticker, 1_000_000)
+        if avg_volume > 0:
+            impact_frac = 0.1 * math.sqrt(float(order.quantity) / avg_volume)
+        else:
+            impact_frac = 0.0
+        market_impact_cost = impact_frac * mid_price * order.quantity
+
+        # Lifecycle: PARTIALLY_FILLED (momentary) → FILLED
         order.filled_quantity = order.quantity
         order.filled_price = fill_price
         order.commission_paid = commission
-        order.status = OrderStatus.FILLED
-        order.filled_at = datetime.now(timezone.utc)
+        order.slippage_cost = slippage_cost
+        order.market_impact_cost = market_impact_cost
+        order.transition(OrderStatus.PARTIALLY_FILLED)
+        order.transition(OrderStatus.FILLED)
 
         realized = self.portfolio.apply_fill(order, fill_price)
 
@@ -632,11 +713,14 @@ class PaperBroker:
             commission=commission,
             timestamp=datetime.now(timezone.utc),
             realized_pnl=realized,
+            slippage_cost=slippage_cost,
+            market_impact_cost=market_impact_cost,
         )
         self._trades.append(trade)
         logger.info(
-            "FILL: %s %s %d @ $%.4f  comm=$%.2f  realized_pnl=$%.2f",
-            order.side.value, order.ticker, order.quantity, fill_price, commission, realized,
+            "FILL: %s %s %d @ $%.4f  comm=$%.2f  slip=$%.2f  impact=$%.2f  realized_pnl=$%.2f",
+            order.side.value, order.ticker, order.quantity, fill_price,
+            commission, slippage_cost, market_impact_cost, realized,
         )
         return trade
 
@@ -852,8 +936,20 @@ class PerformanceAnalytics:
         gross_loss = abs(sum(t.realized_pnl for t in losses))
         profit_factor = gross_profit / gross_loss if gross_loss > 0 else float("inf")
 
-        # Avg hold days: approximate from sequential buy/sell pairs
-        avg_hold_days = 1.0  # default
+        # Avg hold days: computed from sequential buy/sell pair timestamps
+        # Match each SELL to the most recent BUY of the same ticker
+        buy_times: Dict[str, List[datetime]] = {}
+        hold_periods: List[float] = []
+        for t in sorted(trades, key=lambda x: x.timestamp):
+            if t.side == OrderSide.BUY:
+                if t.ticker not in buy_times:
+                    buy_times[t.ticker] = []
+                buy_times[t.ticker].append(t.timestamp)
+            elif t.side == OrderSide.SELL and t.ticker in buy_times and buy_times[t.ticker]:
+                open_ts = buy_times[t.ticker].pop(0)
+                days_held = (t.timestamp - open_ts).total_seconds() / 86400
+                hold_periods.append(days_held)
+        avg_hold_days = float(np.mean(hold_periods)) if hold_periods else 1.0
 
         # Turnover
         initial_equity = float(equity_curve.iloc[0])
@@ -878,6 +974,56 @@ class PerformanceAnalytics:
             avg_drawdown=avg_dd,
             max_drawdown_duration_days=max_dd_dur,
         )
+
+    @staticmethod
+    def compute_pnl_attribution(trades: List[Trade], portfolio: Portfolio) -> Dict[str, "PnLAttribution"]:
+        """
+        Full P&L attribution per ticker separating:
+        - realized PnL (closed positions)
+        - unrealized PnL (open positions, marked to market)
+        - commissions paid
+        - slippage costs (fill vs mid-price)
+        - market impact costs (Almgren-Chriss estimate)
+
+        Invariant: realized + unrealized - costs = net_pnl
+        """
+        from sentinel.sbx.paper_trading_v3 import PnLAttribution
+        by_ticker: Dict[str, dict] = {}
+        for t in trades:
+            if t.ticker not in by_ticker:
+                by_ticker[t.ticker] = {
+                    "realized_pnl": 0.0,
+                    "commission_total": 0.0,
+                    "slippage_total": 0.0,
+                    "market_impact_total": 0.0,
+                }
+            by_ticker[t.ticker]["realized_pnl"] += t.realized_pnl
+            by_ticker[t.ticker]["commission_total"] += t.commission
+            by_ticker[t.ticker]["slippage_total"] += t.slippage_cost
+            by_ticker[t.ticker]["market_impact_total"] += t.market_impact_cost
+
+        # Add unrealized PnL from open positions
+        for pos in portfolio.get_all_positions():
+            if pos.ticker not in by_ticker:
+                by_ticker[pos.ticker] = {
+                    "realized_pnl": 0.0,
+                    "commission_total": 0.0,
+                    "slippage_total": 0.0,
+                    "market_impact_total": 0.0,
+                }
+            by_ticker[pos.ticker]["unrealized_pnl"] = pos.unrealized_pnl
+
+        result: Dict[str, PnLAttribution] = {}
+        for ticker, d in by_ticker.items():
+            result[ticker] = PnLAttribution(
+                ticker=ticker,
+                realized_pnl=d["realized_pnl"],
+                unrealized_pnl=d.get("unrealized_pnl", 0.0),
+                commission_total=d["commission_total"],
+                slippage_total=d["slippage_total"],
+                market_impact_total=d["market_impact_total"],
+            )
+        return result
 
     @staticmethod
     def compute_attribution(trades: List[Trade], portfolio: Portfolio) -> pd.DataFrame:

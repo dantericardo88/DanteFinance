@@ -18,6 +18,7 @@ from sentinel.sma.google_trends_v3 import (
     _SECTOR_TICKERS,
     _VALID_TIMEFRAMES,
     TrendsScore,
+    TrendsSignalEngine,
 )
 
 # Test _zscore with known inputs
@@ -153,6 +154,94 @@ assert score_obj.ticker == "AAPL"
 assert 0.0 <= score_obj.composite_score <= 1.0
 assert score_obj.momentum_zscore == 1.8
 print(f"[OK] TrendsScore: ticker={score_obj.ticker} composite={score_obj.composite_score:.4f}")
+
+# ---------------------------------------------------------------
+# NEW: Fear/greed composite — 5 component weights sum to 1.0
+# ---------------------------------------------------------------
+W_SEARCH   = 0.20
+W_MOMENTUM = 0.20
+W_BREADTH  = 0.20
+W_JUNK     = 0.20
+W_VOL      = 0.20
+total_weight = W_SEARCH + W_MOMENTUM + W_BREADTH + W_JUNK + W_VOL
+assert abs(total_weight - 1.0) < 1e-9, \
+    f"Component weights must sum to 1.0: {total_weight}"
+print(f"[OK] Fear/greed component weights sum to 1.0: {total_weight}")
+
+# Composite formula with known inputs should produce score in [0, 100]
+def fear_greed_composite(search, momentum, breadth, junk, vol):
+    score = (
+        W_SEARCH   * search
+        + W_MOMENTUM * momentum
+        + W_BREADTH  * breadth
+        + W_JUNK     * junk
+        + W_VOL      * vol
+    )
+    return _clamp(score, 0.0, 100.0)
+
+score_fear  = fear_greed_composite(20, 25, 30, 35, 25)  # ~27 → Fear
+score_greed = fear_greed_composite(70, 75, 65, 80, 70)  # ~72 → Greed
+score_neutral = fear_greed_composite(50, 50, 50, 50, 50)
+
+assert 0.0 <= score_fear <= 100.0, f"Fear/greed score must be in [0,100]: {score_fear}"
+assert 0.0 <= score_greed <= 100.0, f"Fear/greed score must be in [0,100]: {score_greed}"
+assert score_greed > score_fear, f"Greed score should exceed fear score: {score_greed} vs {score_fear}"
+assert abs(score_neutral - 50.0) < 1e-9, f"Neutral inputs should yield 50.0: {score_neutral}"
+print(f"[OK] Fear/greed composite: fear={score_fear:.1f} neutral={score_neutral:.1f} greed={score_greed:.1f}")
+
+# Classification thresholds: 30 → Fear, 70 → Greed
+from sentinel.sma.google_trends_v3 import TrendsSignalEngine
+engine = TrendsSignalEngine.__new__(TrendsSignalEngine)  # no-network instantiation
+
+# Access classify_fear_greed via the module's signal engine class
+from sentinel.sma.google_trends_v3 import TrendsSignalEngine as TSE
+classify = TSE.classify_fear_greed
+
+assert classify(30.0) == "Fear", f"30 should be Fear: {classify(30.0)}"
+assert classify(70.0) == "Greed", f"70 should be Greed: {classify(70.0)}"
+assert classify(10.0) == "Extreme Fear", f"10 should be Extreme Fear: {classify(10.0)}"
+assert classify(90.0) == "Extreme Greed", f"90 should be Extreme Greed: {classify(90.0)}"
+assert classify(50.0) == "Neutral", f"50 should be Neutral: {classify(50.0)}"
+print(f"[OK] Fear/greed classification: 10=Extreme Fear, 30=Fear, 50=Neutral, 70=Greed, 90=Extreme Greed")
+
+# ---------------------------------------------------------------
+# NEW: Product cycle acceleration — pure derivative math
+# ---------------------------------------------------------------
+# Given an accelerating search trend series, acceleration (2nd derivative) > 0
+accel_product_series = [10.0, 15.0, 22.0, 32.0, 45.0, 62.0, 85.0]
+d1_last = accel_product_series[-1] - accel_product_series[-2]
+d1_prev = accel_product_series[-2] - accel_product_series[-3]
+accel_2nd_deriv = d1_last - d1_prev
+assert accel_2nd_deriv > 0, \
+    f"Accelerating search trend should have positive 2nd derivative: {accel_2nd_deriv}"
+print(f"[OK] Product cycle acceleration (2nd deriv): {accel_2nd_deriv:.2f} > 0")
+
+# Decelerating: 2nd derivative < 0
+decel_product_series = [10.0, 25.0, 38.0, 48.0, 55.0, 60.0, 63.0]
+d1_last = decel_product_series[-1] - decel_product_series[-2]
+d1_prev = decel_product_series[-2] - decel_product_series[-3]
+decel_2nd_deriv = d1_last - d1_prev
+assert decel_2nd_deriv < 0, \
+    f"Decelerating search trend should have negative 2nd derivative: {decel_2nd_deriv}"
+print(f"[OK] Product cycle deceleration (2nd deriv): {decel_2nd_deriv:.2f} < 0")
+
+# Surprise probability mapping: acceleration > 2 → 0.65, <=0 → 0.45
+def map_accel_to_prob(accel):
+    if accel > 2.0:
+        return 0.65
+    elif accel > 0.5:
+        return 0.60
+    elif accel > 0.0:
+        return 0.55
+    elif accel > -0.5:
+        return 0.50
+    else:
+        return 0.45
+
+assert map_accel_to_prob(3.0) == 0.65, "High accel → 0.65"
+assert map_accel_to_prob(-1.0) == 0.45, "Negative accel → 0.45"
+assert map_accel_to_prob(0.0) == 0.50, "Zero accel → 0.50"
+print(f"[OK] Product cycle surprise_prob mapping: high_accel=0.65, zero=0.50, negative=0.45")
 
 print("\n[PASS] dim_089: Google Trends")
 PYEOF

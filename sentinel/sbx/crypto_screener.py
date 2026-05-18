@@ -803,6 +803,195 @@ class CryptoScreener:
         )
         return result
 
+    def compute_on_chain_momentum(
+        self,
+        active_addresses_history: list[int],
+        window_days: int = 30,
+        zscore_lookback: int = 90,
+    ) -> dict:
+        """On-chain address momentum.
+
+        daily_growth_rate = active_address_30d_change / 30
+        z_score           = z-score of daily_growth_rate over the past 90 days
+
+        Args:
+            active_addresses_history: Daily active address counts (oldest → newest).
+                                      Must have at least ``window_days + 1`` entries.
+            window_days: Rolling window to compute change (default 30).
+            zscore_lookback: Days to use for z-score denominator (default 90).
+
+        Returns:
+            {
+              "daily_growth_rate": float,
+              "total_30d_change": int,
+              "z_score": float | None,
+              "momentum_label": str,
+            }
+        """
+        if len(active_addresses_history) < window_days + 1:
+            return {
+                "daily_growth_rate": 0.0,
+                "total_30d_change": 0,
+                "z_score": None,
+                "momentum_label": "insufficient_data",
+            }
+
+        series = np.array(active_addresses_history, dtype=float)
+
+        # 30-day change and daily growth rate
+        total_30d_change = int(series[-1] - series[-window_days - 1])
+        daily_growth_rate = total_30d_change / window_days
+
+        # Rolling 90-day daily changes for z-score
+        daily_changes = np.diff(series)
+        lookback_changes = daily_changes[-zscore_lookback:] if len(daily_changes) >= zscore_lookback else daily_changes
+        mean_daily = float(np.mean(lookback_changes))
+        std_daily = float(np.std(lookback_changes, ddof=1)) if len(lookback_changes) > 1 else 1.0
+
+        z_score: float | None = None
+        if std_daily > 0:
+            z_score = round((daily_growth_rate - mean_daily) / std_daily, 4)
+
+        if z_score is not None:
+            if z_score > 2.0:
+                label = "strong_growth"
+            elif z_score > 0.5:
+                label = "moderate_growth"
+            elif z_score < -2.0:
+                label = "strong_decline"
+            elif z_score < -0.5:
+                label = "moderate_decline"
+            else:
+                label = "neutral"
+        else:
+            label = "neutral"
+
+        return {
+            "daily_growth_rate": round(daily_growth_rate, 2),
+            "total_30d_change": total_30d_change,
+            "z_score": z_score,
+            "momentum_label": label,
+        }
+
+    def screen_by_defi_metrics(
+        self,
+        protocols: list[DeFiProtocol],
+        min_protocol_revenue_monthly: float = 1_000_000.0,
+        min_tvl_growth_90d_pct: float = 20.0,
+    ) -> list[DeFiProtocol]:
+        """Filter DeFi protocols by quality revenue and TVL growth metrics.
+
+        Passes when BOTH conditions hold:
+          - protocol_revenue > $1M / month  (proxy: tvl × assumed_revenue_yield)
+          - TVL growth 90d > 20%            (proxy: change_7d annualised ÷ 13)
+
+        When protocol-level revenue data is unavailable, a TVL-based proxy is
+        used: revenue ≈ TVL × 0.003 (30bps yield, conservative DeFi estimate).
+
+        Args:
+            protocols: List of DeFiProtocol objects from get_defi_overview().
+            min_protocol_revenue_monthly: Revenue threshold in USD (default $1M).
+            min_tvl_growth_90d_pct: TVL growth threshold in % (default 20%).
+
+        Returns:
+            Filtered list of DeFiProtocol objects sorted by TVL descending.
+        """
+        passed: list[DeFiProtocol] = []
+        for p in protocols:
+            # Revenue proxy: TVL × 0.003 monthly
+            revenue_proxy = p.tvl * 0.003
+            passes_revenue = revenue_proxy >= min_protocol_revenue_monthly
+
+            # TVL growth proxy: change_7d (weekly %) annualised then converted to ~90d
+            passes_growth = False
+            if p.change_7d is not None:
+                # Approximate 90d growth from 7d change:
+                # weekly_pct → 13-week cumulative
+                approx_90d_growth = ((1 + p.change_7d / 100) ** 13 - 1) * 100
+                passes_growth = approx_90d_growth >= min_tvl_growth_90d_pct
+
+            if passes_revenue and passes_growth:
+                passed.append(p)
+
+        passed.sort(key=lambda p: p.tvl, reverse=True)
+        logger.info(
+            "screen_by_defi_metrics.complete total=%d passed=%d",
+            len(protocols), len(passed),
+        )
+        return passed
+
+    def compute_crypto_fear_greed(
+        self,
+        price_momentum_score: float,
+        volume_score: float,
+        social_score: float,
+        dominance_score: float,
+        trends_score: float,
+    ) -> dict:
+        """Composite Crypto Fear & Greed index (5-component model).
+
+        Component weights:
+          price_momentum  25%
+          volume          25%
+          social          25%
+          dominance       15%
+          trends          10%
+
+        Each input must be in [0, 100].
+        Output is also in [0, 100]:
+          0  = Extreme Fear
+          100 = Extreme Greed
+
+        Args:
+            price_momentum_score: Price momentum component (0-100).
+            volume_score: Volume component (0-100).
+            social_score: Social sentiment component (0-100).
+            dominance_score: BTC dominance component (0-100).
+            trends_score: Google Trends component (0-100).
+
+        Returns:
+            {
+              "composite": float  (0-100),
+              "classification": str,
+              "components": dict,
+            }
+        """
+        weights = {
+            "price_momentum": 0.25,
+            "volume": 0.25,
+            "social": 0.25,
+            "dominance": 0.15,
+            "trends": 0.10,
+        }
+        scores = {
+            "price_momentum": price_momentum_score,
+            "volume": volume_score,
+            "social": social_score,
+            "dominance": dominance_score,
+            "trends": trends_score,
+        }
+
+        composite = sum(scores[k] * weights[k] for k in weights)
+        composite = max(0.0, min(100.0, composite))
+
+        if composite >= 75:
+            classification = "Extreme Greed"
+        elif composite >= 55:
+            classification = "Greed"
+        elif composite >= 45:
+            classification = "Neutral"
+        elif composite >= 25:
+            classification = "Fear"
+        else:
+            classification = "Extreme Fear"
+
+        return {
+            "composite": round(composite, 2),
+            "classification": classification,
+            "components": {k: round(v, 2) for k, v in scores.items()},
+            "weights": weights,
+        }
+
     async def value_screen(self) -> list[CryptoAsset]:
         """
         Screen for potentially undervalued assets using:

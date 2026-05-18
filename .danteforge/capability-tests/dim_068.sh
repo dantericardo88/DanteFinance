@@ -149,5 +149,89 @@ assert len(scan.top_factors) == 2
 assert scan.composite_signal is None
 print(f"[OK] FactorScanResult: factors_computed={scan.factors_computed}, top={scan.top_factors}")
 
-print("\n[PASS] dim_068: Factor research v3 -- FactorLibrary, pure math, dataclasses verified")
+from sentinel.sai.factor_research_v3 import _spearman_corr
+
+# ---- New math: compute_factor_ic_series (single period IC) ----
+tester = FactorTester()
+
+# Known rank data: perfectly correlated -> IC = +1.0
+fv_perfect = [1.0, 2.0, 3.0, 4.0, 5.0]
+fr_perfect  = [1.0, 2.0, 3.0, 4.0, 5.0]
+ic_perfect  = tester.compute_factor_ic_series(fv_perfect, fr_perfect)
+assert abs(ic_perfect - 1.0) < 1e-9, f"Perfect correlation IC should be 1.0, got {ic_perfect}"
+print(f"[OK] compute_factor_ic_series (perfect rank) = {ic_perfect:.8f}  (expected 1.0)")
+
+# Perfectly anti-correlated -> IC = -1.0
+fv_anti = [1.0, 2.0, 3.0, 4.0, 5.0]
+fr_anti  = [5.0, 4.0, 3.0, 2.0, 1.0]
+ic_anti  = tester.compute_factor_ic_series(fv_anti, fr_anti)
+assert abs(ic_anti - (-1.0)) < 1e-9, f"Anti-correlated IC should be -1.0, got {ic_anti}"
+print(f"[OK] compute_factor_ic_series (anti rank) = {ic_anti:.8f}  (expected -1.0)")
+
+# Spearman on ranked data is same as _spearman_corr directly
+fv_rand = [3.0, 1.0, 4.0, 2.0, 5.0]
+fr_rand  = [2.0, 5.0, 3.0, 1.0, 4.0]
+ic_via_method   = tester.compute_factor_ic_series(fv_rand, fr_rand)
+ic_via_spearman = _spearman_corr(fv_rand, fr_rand)
+assert abs(ic_via_method - ic_via_spearman) < 1e-9, \
+    f"IC series math should match _spearman_corr: {ic_via_method} vs {ic_via_spearman}"
+print(f"[OK] compute_factor_ic_series matches _spearman_corr = {ic_via_method:.8f}")
+
+# Length mismatch raises ValueError
+import traceback as _tb
+try:
+    tester.compute_factor_ic_series([1.0, 2.0], [1.0, 2.0, 3.0])
+    assert False, "Should have raised ValueError"
+except ValueError:
+    print("[OK] compute_factor_ic_series raises ValueError on length mismatch")
+
+# Too few obs returns 0.0
+assert tester.compute_factor_ic_series([1.0, 2.0], [2.0, 1.0]) == 0.0
+print("[OK] compute_factor_ic_series returns 0.0 for n < 3")
+
+# ---- New math: compute_factor_turnover ----
+# Identical ranks -> no change -> turnover = 0
+ranks_same = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+turnover_zero = tester.compute_factor_turnover(ranks_same, ranks_same, n_long=3)
+assert abs(turnover_zero - 0.0) < 1e-9, f"Identical ranks -> turnover 0, got {turnover_zero}"
+print(f"[OK] compute_factor_turnover (same ranks) = {turnover_zero:.4f}  (expected 0.0)")
+
+# Completely reversed ranks -> maximum turnover = 1.0
+ranks_t  = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+ranks_t1 = [6.0, 5.0, 4.0, 3.0, 2.0, 1.0]  # fully reversed
+turnover_max = tester.compute_factor_turnover(ranks_t, ranks_t1, n_long=3)
+assert turnover_max == 1.0, f"Fully reversed ranks -> turnover 1.0, got {turnover_max}"
+print(f"[OK] compute_factor_turnover (fully reversed) = {turnover_max:.4f}  (expected 1.0)")
+
+# Result is in [0, 1]
+import random as _rand
+_rand.seed(7)
+rr_t  = [float(i) for i in range(1, 11)]
+rr_t1 = rr_t[:]
+_rand.shuffle(rr_t1)
+to_partial = tester.compute_factor_turnover(rr_t, rr_t1, n_long=5)
+assert 0.0 <= to_partial <= 1.0, f"Turnover must be in [0,1]: {to_partial}"
+print(f"[OK] compute_factor_turnover (random) = {to_partial:.4f}  (in [0,1])")
+
+# ---- New math: compute_gross_profitability_factor (Novy-Marx 2013) ----
+revenue = 10_000_000.0
+cogs    =  6_000_000.0
+assets  = 20_000_000.0
+gp_factor = tester.compute_gross_profitability_factor(revenue, cogs, assets)
+expected_gp = (revenue - cogs) / assets   # = 4_000_000 / 20_000_000 = 0.20
+assert abs(gp_factor - expected_gp) < 1e-9, \
+    f"GP factor expected {expected_gp}, got {gp_factor}"
+print(f"[OK] compute_gross_profitability_factor = {gp_factor:.8f}  (expected {expected_gp:.8f})")
+
+# Zero or negative assets returns 0.0
+assert tester.compute_gross_profitability_factor(1e6, 0.5e6, 0.0) == 0.0
+assert tester.compute_gross_profitability_factor(1e6, 0.5e6, -1.0) == 0.0
+print("[OK] compute_gross_profitability_factor returns 0.0 for non-positive assets")
+
+# GP can be negative when COGS > revenue
+gp_neg = tester.compute_gross_profitability_factor(1_000_000, 1_500_000, 5_000_000)
+assert gp_neg < 0.0, f"Negative GP should be negative: {gp_neg}"
+print(f"[OK] compute_gross_profitability_factor (COGS > revenue) = {gp_neg:.4f}  (< 0)")
+
+print("\n[PASS] dim_068: Factor research v3 -- FactorLibrary + IC/Turnover/GP factor verified")
 PYEOF

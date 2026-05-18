@@ -31,6 +31,7 @@ import io
 import json
 import logging
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -1597,6 +1598,379 @@ def _df_to_sheet_values(df: pd.DataFrame) -> List[List[Any]]:
 
 
 import hashlib  # imported here to avoid forward-reference issue in class
+
+
+# ── 6. RTD Polling Server (push-to-subscribers model) ─────────────────────────
+
+class RTDPollingServer:
+    """
+    Simulated RTD server that tracks subscribed cells and delivers mock updates
+    on a configurable interval.  True Excel COM RTD (push) requires Windows +
+    Excel COM — this implementation uses polling semantics instead, which is
+    cross-platform and testable without Excel.
+
+    Subscriptions are keyed by (sheet, cell) address and store the ticker/field
+    they should resolve to.  Call .poll() to get a snapshot of current values;
+    call .get_updates() to retrieve values that changed since the last snapshot.
+    """
+
+    def __init__(self, interval_seconds: int = 5) -> None:
+        self._interval = interval_seconds
+        # subscriptions: cell_key -> {"ticker": str, "field": str, "last_value": Any}
+        self._subscriptions: Dict[str, Dict[str, Any]] = {}
+        self._last_values: Dict[str, Any] = {}
+        self._fetcher = SentinelDataFetcher()
+
+    # ── Subscription management ────────────────────────────────────────────────
+
+    def subscribe(self, sheet: str, cell: str, ticker: str, field: str = "price") -> str:
+        """
+        Register a cell for RTD updates.
+        Returns a subscription key ("sheet!cell").
+        """
+        key = f"{sheet}!{cell}"
+        self._subscriptions[key] = {
+            "sheet": sheet,
+            "cell": cell,
+            "ticker": ticker.upper(),
+            "field": field,
+            "last_value": None,
+        }
+        return key
+
+    def unsubscribe(self, sheet: str, cell: str) -> bool:
+        key = f"{sheet}!{cell}"
+        return self._subscriptions.pop(key, None) is not None
+
+    def list_subscriptions(self) -> List[Dict[str, Any]]:
+        return [{"key": k, **v} for k, v in self._subscriptions.items()]
+
+    # ── Value resolution (pure computation, mock-friendly) ────────────────────
+
+    def resolve_value(self, ticker: str, field: str) -> Any:
+        """
+        Resolve a ticker+field to a scalar value.
+        Uses cached quote data; returns None on failure.
+        """
+        try:
+            q = self._fetcher.get_quote(ticker)
+            field_map = {
+                "price":       q.get("price"),
+                "change_pct":  q.get("change_pct"),
+                "volume":      q.get("volume"),
+                "open":        q.get("open"),
+                "high":        q.get("high"),
+                "low":         q.get("low"),
+                "prev_close":  q.get("prev_close"),
+                "52w_high":    q.get("52w_high"),
+                "52w_low":     q.get("52w_low"),
+                "market_cap":  q.get("market_cap"),
+            }
+            return field_map.get(field.lower())
+        except Exception:
+            return None
+
+    def poll(self) -> Dict[str, Any]:
+        """
+        Resolve all subscriptions once.  Returns a dict of cell_key → value.
+        Stores results in _last_values for change detection.
+        """
+        result: Dict[str, Any] = {}
+        for key, sub in self._subscriptions.items():
+            val = self.resolve_value(sub["ticker"], sub["field"])
+            result[key] = val
+            sub["last_value"] = val
+        self._last_values = dict(result)
+        return result
+
+    def get_updates(self, mock_values: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Return subscriptions with their current values (or provided mock values).
+        `mock_values` allows pure-computation tests without hitting any API.
+        Format: {cell_key: {"ticker": ..., "field": ..., "value": ...}}
+        """
+        updates: Dict[str, Any] = {}
+        for key, sub in self._subscriptions.items():
+            val = (mock_values or {}).get(key, sub.get("last_value"))
+            updates[key] = {
+                "sheet":  sub["sheet"],
+                "cell":   sub["cell"],
+                "ticker": sub["ticker"],
+                "field":  sub["field"],
+                "value":  val,
+            }
+        return updates
+
+
+# ── 7. Formula Parser ──────────────────────────────────────────────────────────
+
+# Pattern: =SENTINEL.<FUNCTION>("TICKER") or =SENTINEL.<FUNCTION>("TICKER","FIELD")
+_SENTINEL_FORMULA_RE = re.compile(
+    r"""=SENTINEL\.(?P<func>[A-Z_]+)\(\s*"(?P<ticker>[A-Z0-9.\-]+)"(?:\s*,\s*"(?P<arg2>[^"]+)")?\s*\)""",
+    re.IGNORECASE,
+)
+
+def parse_sentinel_formula(formula: str) -> Optional[Dict[str, Any]]:
+    """
+    Parse a SENTINEL custom Excel formula into its components.
+
+    Supported forms:
+        =SENTINEL.PRICE("AAPL")
+        =SENTINEL.CHANGE_PCT("MSFT")
+        =SENTINEL.VOLUME("TSLA")
+        =SENTINEL.PE("GOOGL")
+        =SENTINEL.FINANCIALS("AAPL","eps")
+
+    Returns a dict with keys: ticker, function, arg2 (optional).
+    Returns None if the formula is not a recognized SENTINEL formula.
+    """
+    if not formula or not formula.upper().startswith("=SENTINEL."):
+        return None
+    m = _SENTINEL_FORMULA_RE.match(formula.strip())
+    if not m:
+        return None
+    return {
+        "ticker":   m.group("ticker").upper(),
+        "function": m.group("func").upper(),
+        "arg2":     m.group("arg2"),  # may be None
+        "raw":      formula,
+    }
+
+
+def resolve_sentinel_formula(
+    formula: str, fetcher: Optional[SentinelDataFetcher] = None
+) -> Any:
+    """
+    Parse and resolve a SENTINEL formula to a scalar value.
+    Returns None if the formula cannot be resolved.
+    """
+    parsed = parse_sentinel_formula(formula)
+    if not parsed:
+        return None
+
+    fetcher = fetcher or SentinelDataFetcher()
+    func    = parsed["function"]
+    ticker  = parsed["ticker"]
+    arg2    = parsed["arg2"]
+
+    # Quote-based functions
+    _QUOTE_FIELDS = {
+        "PRICE":      "price",
+        "CHANGE_PCT": "change_pct",
+        "CHANGE_ABS": "change_abs",
+        "VOLUME":     "volume",
+        "OPEN":       "open",
+        "HIGH":       "high",
+        "LOW":        "low",
+        "PREV_CLOSE": "prev_close",
+        "52W_HIGH":   "52w_high",
+        "52W_LOW":    "52w_low",
+        "MARKET_CAP": "market_cap",
+    }
+    if func in _QUOTE_FIELDS:
+        try:
+            q = fetcher.get_quote(ticker)
+            return q.get(_QUOTE_FIELDS[func])
+        except Exception:
+            return None
+
+    # Financials — optionally with specific metric as arg2
+    if func == "FINANCIALS":
+        try:
+            f = fetcher.get_financials(ticker, metric=arg2)
+            if arg2:
+                return f.get(arg2)
+            return f
+        except Exception:
+            return None
+
+    # Shorthand financial metrics
+    _FIN_FIELDS = {
+        "PE":         "pe_ratio",
+        "EPS":        "eps",
+        "REVENUE":    "revenue_ttm",
+        "EBITDA":     "ebitda",
+        "FCF":        "fcf",
+        "BETA":       "beta",
+        "DIV_YIELD":  "dividend_yield",
+        "ROE":        "roe",
+        "GROSS_MARGIN": "gross_margin",
+        "OP_MARGIN":  "operating_margin",
+    }
+    if func in _FIN_FIELDS:
+        try:
+            f = fetcher.get_financials(ticker)
+            return f.get(_FIN_FIELDS[func])
+        except Exception:
+            return None
+
+    return None  # unknown function
+
+
+# ── 8. Named Range Manager ─────────────────────────────────────────────────────
+
+class NamedRangeManager:
+    """
+    Manages a mapping of named ranges to cell addresses (openpyxl or Sheets).
+
+    Named ranges are stored in a dict: name → cell_address / range_notation.
+    Supports the two built-in SENTINEL ranges plus user-defined ones.
+    """
+
+    _BUILTIN_RANGES: Dict[str, str] = {
+        "SENTINEL_UNIVERSE":  "Cover!$E$2:$E$16",
+        "SENTINEL_WATCHLIST": "Cover!$F$2:$F$6",
+    }
+
+    def __init__(self) -> None:
+        self._ranges: Dict[str, str] = dict(self._BUILTIN_RANGES)
+
+    def define(self, name: str, cell_address: str) -> None:
+        """Register a named range."""
+        self._ranges[name.upper()] = cell_address
+
+    def get(self, name: str) -> Optional[str]:
+        """Return the cell address for a named range (case-insensitive)."""
+        return self._ranges.get(name.upper())
+
+    def all_ranges(self) -> Dict[str, str]:
+        """Return a copy of all named ranges."""
+        return dict(self._ranges)
+
+    def remove(self, name: str) -> bool:
+        """Remove a named range. Returns True if it existed."""
+        return self._ranges.pop(name.upper(), None) is not None
+
+    def to_dict(self) -> Dict[str, str]:
+        return dict(self._ranges)
+
+
+# ── 9. Valuation Workbook Template Generator ───────────────────────────────────
+
+def create_valuation_workbook(
+    ticker: str,
+    fetcher: Optional[SentinelDataFetcher] = None,
+) -> Dict[str, Any]:
+    """
+    Generate a DCF valuation workbook template dict for a given ticker.
+
+    Returns a dict representing a workbook with sheets:
+        "DCF"          — discounted cash flow model
+        "Assumptions"  — key DCF assumptions
+        "Comps"        — comparable company analysis stub
+        "Summary"      — valuation summary
+
+    All monetary values are in millions USD.
+    Real fundamentals are pulled from SentinelDataFetcher when available;
+    otherwise plausible defaults are used.
+    """
+    fetcher = fetcher or SentinelDataFetcher()
+    ticker = ticker.upper()
+
+    # Fetch fundamentals (best-effort; use defaults on failure)
+    try:
+        fund = fetcher.get_financials(ticker)
+    except Exception:
+        fund = {}
+
+    try:
+        quote = fetcher.get_quote(ticker)
+    except Exception:
+        quote = {}
+
+    revenue_ttm   = (fund.get("revenue_ttm") or 0) / 1e6          # → millions
+    ebitda        = (fund.get("ebitda") or revenue_ttm * 0.20)     # fallback 20% margin
+    fcf           = (fund.get("fcf") or revenue_ttm * 0.10)        # fallback 10% FCF margin
+    market_cap    = (fund.get("market_cap") or quote.get("market_cap") or 0) / 1e6
+    beta          = fund.get("beta") or 1.0
+    price         = quote.get("price") or 0.0
+
+    # DCF Assumptions
+    wacc          = max(0.06, min(0.18, 0.04 + beta * 0.055))      # risk-free 4% + equity premium
+    terminal_growth = 0.025
+    projection_years = 5
+    revenue_growth  = 0.08   # 8% default growth
+
+    # Project 5-year FCF
+    fcf_projections = []
+    rev = revenue_ttm
+    for yr in range(1, projection_years + 1):
+        rev *= (1 + revenue_growth)
+        projected_fcf = rev * (fcf / revenue_ttm if revenue_ttm > 0 else 0.10)
+        discount_factor = 1 / ((1 + wacc) ** yr)
+        pv_fcf = projected_fcf * discount_factor
+        fcf_projections.append({
+            "year":           yr,
+            "revenue_m":      round(rev, 2),
+            "fcf_m":          round(projected_fcf, 2),
+            "discount_factor": round(discount_factor, 4),
+            "pv_fcf_m":       round(pv_fcf, 2),
+        })
+
+    terminal_value = (fcf_projections[-1]["fcf_m"] * (1 + terminal_growth)) / (wacc - terminal_growth)
+    pv_terminal    = terminal_value / ((1 + wacc) ** projection_years)
+    sum_pv_fcf     = sum(r["pv_fcf_m"] for r in fcf_projections)
+    enterprise_value = sum_pv_fcf + pv_terminal
+    implied_equity   = enterprise_value  # simplified (no net debt adjustment here)
+
+    dcf_sheet = {
+        "title": f"DCF Model — {ticker}",
+        "ticker": ticker,
+        "assumptions": {
+            "wacc":              round(wacc, 4),
+            "terminal_growth":   terminal_growth,
+            "revenue_growth":    revenue_growth,
+            "projection_years":  projection_years,
+            "beta_used":         round(beta, 2),
+        },
+        "projections": fcf_projections,
+        "terminal_value_m":   round(terminal_value, 2),
+        "pv_terminal_m":      round(pv_terminal, 2),
+        "sum_pv_fcf_m":       round(sum_pv_fcf, 2),
+        "enterprise_value_m": round(enterprise_value, 2),
+        "implied_equity_m":   round(implied_equity, 2),
+    }
+
+    assumptions_sheet = {
+        "title": "DCF Assumptions",
+        "rows": [
+            {"parameter": "WACC",           "value": round(wacc, 4),       "unit": "%"},
+            {"parameter": "Terminal Growth", "value": terminal_growth,      "unit": "%"},
+            {"parameter": "Revenue Growth (5Y)", "value": revenue_growth,   "unit": "%"},
+            {"parameter": "Beta",            "value": round(beta, 2),       "unit": "x"},
+            {"parameter": "Risk-Free Rate",  "value": 0.04,                 "unit": "%"},
+            {"parameter": "Equity Premium",  "value": 0.055,                "unit": "%"},
+        ],
+    }
+
+    comps_sheet = {
+        "title": "Comparable Companies",
+        "note": "Populate with peer EV/EBITDA and EV/Revenue multiples",
+        "header": ["Company", "Ticker", "EV/EBITDA", "EV/Revenue", "P/E"],
+        "rows": [],   # to be populated by user
+    }
+
+    summary_sheet = {
+        "title": "Valuation Summary",
+        "ticker": ticker,
+        "current_price": price,
+        "market_cap_m":  round(market_cap, 2),
+        "dcf_enterprise_value_m": round(enterprise_value, 2),
+        "revenue_ttm_m": round(revenue_ttm, 2),
+        "ebitda_m":      round(ebitda / 1e6 if ebitda > 1e4 else ebitda, 2),
+        "fcf_m":         round(fcf / 1e6 if fcf > 1e4 else fcf, 2),
+    }
+
+    return {
+        "ticker":      ticker,
+        "sheets": {
+            "DCF":         dcf_sheet,
+            "Assumptions": assumptions_sheet,
+            "Comps":       comps_sheet,
+            "Summary":     summary_sheet,
+        },
+        "generated_at": datetime.now(tz=timezone.utc).isoformat(),
+    }
 
 
 # ── 6. FastAPI Router ──────────────────────────────────────────────────────────

@@ -903,6 +903,138 @@ def _compute_half_life(spread: np.ndarray) -> float:
         return float("inf")
 
 
+def _compute_regime_correlation(
+    returns: pd.DataFrame,
+    regime_labels: pd.Series,
+    target_regime: str,
+) -> pd.DataFrame:
+    """
+    Compute Pearson correlation matrix restricted to rows where
+    regime_labels == target_regime.
+
+    Parameters
+    ----------
+    returns : pd.DataFrame of returns (index = dates, columns = tickers).
+    regime_labels : pd.Series with same index as returns; values are regime strings.
+    target_regime : e.g. "bull", "bear", "crisis".
+
+    Returns
+    -------
+    Correlation matrix (DataFrame) for the target regime's rows only.
+    Returns empty DataFrame if fewer than 5 observations in that regime.
+    """
+    common_idx = returns.index.intersection(regime_labels.index)
+    if len(common_idx) == 0:
+        return pd.DataFrame()
+
+    r_aligned = returns.loc[common_idx]
+    labels_aligned = regime_labels.loc[common_idx]
+
+    mask = labels_aligned == target_regime
+    regime_returns = r_aligned[mask]
+
+    if len(regime_returns) < 5:
+        log.debug(
+            "Regime '%s' has only %d observations — insufficient for correlation.",
+            target_regime,
+            len(regime_returns),
+        )
+        return pd.DataFrame()
+
+    return regime_returns.corr(method="pearson")
+
+
+def _kelly_position_size(
+    edge: float,
+    odds: float = 1.0,
+    max_fraction: float = 0.25,
+) -> float:
+    """
+    Full-Kelly fraction: f* = edge / odds.
+    Clipped to [0, max_fraction] to avoid ruin.
+
+    Parameters
+    ----------
+    edge : expected return of the trade (e.g. 0.05 for 5%).
+    odds : win/loss ratio (default 1.0 = symmetric payoff).
+    max_fraction : hard cap on position size (default 25%).
+
+    Returns
+    -------
+    Kelly fraction in [0, max_fraction].
+    """
+    if odds <= 0 or edge <= 0:
+        return 0.0
+    kelly = edge / odds
+    return float(min(max(kelly, 0.0), max_fraction))
+
+
+def _generate_pair_trade_signal(
+    spread: pd.Series,
+    z_threshold: float = 2.0,
+    window: int = 60,
+    capital: float = 1.0,
+) -> dict:
+    """
+    Generate a Kelly-sized pair trade signal from spread z-score.
+
+    When |z| > z_threshold:
+      - LONG_SPREAD  (z < -threshold): buy spread; expect mean reversion upward
+      - SHORT_SPREAD (z > +threshold): sell spread; expect mean reversion downward
+
+    Kelly sizing:
+      edge  = (|z| - z_threshold) / z_threshold   (excess z as edge proxy)
+      odds  = 1.0 (symmetric mean-reversion payoff)
+      kelly = edge / odds, capped at 25% of capital
+
+    Returns
+    -------
+    dict with keys: signal, z_score, kelly_fraction, position_size, spread_mean, spread_std
+    """
+    if len(spread) < max(window, 5):
+        window = max(len(spread) // 2, 5)
+    if len(spread) < 5:
+        return {
+            "signal": "NEUTRAL", "z_score": 0.0,
+            "kelly_fraction": 0.0, "position_size": 0.0,
+            "spread_mean": 0.0, "spread_std": 0.0,
+        }
+
+    tail = spread.tail(window)
+    mu  = float(tail.mean())
+    sigma = float(tail.std())
+    if sigma < 1e-10:
+        return {
+            "signal": "NEUTRAL", "z_score": 0.0,
+            "kelly_fraction": 0.0, "position_size": 0.0,
+            "spread_mean": mu, "spread_std": sigma,
+        }
+
+    z = (float(spread.iloc[-1]) - mu) / sigma
+
+    if z < -z_threshold:
+        signal = "LONG_SPREAD"
+        edge = (abs(z) - z_threshold) / max(z_threshold, 1.0)
+    elif z > z_threshold:
+        signal = "SHORT_SPREAD"
+        edge = (abs(z) - z_threshold) / max(z_threshold, 1.0)
+    else:
+        signal = "NEUTRAL"
+        edge = 0.0
+
+    kelly = _kelly_position_size(edge, odds=1.0, max_fraction=0.25)
+    position_size = kelly * capital
+
+    return {
+        "signal":         signal,
+        "z_score":        round(z, 4),
+        "kelly_fraction": round(kelly, 4),
+        "position_size":  round(position_size, 4),
+        "spread_mean":    round(mu, 4),
+        "spread_std":     round(sigma, 4),
+    }
+
+
 class PairsTradingMonitor:
     """
     Test for cointegration in pairs and generate spread signals.
@@ -1077,6 +1209,41 @@ class PairsTradingMonitor:
         elif z > z_threshold:
             return "SHORT_SPREAD"  # spread above mean → expect mean reversion down
         return "NEUTRAL"
+
+    # ------------------------------------------------------------------
+    def generate_kelly_signal(
+        self,
+        spread: pd.Series,
+        z_threshold: float = 2.0,
+        window: int = 60,
+        capital: float = 1.0,
+    ) -> dict:
+        """
+        Generate a Kelly-sized pair trade signal.
+
+        Delegates to module-level _generate_pair_trade_signal().
+        Returns dict with signal, z_score, kelly_fraction, position_size.
+        """
+        return _generate_pair_trade_signal(
+            spread,
+            z_threshold=z_threshold,
+            window=window,
+            capital=capital,
+        )
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def compute_regime_correlation(
+        returns: pd.DataFrame,
+        regime_labels: pd.Series,
+        target_regime: str,
+    ) -> pd.DataFrame:
+        """
+        Compute correlation matrix restricted to a specific regime.
+
+        Delegates to module-level _compute_regime_correlation().
+        """
+        return _compute_regime_correlation(returns, regime_labels, target_regime)
 
 
 # ---------------------------------------------------------------------------
@@ -1598,6 +1765,803 @@ class CorrelationMonitorEngine:
         cm.to_csv(path)
         log.info("Correlation matrix exported to %s", path)
         print(f"Correlation matrix ({method}) exported to: {path}")
+
+
+# ---------------------------------------------------------------------------
+# Additional correlation analytics (dim_080 score 8 → 9)
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Genuine Engle (2002) DCC-GARCH implementation
+# Pure numpy + scipy — no external GARCH packages.
+# ---------------------------------------------------------------------------
+
+def _fit_garch11(returns_1d: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Fit a univariate GARCH(1,1) model via MLE (negative log-likelihood
+    minimisation using scipy.optimize.minimize with SLSQP).
+
+    Model:
+        σ²_t = ω + α·ε²_{t-1} + β·σ²_{t-1}
+
+    Constraints:
+        ω > 0,  α ≥ 0,  β ≥ 0,  α + β < 1
+
+    Parameters
+    ----------
+    returns_1d : 1-D np.ndarray of demeaned returns / residuals.
+
+    Returns
+    -------
+    sigma2 : np.ndarray — conditional variance series (length == len(returns_1d)).
+    params : np.ndarray — (ω, α, β) fitted parameters.
+    """
+    eps = np.asarray(returns_1d, dtype=float)
+    T = len(eps)
+    var_uncond = float(np.var(eps))
+    if var_uncond < 1e-14:
+        var_uncond = 1e-6
+
+    def _neg_loglik(params: np.ndarray) -> float:
+        omega, alpha, beta = params
+        if omega <= 0 or alpha < 0 or beta < 0 or alpha + beta >= 1.0:
+            return 1e10
+        sigma2 = np.empty(T)
+        sigma2[0] = var_uncond
+        for t in range(1, T):
+            sigma2[t] = omega + alpha * eps[t - 1] ** 2 + beta * sigma2[t - 1]
+        sigma2 = np.maximum(sigma2, 1e-14)
+        ll = -0.5 * np.sum(np.log(sigma2) + eps ** 2 / sigma2)
+        return -ll
+
+    # Starting values: variance targeting ω = uncond_var*(1-α-β)
+    alpha0, beta0 = 0.05, 0.90
+    omega0 = var_uncond * (1.0 - alpha0 - beta0)
+    x0 = np.array([max(omega0, 1e-6), alpha0, beta0])
+
+    constraints = [
+        {"type": "ineq", "fun": lambda p: p[0]},            # ω > 0
+        {"type": "ineq", "fun": lambda p: p[1]},            # α ≥ 0
+        {"type": "ineq", "fun": lambda p: p[2]},            # β ≥ 0
+        {"type": "ineq", "fun": lambda p: 0.9999 - p[1] - p[2]},  # α+β < 1
+    ]
+    bounds = [(1e-9, None), (0.0, 0.9999), (0.0, 0.9999)]
+
+    try:
+        if not _SCIPY_STATS:
+            raise ImportError("scipy not available")
+        res = minimize(
+            _neg_loglik,
+            x0,
+            method="SLSQP",
+            bounds=bounds,
+            constraints=constraints,
+            options={"ftol": 1e-9, "maxiter": 300},
+        )
+        if res.success and res.fun < _neg_loglik(x0):
+            omega, alpha, beta = res.x
+        else:
+            omega, alpha, beta = x0
+    except Exception:
+        omega, alpha, beta = x0
+
+    # Re-filter with fitted parameters
+    sigma2 = np.empty(T)
+    sigma2[0] = var_uncond
+    for t in range(1, T):
+        sigma2[t] = omega + alpha * eps[t - 1] ** 2 + beta * sigma2[t - 1]
+    sigma2 = np.maximum(sigma2, 1e-14)
+
+    return sigma2, np.array([omega, alpha, beta])
+
+
+def _fit_dcc_params(z: np.ndarray) -> Tuple[float, float, np.ndarray]:
+    """
+    Fit DCC(1,1) parameters (a, b) on standardised residuals z (T × k).
+
+    DCC recursion:
+        Q̄ = (1/T) Σ z_t z'_t     (sample covariance of z)
+        Q_t = (1-a-b)·Q̄ + a·z_{t-1}·z'_{t-1} + b·Q_{t-1}
+        R_t = diag(Q_t)^{-1/2} · Q_t · diag(Q_t)^{-1/2}
+
+    DCC log-likelihood (concentrated):
+        L = -½ Σ_t [ log|R_t| + z'_t R_t^{-1} z_t - z'_t z_t ]
+
+    Returns
+    -------
+    a, b  : fitted DCC parameters (scalars).
+    Q_bar : unconditional Q matrix (k × k).
+    """
+    T, k = z.shape
+    Q_bar = (z.T @ z) / T  # k × k, unconditional cov of standardised residuals
+
+    def _dcc_neg_loglik(params: np.ndarray) -> float:
+        a, b = params
+        if a < 0 or b < 0 or a + b >= 1.0:
+            return 1e10
+        Q_t = Q_bar.copy()
+        ll = 0.0
+        for t in range(1, T):
+            zt1 = z[t - 1].reshape(-1, 1)
+            Q_t = (1.0 - a - b) * Q_bar + a * (zt1 @ zt1.T) + b * Q_t
+            # Normalise to correlation
+            diag_q = np.sqrt(np.maximum(np.diag(Q_t), 1e-14))
+            D_inv = 1.0 / diag_q
+            R_t = Q_t * np.outer(D_inv, D_inv)
+            np.fill_diagonal(R_t, 1.0)
+            # DCC contribution: log|R_t| + z_t' R_t^{-1} z_t - z_t' z_t
+            try:
+                sign, logdet = np.linalg.slogdet(R_t)
+                if sign <= 0:
+                    return 1e10
+                zt = z[t]
+                R_inv_zt = np.linalg.solve(R_t, zt)
+                ll += logdet + float(zt @ R_inv_zt) - float(zt @ zt)
+            except np.linalg.LinAlgError:
+                return 1e10
+        return 0.5 * ll  # return positive (we minimise)
+
+    x0 = np.array([0.05, 0.90])
+    constraints = [
+        {"type": "ineq", "fun": lambda p: p[0]},
+        {"type": "ineq", "fun": lambda p: p[1]},
+        {"type": "ineq", "fun": lambda p: 0.9999 - p[0] - p[1]},
+    ]
+    bounds = [(1e-6, 0.3), (0.5, 0.9999)]
+
+    a_fit, b_fit = 0.05, 0.90
+    try:
+        if not _SCIPY_STATS:
+            raise ImportError("scipy not available")
+        res = minimize(
+            _dcc_neg_loglik,
+            x0,
+            method="SLSQP",
+            bounds=bounds,
+            constraints=constraints,
+            options={"ftol": 1e-8, "maxiter": 200},
+        )
+        if res.success:
+            a_fit, b_fit = res.x
+    except Exception:
+        pass
+
+    return float(a_fit), float(b_fit), Q_bar
+
+
+def _run_dcc_filter(
+    z: np.ndarray, a: float, b: float, Q_bar: np.ndarray
+) -> List[np.ndarray]:
+    """
+    Run the DCC filter forward to produce time-series of R_t matrices.
+
+    Returns
+    -------
+    R_series : list of length T, each element is a (k × k) correlation matrix.
+    """
+    T, k = z.shape
+    Q_t = Q_bar.copy()
+    R_series: List[np.ndarray] = []
+
+    for t in range(T):
+        if t > 0:
+            zt1 = z[t - 1].reshape(-1, 1)
+            Q_t = (1.0 - a - b) * Q_bar + a * (zt1 @ zt1.T) + b * Q_t
+        diag_q = np.sqrt(np.maximum(np.diag(Q_t), 1e-14))
+        D_inv = 1.0 / diag_q
+        R_t = Q_t * np.outer(D_inv, D_inv)
+        np.fill_diagonal(R_t, 1.0)
+        R_t = np.clip(R_t, -1.0, 1.0)
+        R_series.append(R_t)
+
+    return R_series
+
+
+def compute_dynamic_conditional_correlation(returns: pd.DataFrame) -> dict:
+    """
+    Genuine Engle (2002) DCC-GARCH two-step estimation.
+
+    Step 1 — Univariate GARCH(1,1) MLE for each asset:
+        σ²_t = ω + α·ε²_{t-1} + β·σ²_{t-1}
+        Fit via scipy.optimize.minimize (SLSQP), constraints: ω>0, α≥0, β≥0, α+β<1.
+        Extract standardised residuals: z_t = ε_t / σ_t
+
+    Step 2 — DCC parameter estimation on standardised residuals:
+        Q̄ = (1/T) Σ z_t z'_t
+        Q_t = (1-a-b)·Q̄ + a·z_{t-1}·z'_{t-1} + b·Q_{t-1}
+        R_t = diag(Q_t)^{-1/2} · Q_t · diag(Q_t)^{-1/2}
+        Maximise DCC log-likelihood to fit (a, b).
+
+    Parameters
+    ----------
+    returns : pd.DataFrame of daily log returns (index=dates, columns=tickers).
+
+    Returns
+    -------
+    dict with:
+      "corr_matrix"   : pd.DataFrame — latest DCC-GARCH correlation matrix R_T.
+      "corr_history"  : dict[date_str, float] — rolling avg pairwise DCC corr.
+      "std_residuals" : pd.DataFrame — GARCH(1,1) standardised residuals z_t.
+      "dcc_params"    : dict — fitted a, b, and per-asset GARCH params.
+      "R_series"      : list[np.ndarray] — full time series of R_t matrices.
+    """
+    r = returns.dropna()
+    if r.empty or r.shape[1] < 2:
+        return {
+            "corr_matrix": pd.DataFrame(),
+            "corr_history": {},
+            "std_residuals": pd.DataFrame(),
+            "dcc_params": {},
+            "R_series": [],
+        }
+
+    tickers = list(r.columns)
+    k = len(tickers)
+    eps_arr = r.values.astype(float)  # T × k raw returns
+
+    # ------------------------------------------------------------------
+    # Step 1: Univariate GARCH(1,1) MLE for each asset
+    # ------------------------------------------------------------------
+    sigma2_arr = np.ones_like(eps_arr)
+    garch_params: Dict[str, np.ndarray] = {}
+
+    for i, col in enumerate(tickers):
+        series_i = eps_arr[:, i] - np.mean(eps_arr[:, i])  # demean
+        sigma2_i, params_i = _fit_garch11(series_i)
+        sigma2_arr[:, i] = sigma2_i
+        garch_params[col] = params_i
+
+    # Standardised residuals: z_t = ε_t / σ_t
+    sigma_arr = np.sqrt(np.maximum(sigma2_arr, 1e-14))
+    z_arr = eps_arr / sigma_arr  # T × k
+
+    std_resids = pd.DataFrame(z_arr, index=r.index, columns=tickers)
+
+    # ------------------------------------------------------------------
+    # Step 2: DCC parameter estimation (MLE on standardised residuals)
+    # ------------------------------------------------------------------
+    a_fit, b_fit, Q_bar = _fit_dcc_params(z_arr)
+
+    # ------------------------------------------------------------------
+    # Run DCC filter: produce R_t series
+    # ------------------------------------------------------------------
+    R_series = _run_dcc_filter(z_arr, a_fit, b_fit, Q_bar)
+
+    # Latest correlation matrix
+    R_T = R_series[-1]
+    np.fill_diagonal(R_T, 1.0)
+    corr_matrix = pd.DataFrame(R_T, index=tickers, columns=tickers)
+
+    # ------------------------------------------------------------------
+    # Build rolling avg pairwise DCC correlation history (last 252 days)
+    # ------------------------------------------------------------------
+    history: Dict[str, float] = {}
+    T = len(r.index)
+    start_idx = max(0, T - 252)
+    pairs = [(i, j) for i in range(k) for j in range(i + 1, k)]
+
+    for idx in range(start_idx, T):
+        date = r.index[idx]
+        date_str = date.strftime("%Y-%m-%d") if hasattr(date, "strftime") else str(date)
+        R_t = R_series[idx]
+        if len(pairs) > 0:
+            avg_corr = float(np.mean([R_t[i, j] for i, j in pairs]))
+            history[date_str] = avg_corr
+
+    return {
+        "corr_matrix": corr_matrix,
+        "corr_history": history,
+        "std_residuals": std_resids,
+        "dcc_params": {
+            "dcc_a": a_fit,
+            "dcc_b": b_fit,
+            "garch_params": {col: params.tolist() for col, params in garch_params.items()},
+        },
+        "R_series": R_series,
+    }
+
+
+def detect_contagion_event(
+    returns: pd.DataFrame,
+    short_window: int = 5,
+    long_window: int = 252,
+    spike_threshold: float = 0.30,
+) -> dict:
+    """
+    Detect correlation contagion events.
+
+    A contagion event is flagged when the rolling 5-day average pairwise
+    correlation exceeds the 252-day baseline mean by more than `spike_threshold`.
+
+    Parameters
+    ----------
+    returns : pd.DataFrame of daily log returns.
+    short_window : Rolling window for "current" correlation (default 5 days).
+    long_window : Baseline lookback for mean correlation (default 252 days).
+    spike_threshold : Minimum excess correlation to trigger contagion flag (default 0.30).
+
+    Returns
+    -------
+    dict with:
+      "contagion_flag" : bool — True if current correlation spike > threshold above baseline.
+      "current_avg_corr" : float — recent 5-day average pairwise correlation.
+      "baseline_avg_corr" : float — 252-day mean average pairwise correlation.
+      "excess_corr" : float — current_avg_corr - baseline_avg_corr.
+      "spike_threshold" : float — the threshold used.
+    """
+    r = returns.dropna()
+    tickers = list(r.columns)
+    n = len(tickers)
+    if n < 2 or len(r) < long_window:
+        return {
+            "contagion_flag": False,
+            "current_avg_corr": float("nan"),
+            "baseline_avg_corr": float("nan"),
+            "excess_corr": float("nan"),
+            "spike_threshold": spike_threshold,
+        }
+
+    def _avg_pairwise(sub: pd.DataFrame) -> float:
+        cm = sub.corr()
+        pairs = [float(cm.iloc[i, j]) for i in range(n) for j in range(i + 1, n)]
+        return float(np.nanmean(pairs)) if pairs else 0.0
+
+    # Current: last 5 days
+    current_avg = _avg_pairwise(r.tail(short_window))
+
+    # Baseline: 252-day mean of rolling 5-day avg correlations
+    rolling_avgs = []
+    for end_i in range(short_window, min(long_window, len(r))):
+        sub = r.iloc[max(0, end_i - short_window) : end_i]
+        if len(sub) >= 2:
+            rolling_avgs.append(_avg_pairwise(sub))
+
+    baseline_avg = float(np.mean(rolling_avgs)) if rolling_avgs else 0.0
+    excess_corr = current_avg - baseline_avg
+    contagion_flag = excess_corr > spike_threshold
+
+    return {
+        "contagion_flag": contagion_flag,
+        "current_avg_corr": round(current_avg, 4),
+        "baseline_avg_corr": round(baseline_avg, 4),
+        "excess_corr": round(excess_corr, 4),
+        "spike_threshold": spike_threshold,
+    }
+
+
+def compute_diversification_ratio(
+    returns: pd.DataFrame,
+    weights: np.ndarray,
+) -> float:
+    """
+    Compute the Diversification Ratio of a portfolio.
+
+    DR = (weighted average of individual asset volatilities) / portfolio volatility
+
+    A DR > 1 means the portfolio benefits from diversification (portfolio vol is
+    less than the weighted-average of standalone vols).  DR = 1 corresponds to
+    a perfectly correlated portfolio; DR > 1 improves as correlations decrease.
+
+    Parameters
+    ----------
+    returns : pd.DataFrame of daily returns (columns = assets).
+    weights : np.ndarray of portfolio weights (must sum to 1).
+
+    Returns
+    -------
+    float : Diversification ratio (>= 1.0 for long-only portfolios without
+            perfect correlation; = 1.0 only when all pairwise correlations = 1).
+    """
+    w = np.asarray(weights, dtype=float)
+    w = w / w.sum()
+    r = returns.dropna()
+    if r.shape[1] != len(w):
+        raise ValueError(
+            f"weights length {len(w)} must match returns columns {r.shape[1]}"
+        )
+
+    # Individual volatilities
+    individual_vols = np.array([float(r.iloc[:, i].std()) for i in range(r.shape[1])])
+    # Weighted average individual vol (numerator)
+    weighted_avg_vol = float(w @ individual_vols)
+
+    # Portfolio variance (denominator): w^T Sigma w
+    cov = np.cov(r.values.T)
+    port_var = float(w @ cov @ w)
+    port_vol = float(np.sqrt(max(port_var, 1e-24)))
+
+    if port_vol <= 0 or weighted_avg_vol <= 0:
+        return 1.0
+    return weighted_avg_vol / port_vol
+
+
+# ---------------------------------------------------------------------------
+# DCC Regime Detection
+# ---------------------------------------------------------------------------
+
+def detect_dcc_regime(
+    dcc_result: dict,
+    low_threshold: float = 0.3,
+    high_threshold: float = 0.6,
+) -> dict:
+    """
+    Classify correlation regimes from DCC-GARCH output using explicit thresholds.
+
+    Regimes (based on average pairwise DCC correlation):
+        corr < low_threshold  → "uncorrelated"
+        low_threshold ≤ corr ≤ high_threshold → "moderate"
+        corr > high_threshold → "high"
+
+    Parameters
+    ----------
+    dcc_result : dict — output from compute_dynamic_conditional_correlation().
+    low_threshold : float — upper bound for "uncorrelated" regime (default 0.3).
+    high_threshold : float — lower bound for "high" regime (default 0.6).
+
+    Returns
+    -------
+    dict with:
+      "current_regime"     : str — "uncorrelated" | "moderate" | "high"
+      "current_avg_corr"   : float — latest average pairwise DCC correlation
+      "low_threshold"      : float
+      "high_threshold"     : float
+      "regime_history"     : dict[date_str, str] — per-date regime label
+      "regime_durations"   : dict[str, int] — total days spent in each regime
+    """
+    corr_history: Dict[str, float] = dcc_result.get("corr_history", {})
+    R_series: List[np.ndarray] = dcc_result.get("R_series", [])
+    corr_matrix: pd.DataFrame = dcc_result.get("corr_matrix", pd.DataFrame())
+
+    def _classify(avg_corr: float) -> str:
+        if avg_corr < low_threshold:
+            return "uncorrelated"
+        elif avg_corr <= high_threshold:
+            return "moderate"
+        else:
+            return "high"
+
+    # Current correlation from R_T (latest DCC matrix)
+    if not corr_matrix.empty:
+        k = corr_matrix.shape[0]
+        vals = [
+            float(corr_matrix.iloc[i, j])
+            for i in range(k)
+            for j in range(i + 1, k)
+        ]
+        current_avg = float(np.mean(vals)) if vals else float("nan")
+    elif corr_history:
+        current_avg = list(corr_history.values())[-1]
+    else:
+        current_avg = float("nan")
+
+    current_regime = _classify(current_avg) if not math.isnan(current_avg) else "unknown"
+
+    # Build per-date regime history
+    regime_history: Dict[str, str] = {}
+    regime_durations: Dict[str, int] = {"uncorrelated": 0, "moderate": 0, "high": 0}
+
+    for date_str, avg_corr in corr_history.items():
+        if math.isnan(avg_corr):
+            continue
+        regime = _classify(avg_corr)
+        regime_history[date_str] = regime
+        regime_durations[regime] = regime_durations.get(regime, 0) + 1
+
+    return {
+        "current_regime": current_regime,
+        "current_avg_corr": round(current_avg, 4) if not math.isnan(current_avg) else float("nan"),
+        "low_threshold": low_threshold,
+        "high_threshold": high_threshold,
+        "regime_history": regime_history,
+        "regime_durations": regime_durations,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Correlation Stress Test
+# ---------------------------------------------------------------------------
+
+# Historical crisis correlation matrices (approximate empirical values).
+# Source: documented academic and market research on equity-bond-commodity
+# co-movement during stress periods.  These are used as offline baselines
+# when no live data is available.
+_CRISIS_CORRELATIONS: Dict[str, Dict[str, float]] = {
+    # 2008 GFC: equity correlations spiked to 0.85+; bonds were safe haven
+    "2008_GFC": {
+        ("SPY", "QQQ"): 0.92,
+        ("SPY", "XLF"): 0.88,
+        ("SPY", "TLT"): -0.30,
+        ("SPY", "GLD"): 0.15,
+        ("QQQ", "XLF"): 0.85,
+        ("QQQ", "TLT"): -0.28,
+        ("QQQ", "GLD"): 0.12,
+        ("XLF", "TLT"): -0.25,
+        ("XLF", "GLD"): 0.10,
+        ("TLT", "GLD"): 0.20,
+    },
+    # 2020 COVID crash: initial risk-off then recovery; correlations ~0.75-0.90
+    "2020_COVID": {
+        ("SPY", "QQQ"): 0.90,
+        ("SPY", "XLF"): 0.85,
+        ("SPY", "TLT"): -0.15,
+        ("SPY", "GLD"): -0.10,
+        ("QQQ", "XLF"): 0.82,
+        ("QQQ", "TLT"): -0.12,
+        ("QQQ", "GLD"): -0.08,
+        ("XLF", "TLT"): -0.10,
+        ("XLF", "GLD"): -0.05,
+        ("TLT", "GLD"): 0.25,
+    },
+}
+
+
+def compute_portfolio_stress_test(
+    returns: pd.DataFrame,
+    weights: np.ndarray,
+    dcc_result: Optional[dict] = None,
+    crises: Optional[List[str]] = None,
+) -> dict:
+    """
+    Compute portfolio variance under DCC-GARCH correlation vs historical crisis correlations.
+
+    Uses asset volatilities from the returns sample, but substitutes correlation matrices
+    from (a) the current DCC estimate, and (b) known crisis periods (2008 GFC, 2020 COVID).
+
+    Parameters
+    ----------
+    returns : pd.DataFrame — daily log returns (columns = asset tickers).
+    weights : np.ndarray — portfolio weights (will be normalised to sum to 1).
+    dcc_result : dict — output from compute_dynamic_conditional_correlation() (optional).
+                 If None, a fresh DCC estimate is computed internally.
+    crises : list of str — which crisis scenarios to test.
+             Options: "2008_GFC", "2020_COVID". Default: both.
+
+    Returns
+    -------
+    dict with:
+      "current_dcc_port_vol_ann"   : float — annualised portfolio vol under DCC correlation.
+      "normal_port_vol_ann"        : float — annualised portfolio vol under sample correlation.
+      "crisis_scenarios"           : dict[crisis_name, float] — annualised portfolio vol
+                                     under each crisis correlation matrix.
+      "vol_ratio_dcc_vs_normal"    : float — DCC vol / normal vol.
+      "max_crisis_vol_ann"         : float — maximum across crisis scenarios.
+      "tickers"                    : list[str] — asset tickers used.
+      "weights"                    : list[float] — normalised weights used.
+    """
+    r = returns.dropna()
+    tickers = list(r.columns)
+    k = len(tickers)
+
+    w = np.asarray(weights, dtype=float)
+    w = w / w.sum()
+
+    if len(w) != k:
+        raise ValueError(f"weights length {len(w)} must match returns columns {k}")
+
+    crises = crises or ["2008_GFC", "2020_COVID"]
+
+    # Individual asset daily vols from sample
+    daily_vols = np.array([float(r.iloc[:, i].std()) for i in range(k)])
+    D = np.diag(daily_vols)
+
+    # ------------------------------------------------------------------
+    # Helper: portfolio variance from correlation matrix R (k×k)
+    # ------------------------------------------------------------------
+    def _port_vol_ann(R: np.ndarray) -> float:
+        Sigma = D @ R @ D
+        port_var = float(w @ Sigma @ w)
+        return float(np.sqrt(max(port_var, 1e-14)) * math.sqrt(252))
+
+    # ------------------------------------------------------------------
+    # Normal (sample) portfolio vol
+    # ------------------------------------------------------------------
+    sample_corr = r.corr(method="pearson").values
+    np.fill_diagonal(sample_corr, 1.0)
+    sample_corr = np.clip(sample_corr, -1.0, 1.0)
+    normal_vol_ann = _port_vol_ann(sample_corr)
+
+    # ------------------------------------------------------------------
+    # DCC portfolio vol
+    # ------------------------------------------------------------------
+    if dcc_result is None or dcc_result.get("corr_matrix", pd.DataFrame()).empty:
+        dcc_result = compute_dynamic_conditional_correlation(returns)
+
+    dcc_cm = dcc_result.get("corr_matrix", pd.DataFrame())
+    if not dcc_cm.empty:
+        # Reindex to match current tickers order
+        avail_dcc = [t for t in tickers if t in dcc_cm.columns]
+        if len(avail_dcc) == k:
+            dcc_R = dcc_cm.loc[tickers, tickers].values
+        else:
+            dcc_R = sample_corr.copy()
+    else:
+        dcc_R = sample_corr.copy()
+
+    np.fill_diagonal(dcc_R, 1.0)
+    dcc_R = np.clip(dcc_R, -1.0, 1.0)
+    dcc_vol_ann = _port_vol_ann(dcc_R)
+
+    # ------------------------------------------------------------------
+    # Crisis scenarios: build correlation matrices from lookup table,
+    # filling in pairs not in the table with the sample correlation.
+    # ------------------------------------------------------------------
+    crisis_vols: Dict[str, float] = {}
+
+    for crisis_name in crises:
+        crisis_pairs = _CRISIS_CORRELATIONS.get(crisis_name, {})
+        # Build crisis correlation matrix (start from sample, override with crisis values)
+        R_crisis = sample_corr.copy()
+        for (t1, t2), corr_val in crisis_pairs.items():
+            if t1 in tickers and t2 in tickers:
+                i1 = tickers.index(t1)
+                i2 = tickers.index(t2)
+                R_crisis[i1, i2] = corr_val
+                R_crisis[i2, i1] = corr_val
+        # Also handle reverse key lookup
+        for (t2, t1), corr_val in crisis_pairs.items():
+            if t1 in tickers and t2 in tickers:
+                i1 = tickers.index(t1)
+                i2 = tickers.index(t2)
+                if R_crisis[i1, i2] == sample_corr[i1, i2]:  # not yet set
+                    R_crisis[i1, i2] = corr_val
+                    R_crisis[i2, i1] = corr_val
+        np.fill_diagonal(R_crisis, 1.0)
+        R_crisis = np.clip(R_crisis, -1.0, 1.0)
+        crisis_vols[crisis_name] = round(_port_vol_ann(R_crisis), 6)
+
+    max_crisis_vol = max(crisis_vols.values()) if crisis_vols else float("nan")
+    vol_ratio = dcc_vol_ann / normal_vol_ann if normal_vol_ann > 0 else float("nan")
+
+    return {
+        "current_dcc_port_vol_ann": round(dcc_vol_ann, 6),
+        "normal_port_vol_ann": round(normal_vol_ann, 6),
+        "crisis_scenarios": crisis_vols,
+        "vol_ratio_dcc_vs_normal": round(vol_ratio, 4),
+        "max_crisis_vol_ann": round(max_crisis_vol, 6),
+        "tickers": tickers,
+        "weights": w.tolist(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Lead-Lag Detection
+# ---------------------------------------------------------------------------
+
+def detect_lead_lag(
+    returns: pd.DataFrame,
+    max_lag: int = 10,
+) -> dict:
+    """
+    Cross-correlation analysis to detect which assets lead or lag others in
+    correlation shifts.
+
+    For each asset pair (i, j), compute the cross-correlation at lags
+    τ ∈ {-max_lag, ..., 0, ..., max_lag}:
+        XC(τ) = Corr(r_i(t), r_j(t + τ))
+
+    A positive optimal lag τ* > 0 means asset i leads asset j
+    (returns in i at time t correlate best with j at t+τ*).
+
+    Parameters
+    ----------
+    returns : pd.DataFrame — daily log returns (columns = asset tickers).
+    max_lag : int — maximum number of days to test for leads/lags (default 10).
+
+    Returns
+    -------
+    dict with:
+      "lead_lag_matrix"   : dict[pair_str, dict] — for each pair, the optimal lag,
+                            peak cross-correlation, and interpretation.
+      "leaders"           : list[str] — assets that lead more pairs than they lag.
+      "laggers"           : list[str] — assets that lag more pairs than they lead.
+      "summary_table"     : list[dict] — tabular view for easy inspection.
+    """
+    r = returns.dropna()
+    tickers = list(r.columns)
+    k = len(tickers)
+
+    if k < 2 or len(r) < max_lag + 10:
+        return {
+            "lead_lag_matrix": {},
+            "leaders": [],
+            "laggers": [],
+            "summary_table": [],
+        }
+
+    lead_lag_matrix: Dict[str, dict] = {}
+    lead_count: Dict[str, int] = {t: 0 for t in tickers}
+    lag_count: Dict[str, int] = {t: 0 for t in tickers}
+    summary_table: List[dict] = []
+
+    for i in range(k):
+        for j in range(i + 1, k):
+            ti, tj = tickers[i], tickers[j]
+            xi = r.iloc[:, i].values
+            xj = r.iloc[:, j].values
+            T = len(xi)
+
+            # Standardise
+            xi_std = (xi - xi.mean()) / max(xi.std(), 1e-12)
+            xj_std = (xj - xj.mean()) / max(xj.std(), 1e-12)
+
+            # Compute cross-correlation at each lag τ
+            lags = range(-max_lag, max_lag + 1)
+            xc_vals: Dict[int, float] = {}
+            for tau in lags:
+                if tau == 0:
+                    xc = float(np.corrcoef(xi_std, xj_std)[0, 1])
+                elif tau > 0:
+                    # xi leads xj by tau: correlate xi[:-tau] with xj[tau:]
+                    length = T - tau
+                    if length < 10:
+                        continue
+                    xc = float(np.corrcoef(xi_std[:length], xj_std[tau:])[0, 1])
+                else:
+                    # tau < 0: xj leads xi by |tau|
+                    abs_tau = -tau
+                    length = T - abs_tau
+                    if length < 10:
+                        continue
+                    xc = float(np.corrcoef(xi_std[abs_tau:], xj_std[:length])[0, 1])
+                xc_vals[tau] = xc
+
+            if not xc_vals:
+                continue
+
+            # Optimal lag: argmax(|XC(τ)|)
+            opt_tau = max(xc_vals, key=lambda t: abs(xc_vals[t]))
+            peak_xc = xc_vals[opt_tau]
+            xc_at_zero = xc_vals.get(0, float("nan"))
+
+            # Interpretation
+            if opt_tau == 0:
+                interpretation = "contemporaneous"
+                leader = None
+            elif opt_tau > 0:
+                # xi leads xj
+                interpretation = f"{ti} leads {tj} by {opt_tau}d"
+                leader = ti
+                lagger = tj
+                lead_count[ti] += 1
+                lag_count[tj] += 1
+            else:
+                # xj leads xi
+                abs_tau_val = -opt_tau
+                interpretation = f"{tj} leads {ti} by {abs_tau_val}d"
+                leader = tj
+                lagger = ti
+                lead_count[tj] += 1
+                lag_count[ti] += 1
+
+            pair_key = f"{ti}/{tj}"
+            lead_lag_matrix[pair_key] = {
+                "optimal_lag_days": opt_tau,
+                "peak_cross_corr": round(peak_xc, 4),
+                "corr_at_lag0": round(xc_at_zero, 4) if not math.isnan(xc_at_zero) else float("nan"),
+                "interpretation": interpretation,
+                "cross_corr_by_lag": {int(t): round(v, 4) for t, v in xc_vals.items()},
+            }
+            summary_table.append({
+                "pair": pair_key,
+                "optimal_lag_days": opt_tau,
+                "peak_cross_corr": round(peak_xc, 4),
+                "corr_at_lag0": round(xc_at_zero, 4) if not math.isnan(xc_at_zero) else float("nan"),
+                "interpretation": interpretation,
+            })
+
+    # Classify leaders and laggers
+    leaders = [t for t in tickers if lead_count[t] > lag_count[t]]
+    laggers = [t for t in tickers if lag_count[t] > lead_count[t]]
+
+    # Sort summary by |optimal_lag|
+    summary_table.sort(key=lambda x: abs(x["optimal_lag_days"]), reverse=True)
+
+    return {
+        "lead_lag_matrix": lead_lag_matrix,
+        "leaders": leaders,
+        "laggers": laggers,
+        "summary_table": summary_table,
+    }
 
 
 # ---------------------------------------------------------------------------

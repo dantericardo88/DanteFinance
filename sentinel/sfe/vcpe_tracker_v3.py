@@ -1661,6 +1661,694 @@ class CrunchbaseAlternative:
 
 
 # ---------------------------------------------------------------------------
+# FundUniverse — dynamic EDGAR Form D discovery + SQLite cache
+# ---------------------------------------------------------------------------
+
+@dataclass
+class DiscoveredFund:
+    """A VC/PE fund discovered from EDGAR Form D filings."""
+    fund_name: str
+    cik: str
+    form_d_date: str        # ISO date of most-recent Form D
+    amount_raised: float    # USD, total across all cached Form Ds
+    exempt_offering_type: str  # e.g. "Rule 506(b)"
+    state: str
+    source: str             # "seed" | "edgar_form_d" | "edgar_13f"
+
+
+FORM_D_UNIVERSE_DDL = """
+CREATE TABLE IF NOT EXISTS fund_universe (
+    cik              TEXT PRIMARY KEY,
+    fund_name        TEXT,
+    form_d_date      TEXT,
+    amount_raised    REAL DEFAULT 0,
+    exempt_offering_type TEXT,
+    state            TEXT,
+    source           TEXT DEFAULT 'edgar_form_d',
+    updated_at       TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_fu_date ON fund_universe(form_d_date);
+CREATE INDEX IF NOT EXISTS idx_fu_state ON fund_universe(state);
+
+CREATE TABLE IF NOT EXISTS deal_flow_quarters (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    cik              TEXT,
+    quarter_key      TEXT,   -- e.g. "2024Q1"
+    filing_count     INTEGER DEFAULT 0,
+    UNIQUE(cik, quarter_key)
+);
+CREATE INDEX IF NOT EXISTS idx_dfq_cik ON deal_flow_quarters(cik);
+CREATE INDEX IF NOT EXISTS idx_dfq_qkey ON deal_flow_quarters(quarter_key);
+"""
+
+# Seed list for fund_universe: (name, cik) — these are the core known funds
+_UNIVERSE_SEED: List[Tuple[str, str]] = [
+    ("Sequoia Capital", "1056831"),
+    ("Andreessen Horowitz", "1633917"),
+    ("Kleiner Perkins", "1056707"),
+    ("New Enterprise Associates", "894040"),
+    ("Bessemer Venture Partners", "1011635"),
+    ("Accel Partners", "1011579"),
+    ("GGV Capital", "1502263"),
+    ("Tiger Global Management", "1428850"),
+    ("SoftBank Vision Fund", "1771195"),
+    ("Lightspeed Venture Partners", "1404659"),
+    ("Greylock Partners", "1289414"),
+    ("General Catalyst", "1536180"),
+    ("Founders Fund", "1500217"),
+    ("Union Square Ventures", "1390814"),
+    ("Benchmark Capital", "1043382"),
+    ("First Round Capital", "1450460"),
+    ("Index Ventures", "1390560"),
+    ("Insight Partners", "1422590"),
+    ("Battery Ventures", "1011652"),
+    ("True Ventures", "1399488"),
+    ("Redpoint Ventures", "1083605"),
+    ("IVP", "906078"),
+    ("Norwest Venture Partners", "908173"),
+    ("Blackstone", "1393818"),
+    ("KKR", "1404912"),
+    ("Apollo Global Management", "1411579"),
+    ("Carlyle Group", "1527590"),
+    ("Warburg Pincus", "1013861"),
+    ("TPG Capital", "1552198"),
+    ("Bain Capital", "1371838"),
+    ("Silver Lake", "1393757"),
+    ("Vista Equity Partners", "1547522"),
+    ("Francisco Partners", "1405277"),
+    ("Thoma Bravo", "1549802"),
+    ("General Atlantic", "1011803"),
+    ("Advent International", "1167551"),
+    ("Coatue Management", "1336705"),
+    ("D1 Capital Partners", "1751911"),
+    ("Dragoneer Investment Group", "1546375"),
+    ("Greenoaks Capital", "1602752"),
+    ("Altimeter Capital", "1473287"),
+    ("Lone Pine Capital", "1383312"),
+    ("Viking Global Investors", "1109065"),
+    ("Y Combinator", "1369567"),
+    ("Khosla Ventures", "1450923"),
+    ("Ribbit Capital", "1566562"),
+    ("Lux Capital", "1523052"),
+    ("Foresite Capital", "1736417"),
+    ("Canaan Partners", "1040425"),
+    ("ARCH Venture Partners", "1024673"),
+    ("Emergence Capital", "1446093"),
+    ("Social Capital", "1636280"),
+    ("Spark Capital", "1453272"),
+    ("Meritech Capital", "1119670"),
+    ("TCV", "1011713"),
+    ("DST Global", "1482512"),
+    ("Ares Management", "1555280"),
+    ("Point72 Ventures", "1603466"),
+    ("GV (Google Ventures)", "1547546"),
+    ("NEA", "894040"),
+    ("CRV", "1003127"),
+    ("IVP", "906078"),
+]
+
+
+class FundUniverse:
+    """
+    Dynamic VC/PE fund universe sourced from EDGAR Form D filings.
+
+    Combines a seed list of known funds with live discovery via EDGAR EFTS
+    full-text search for "venture capital" in Form D filings from the last
+    24 months. Results are cached in SQLite.
+
+    Attributes
+    ----------
+    fund_count : int
+        Number of funds currently in the universe (seed + discovered).
+    """
+
+    EFTS_VC_URL = (
+        "https://efts.sec.gov/LATEST/search-index"
+        "?q=%22venture+capital%22&forms=D"
+        "&dateRange=custom&startdt={start}&enddt={end}"
+        "&_source=entity_name,entity_id,file_date,period_of_report&size=100"
+    )
+
+    def __init__(self, db: Optional[VCPEDatabase] = None) -> None:
+        self._db = db or VCPEDatabase()
+        self._client = EDGARClient()
+        self._ensure_tables()
+        self._seed_loaded = False
+
+    def _ensure_tables(self) -> None:
+        conn = self._db._connect()
+        conn.executescript(FORM_D_UNIVERSE_DDL)
+        conn.commit()
+
+    def _load_seed(self) -> None:
+        if self._seed_loaded:
+            return
+        conn = self._db._connect()
+        for name, cik in _UNIVERSE_SEED:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO fund_universe
+                (cik, fund_name, form_d_date, amount_raised, exempt_offering_type, state, source)
+                VALUES (?,?,?,?,?,?,?)
+                """,
+                (cik, name, "", 0.0, "", "", "seed"),
+            )
+        conn.commit()
+        self._seed_loaded = True
+
+    # ------------------------------------------------------------------ public
+
+    @property
+    def fund_count(self) -> int:
+        """Total number of funds in the universe (seed + discovered)."""
+        self._load_seed()
+        conn = self._db._connect()
+        row = conn.execute("SELECT COUNT(*) FROM fund_universe").fetchone()
+        return int(row[0]) if row else 0
+
+    def get_all_funds(self) -> List[DiscoveredFund]:
+        """Return all funds currently cached in the universe."""
+        self._load_seed()
+        conn = self._db._connect()
+        rows = conn.execute(
+            "SELECT * FROM fund_universe ORDER BY form_d_date DESC"
+        ).fetchall()
+        return [self._row_to_fund(r) for r in rows]
+
+    def discover_from_edgar(self, months_back: int = 24) -> List[DiscoveredFund]:
+        """
+        Discover new VC/PE funds via EDGAR EFTS Form D full-text search.
+        Searches for "venture capital" in Form D filings from the last N months.
+        Results are cached in SQLite for future use.
+
+        Returns the newly discovered funds (not previously in universe).
+        """
+        self._load_seed()
+        end = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        start = (datetime.now(timezone.utc) - timedelta(days=months_back * 30)).strftime("%Y-%m-%d")
+
+        url = (
+            f"{EDGAR_EFTS}?q=%22venture+capital%22&forms=D"
+            f"&dateRange=custom&startdt={start}&enddt={end}"
+            f"&_source=entity_name,entity_id,file_date&size=100"
+        )
+
+        data = self._client.get_json(url)
+        if not data:
+            logger.warning("FundUniverse.discover_from_edgar: no response from EDGAR EFTS")
+            return []
+
+        conn = self._db._connect()
+        existing_ciks: set = {
+            r[0] for r in conn.execute("SELECT cik FROM fund_universe").fetchall()
+        }
+
+        new_funds: List[DiscoveredFund] = []
+        for hit in data.get("hits", {}).get("hits", []):
+            src = hit.get("_source", {})
+            entity_id = str(src.get("entity_id", "")).lstrip("0") or ""
+            entity_name = src.get("entity_name", "") or src.get("display_names", [""])[0] if not src.get("entity_name") else src.get("entity_name", "")
+            if isinstance(entity_name, list):
+                entity_name = entity_name[0] if entity_name else ""
+            filed_date = (src.get("file_date") or "")[:10]
+
+            if not entity_id or not entity_name:
+                continue
+
+            fund = DiscoveredFund(
+                fund_name=str(entity_name),
+                cik=entity_id,
+                form_d_date=filed_date,
+                amount_raised=0.0,
+                exempt_offering_type="",
+                state="",
+                source="edgar_form_d",
+            )
+
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO fund_universe
+                (cik, fund_name, form_d_date, amount_raised,
+                 exempt_offering_type, state, source, updated_at)
+                VALUES (?,?,?,?,?,?,?,?)
+                """,
+                (
+                    fund.cik, fund.fund_name, fund.form_d_date,
+                    fund.amount_raised, fund.exempt_offering_type,
+                    fund.state, fund.source,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+            if entity_id not in existing_ciks:
+                new_funds.append(fund)
+                existing_ciks.add(entity_id)
+
+        conn.commit()
+        logger.info(
+            "FundUniverse.discover_from_edgar: %d new funds discovered (total now %d)",
+            len(new_funds), self.fund_count,
+        )
+        return new_funds
+
+    def update_fund_amount(self, cik: str, amount_raised: float,
+                           exempt_type: str = "", state: str = "") -> None:
+        """Update cached fund with enriched Form D financial data."""
+        conn = self._db._connect()
+        conn.execute(
+            """
+            UPDATE fund_universe
+            SET amount_raised = ?,
+                exempt_offering_type = COALESCE(NULLIF(?, ''), exempt_offering_type),
+                state = COALESCE(NULLIF(?, ''), state),
+                updated_at = ?
+            WHERE cik = ?
+            """,
+            (amount_raised, exempt_type, state,
+             datetime.now(timezone.utc).isoformat(), cik),
+        )
+        conn.commit()
+
+    @staticmethod
+    def _row_to_fund(row: sqlite3.Row) -> DiscoveredFund:
+        return DiscoveredFund(
+            fund_name=row["fund_name"] or "",
+            cik=row["cik"] or "",
+            form_d_date=row["form_d_date"] or "",
+            amount_raised=float(row["amount_raised"] or 0),
+            exempt_offering_type=row["exempt_offering_type"] or "",
+            state=row["state"] or "",
+            source=row["source"] or "",
+        )
+
+
+# ---------------------------------------------------------------------------
+# FormDParser — pure XML parser (no network, fully testable)
+# ---------------------------------------------------------------------------
+
+class FormDParser:
+    """
+    Parse SEC Form D XML documents (no network calls required).
+
+    The SEC Form D XML uses namespace ``urn:us:gov:sec:formd``.
+    This class is stateless and can be used in unit tests with a static
+    XML string.
+
+    Usage::
+
+        root = ET.fromstring(xml_bytes)
+        result = FormDParser.parse(root)
+    """
+
+    _NS = "urn:us:gov:sec:formd"
+
+    @classmethod
+    def parse(cls, root: ET.Element) -> Dict[str, Any]:
+        """
+        Parse a Form D XML root element.
+
+        Returns a dict with the following keys (all have safe defaults):
+          - issuer_name (str)
+          - state_of_incorporation (str)
+          - total_offering_amount (float)
+          - total_amount_sold (float)
+          - investor_count (int)
+          - exemption_type (str)
+          - date_of_first_sale (str)  — ISO date or ""
+          - is_amendment (bool)
+          - industry_group (str)
+        """
+        def txt(tag: str) -> str:
+            # Try with and without namespace
+            for el in root.iter():
+                local = el.tag.split("}")[-1] if "}" in el.tag else el.tag
+                if local == tag and el.text:
+                    return el.text.strip()
+            return ""
+
+        def safe_float(s: str) -> float:
+            try:
+                return float(s.replace(",", "").replace("$", "").strip())
+            except (ValueError, AttributeError):
+                return 0.0
+
+        def safe_int(s: str) -> int:
+            try:
+                return int(s.strip())
+            except (ValueError, AttributeError):
+                return 0
+
+        return {
+            "issuer_name":            txt("issuerName") or txt("name"),
+            "state_of_incorporation": txt("issuerStateOrCountry") or txt("stateOfIncorporation"),
+            "total_offering_amount":  safe_float(txt("totalOfferingAmount")),
+            "total_amount_sold":      safe_float(txt("totalAmountSold")),
+            "investor_count":         safe_int(txt("totalNumberAlreadyInvested")),
+            "exemption_type":         txt("exemptionsAndExclusions") or txt("item"),
+            "date_of_first_sale":     (txt("dateOfFirstSale") or "")[:10],
+            "is_amendment":           txt("isAmendment").lower() in {"true", "1", "yes"},
+            "industry_group":         txt("industryGroupType") or txt("industryGroup"),
+        }
+
+    @classmethod
+    def parse_xml_string(cls, xml_text: str) -> Dict[str, Any]:
+        """
+        Parse a raw Form D XML string. Returns empty dict on parse error.
+
+        This is the primary entry point for unit tests — pass a minimal
+        XML string and verify the returned dict.
+        """
+        try:
+            root = ET.fromstring(xml_text)
+            return cls.parse(root)
+        except ET.ParseError as exc:
+            logger.debug("FormDParser.parse_xml_string error: %s", exc)
+            return {}
+
+
+# ---------------------------------------------------------------------------
+# DealFlowVelocity — quarter-over-quarter Form D deal pace
+# ---------------------------------------------------------------------------
+
+class DealFlowVelocity:
+    """
+    Compute and track deal-flow velocity for a fund universe.
+
+    Velocity is defined as the *relative* change in Form D filings from
+    the prior-quarter average to the most-recent quarter::
+
+        velocity = (current_q_count - prior_avg) / prior_avg
+
+    A velocity of +0.50 means 50% more deals than the prior average.
+    A velocity of -0.25 means 25% fewer deals.
+
+    SQLite is used for persistence so trending works across sessions.
+    """
+
+    def __init__(self, db: Optional[VCPEDatabase] = None) -> None:
+        self._db = db or VCPEDatabase()
+        self._ensure_tables()
+
+    def _ensure_tables(self) -> None:
+        conn = self._db._connect()
+        conn.executescript(FORM_D_UNIVERSE_DDL)
+        conn.commit()
+
+    # ------------------------------------------------------------------ math
+
+    @staticmethod
+    def compute_velocity(quarter_counts: List[int]) -> float:
+        """
+        Compute deal-flow velocity from a list of per-quarter Form D counts.
+
+        Parameters
+        ----------
+        quarter_counts : list[int]
+            Counts ordered oldest → newest. Must have at least 2 elements.
+            The last element is the current quarter; all prior are the
+            historical baseline.
+
+        Returns
+        -------
+        float
+            Velocity in [-1.0, +inf). Returns 0.0 if prior_avg is zero.
+
+        Examples
+        --------
+        >>> DealFlowVelocity.compute_velocity([10, 10, 10, 15])
+        0.5
+        >>> DealFlowVelocity.compute_velocity([10, 20])
+        1.0
+        >>> DealFlowVelocity.compute_velocity([0, 0])
+        0.0
+        """
+        if len(quarter_counts) < 2:
+            raise ValueError("quarter_counts must have at least 2 elements")
+
+        current = quarter_counts[-1]
+        prior   = quarter_counts[:-1]
+        prior_avg = sum(prior) / len(prior)
+
+        if prior_avg == 0:
+            return 0.0
+
+        return (current - prior_avg) / prior_avg
+
+    @staticmethod
+    def quarter_key(dt: Optional[date] = None) -> str:
+        """
+        Return the quarter key string for a given date, e.g. ``"2024Q1"``.
+        Defaults to today if dt is None.
+        """
+        d = dt or date.today()
+        q = (d.month - 1) // 3 + 1
+        return f"{d.year}Q{q}"
+
+    def record_filing(self, cik: str, filed_date: str) -> None:
+        """
+        Record a Form D filing for a CIK in the deal_flow_quarters table.
+        filed_date must be ISO format YYYY-MM-DD.
+        """
+        try:
+            fd = datetime.strptime(filed_date[:10], "%Y-%m-%d").date()
+        except ValueError:
+            logger.debug("DealFlowVelocity.record_filing: bad date %s", filed_date)
+            return
+
+        q_key = self.quarter_key(fd)
+        conn = self._db._connect()
+        conn.execute(
+            """
+            INSERT INTO deal_flow_quarters (cik, quarter_key, filing_count)
+            VALUES (?, ?, 1)
+            ON CONFLICT(cik, quarter_key) DO UPDATE SET
+                filing_count = filing_count + 1
+            """,
+            (cik, q_key),
+        )
+        conn.commit()
+
+    def get_velocity(self, cik: str, num_prior_quarters: int = 3) -> Optional[float]:
+        """
+        Compute current deal-flow velocity for a fund CIK.
+
+        Uses the most-recent quarter vs the prior N quarters from the DB.
+        Returns None if insufficient data.
+        """
+        conn = self._db._connect()
+        rows = conn.execute(
+            """
+            SELECT quarter_key, filing_count
+            FROM deal_flow_quarters
+            WHERE cik = ?
+            ORDER BY quarter_key DESC
+            LIMIT ?
+            """,
+            (cik, num_prior_quarters + 1),
+        ).fetchall()
+
+        if len(rows) < 2:
+            return None
+
+        # Rows are newest-first; reverse to oldest→newest for compute_velocity
+        counts = [r["filing_count"] for r in reversed(rows)]
+        return self.compute_velocity(counts)
+
+    def get_universe_velocity(self, top_n: int = 10) -> List[Dict[str, Any]]:
+        """
+        Return velocity for the top_n most-active funds in the deal_flow_quarters table.
+        """
+        conn = self._db._connect()
+        rows = conn.execute(
+            """
+            SELECT cik, SUM(filing_count) AS total
+            FROM deal_flow_quarters
+            GROUP BY cik
+            ORDER BY total DESC
+            LIMIT ?
+            """,
+            (top_n,),
+        ).fetchall()
+
+        results = []
+        for r in rows:
+            cik = r["cik"]
+            vel = self.get_velocity(cik)
+            results.append({
+                "cik":           cik,
+                "total_filings": r["total"],
+                "velocity":      vel,
+            })
+
+        return results
+
+
+# ---------------------------------------------------------------------------
+# FundLifecycle — formation date, fund age, lifecycle stage
+# ---------------------------------------------------------------------------
+
+class FundLifecycle:
+    """
+    Track VC/PE fund lifecycle from EDGAR Form D filing history.
+
+    Lifecycle stages (based on fund age in years):
+      - "formation"    : < 1 year since first Form D
+      - "fundraising"  : 1–3 years
+      - "investing"    : 3–7 years
+      - "harvesting"   : 7–12 years (portfolio exits)
+      - "mature"       : > 12 years
+
+    Funds older than 10 years are also flagged as "mature/harvesting".
+
+    All dates are inferred from EDGAR Form D filing dates.
+    """
+
+    STAGES = [
+        (0,   1,  "formation"),
+        (1,   3,  "fundraising"),
+        (3,   7,  "investing"),
+        (7,  12,  "harvesting"),
+        (12, 999, "mature"),
+    ]
+
+    MATURE_THRESHOLD_YEARS = 10
+
+    @staticmethod
+    def fund_age_years(formation_date: str,
+                       as_of: Optional[date] = None) -> float:
+        """
+        Compute fund age in fractional years from the formation date string.
+
+        Parameters
+        ----------
+        formation_date : str
+            ISO date of the fund's first Form D filing (YYYY-MM-DD).
+        as_of : date, optional
+            Reference date; defaults to today.
+
+        Returns
+        -------
+        float
+            Age in fractional years. Returns 0.0 if date is invalid.
+
+        Examples
+        --------
+        >>> FundLifecycle.fund_age_years("2020-01-01", date(2025, 1, 1))
+        5.0
+        """
+        if not formation_date:
+            return 0.0
+        try:
+            formed = datetime.strptime(formation_date[:10], "%Y-%m-%d").date()
+            ref    = as_of or date.today()
+            return max((ref - formed).days / 365.25, 0.0)
+        except ValueError:
+            return 0.0
+
+    @classmethod
+    def lifecycle_stage(cls, age_years: float) -> str:
+        """
+        Map fund age (years) to a lifecycle stage string.
+
+        Parameters
+        ----------
+        age_years : float
+            Fund age in fractional years.
+
+        Returns
+        -------
+        str
+            One of: "formation", "fundraising", "investing",
+            "harvesting", "mature".
+        """
+        for lo, hi, stage in cls.STAGES:
+            if lo <= age_years < hi:
+                return stage
+        return "mature"
+
+    @classmethod
+    def is_mature_harvesting(cls, formation_date: str,
+                             as_of: Optional[date] = None) -> bool:
+        """
+        Return True if the fund is older than MATURE_THRESHOLD_YEARS.
+
+        Parameters
+        ----------
+        formation_date : str
+            ISO date of the fund's first Form D filing.
+        as_of : date, optional
+            Reference date; defaults to today.
+
+        Returns
+        -------
+        bool
+        """
+        age = cls.fund_age_years(formation_date, as_of=as_of)
+        return age >= cls.MATURE_THRESHOLD_YEARS
+
+    @classmethod
+    def profile(cls, formation_date: str,
+                amendment_dates: Optional[List[str]] = None,
+                as_of: Optional[date] = None) -> Dict[str, Any]:
+        """
+        Build a full lifecycle profile for a fund.
+
+        Parameters
+        ----------
+        formation_date : str
+            ISO date of first Form D.
+        amendment_dates : list[str], optional
+            ISO dates of Form D/A amendments.
+        as_of : date, optional
+            Evaluation date; defaults to today.
+
+        Returns
+        -------
+        dict with keys:
+          - formation_date (str)
+          - age_years (float)
+          - stage (str)
+          - is_mature_harvesting (bool)
+          - amendment_count (int)
+          - last_amendment_date (str or None)
+          - final_close_estimated (bool)  — True if no amendments in >3yr
+        """
+        amendment_dates = amendment_dates or []
+        age = cls.fund_age_years(formation_date, as_of=as_of)
+        stage = cls.lifecycle_stage(age)
+        is_mature = age >= cls.MATURE_THRESHOLD_YEARS
+
+        last_amendment: Optional[str] = None
+        if amendment_dates:
+            try:
+                last_amendment = sorted(amendment_dates)[-1]
+            except Exception:
+                pass
+
+        # Estimate final close: no amendments in 3+ years AND fund > 3 years old
+        final_close_estimated = False
+        if age >= 3.0 and last_amendment:
+            try:
+                last_amend_dt = datetime.strptime(last_amendment[:10], "%Y-%m-%d").date()
+                ref = as_of or date.today()
+                years_since_amend = (ref - last_amend_dt).days / 365.25
+                final_close_estimated = years_since_amend >= 3.0
+            except ValueError:
+                pass
+        elif age >= 3.0 and not last_amendment:
+            final_close_estimated = True
+
+        return {
+            "formation_date":      formation_date,
+            "age_years":           round(age, 2),
+            "stage":               stage,
+            "is_mature_harvesting": is_mature,
+            "amendment_count":     len(amendment_dates),
+            "last_amendment_date": last_amendment,
+            "final_close_estimated": final_close_estimated,
+        }
+
+
+# ---------------------------------------------------------------------------
 # Convenience: run all scrapers and print a summary report
 # ---------------------------------------------------------------------------
 

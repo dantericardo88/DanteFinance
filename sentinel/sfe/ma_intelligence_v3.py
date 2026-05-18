@@ -2301,3 +2301,114 @@ if __name__ == "__main__":
     print(dashboard.generate_ma_report())
 
     print("\nDemo complete.")
+
+
+# ---------------------------------------------------------------------------
+# dim_100 wave-9 additions: deal closure probability, stub equity, spread compression
+# ---------------------------------------------------------------------------
+
+
+def compute_deal_closure_probability(
+    regulatory_risk: float,
+    financing_risk: float,
+    shareholder_risk: float,
+    strategic_fit: float,
+) -> float:
+    """
+    Compute probability (0.0 – 1.0) that an announced M&A deal will close.
+
+    Weighted formula:
+        probability = (regulatory_risk * 0.3 + financing_risk * 0.2 +
+                       shareholder_risk * 0.2 + strategic_fit * 0.3)
+
+    All inputs are risk/quality scores in [0, 1]:
+      - regulatory_risk   : 0 = high regulatory risk (likely block), 1 = clear pass
+      - financing_risk    : 0 = financing unlikely, 1 = fully committed financing
+      - shareholder_risk  : 0 = shareholders likely to reject, 1 = clear approval
+      - strategic_fit     : 0 = poor fit (integration failure risk), 1 = strong fit
+
+    Returns
+    -------
+    float: closure probability in [0.0, 1.0]
+    """
+    probability = (
+        regulatory_risk  * 0.30 +
+        financing_risk   * 0.20 +
+        shareholder_risk * 0.20 +
+        strategic_fit    * 0.30
+    )
+    return round(max(0.0, min(1.0, probability)), 4)
+
+
+def compute_stub_equity_value(
+    total_consideration: float,
+    cash_component: float,
+) -> float:
+    """
+    Compute stub equity value in mixed cash/stock deals.
+
+    In a mixed consideration deal, the stub equity represents the non-cash
+    portion of the deal value that target shareholders receive as acquirer stock.
+
+        stub = total_consideration - cash_component
+
+    Parameters
+    ----------
+    total_consideration : Total per-share deal value (cash + stock) in USD
+    cash_component      : Per-share cash portion of the deal in USD
+
+    Returns
+    -------
+    float: stub equity value per share in USD (>= 0)
+    """
+    stub = max(0.0, total_consideration - cash_component)
+    return round(stub, 4)
+
+
+def detect_arb_spread_compression(
+    initial_spread: float,
+    current_spread: float,
+    days_elapsed: int,
+) -> dict:
+    """
+    Detect whether merger arbitrage spread compression indicates a deal is near close.
+
+    If the spread narrowed > 50% within 5 days → "late_stage" (deal near close).
+
+    Parameters
+    ----------
+    initial_spread  : Initial arbitrage spread (%) observed after announcement
+    current_spread  : Current arbitrage spread (%)
+    days_elapsed    : Number of days since initial spread observation
+
+    Returns
+    -------
+    dict with keys:
+        spread_compression_pct : percentage by which spread has narrowed
+        stage                  : "late_stage" | "mid_stage" | "early_stage"
+        near_close             : bool — True if late_stage detected
+    """
+    if initial_spread <= 0:
+        return {
+            "spread_compression_pct": 0.0,
+            "stage": "unknown",
+            "near_close": False,
+        }
+
+    compression_pct = (initial_spread - current_spread) / initial_spread * 100.0
+    near_close = (compression_pct > 50.0 and days_elapsed <= 5)
+    if near_close or compression_pct > 50.0:
+        stage = "late_stage"
+    elif compression_pct > 20.0:
+        stage = "mid_stage"
+    else:
+        stage = "early_stage"
+
+    return {
+        "spread_compression_pct": round(compression_pct, 2),
+        "stage": stage,
+        "near_close": near_close,
+        "initial_spread": initial_spread,
+        "current_spread": current_spread,
+        "days_elapsed": days_elapsed,
+    }

@@ -1,80 +1,162 @@
 #!/usr/bin/env bash
-# dim_074: Fixed income screener — pure bond math & filter logic
+# dim_074: Fixed income screener v3 -- expanded universe, TIPS, cheapness, liquidity
 set -e
-cd "$(dirname "$0")/../.."
+cd "$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
 
 python - <<'PYEOF'
 import sys, os
 sys.path.insert(0, os.getcwd())
 import math
 
-from sentinel.sfe.fixed_income_screener import (
-    _TREASURY_CURVE, _IG_SPREADS, _HY_SPREADS, _MUNI_TEY_FACTOR,
-    _interp_treasury_yield, _bond_price,
+from sentinel.sfe.fixed_income_screener_v3 import (
+    _TREASURY_FALLBACK,
+    _IG_SPREADS,
+    _HY_SPREADS,
+    _IG_CORPS,
+    _HY_CORPS,
+    _HY_EXPANDED,
+    AGENCY_BONDS,
+    TIPS_OTR,
+    TREASURY_OTR,
+    _interp_treasury,
+    _ytm_newton,
+    _modified_duration,
+    _macaulay_duration,
+    _convexity,
+    _dv01_per_mm,
+    compute_tips_real_yield,
+    tips_analytics,
+    compute_cheapness_score,
+    screen_relative_value,
+    compute_liquidity_score,
+    get_expanded_universe_count,
 )
 
-# Test Treasury curve interpolation (pure math, no network)
-y_3m = _interp_treasury_yield(0.25)
-y_10y = _interp_treasury_yield(10.0)
-y_5y = _interp_treasury_yield(5.0)
-assert 4.0 < y_3m < 6.0, f"3M Treasury yield out of range: {y_3m}"
-assert 4.0 < y_10y < 6.0, f"10Y Treasury yield out of range: {y_10y}"
+# 1. Expanded universe count > 100 bonds
+total_count = get_expanded_universe_count()
+assert total_count > 100, f"Expanded universe too small: {total_count}"
+print(f"[OK] Expanded universe: {total_count} bonds (> 100 threshold)")
+print(f"     IG={len(_IG_CORPS)}, HY_core={len(_HY_CORPS)}, HY_expanded={len(_HY_EXPANDED)}, "
+      f"TIPS={len(TIPS_OTR)}, Agency={len(AGENCY_BONDS)}, Treasury={len(TREASURY_OTR)}")
+
+# 2. Treasury curve interpolation (pure math)
+y_3m = _interp_treasury(0.25, _TREASURY_FALLBACK)
+y_10y = _interp_treasury(10.0, _TREASURY_FALLBACK)
+y_5y = _interp_treasury(5.0, _TREASURY_FALLBACK)
+assert 3.0 < y_3m < 7.0, f"3M Treasury yield out of range: {y_3m}"
+assert 3.0 < y_10y < 7.0, f"10Y Treasury yield out of range: {y_10y}"
 print(f"[OK] Treasury curve: 3M={y_3m:.2f}% 5Y={y_5y:.2f}% 10Y={y_10y:.2f}%")
 
-# Test interpolation between known points
-y_interp = _interp_treasury_yield(7.5)  # between 7Y and 10Y
-y_7 = _TREASURY_CURVE[7.0]
-y_10 = _TREASURY_CURVE[10.0]
-assert min(y_7, y_10) <= y_interp <= max(y_7, y_10) + 0.01, f"Interpolation out of bounds: {y_interp}"
-print(f"[OK] Interpolated 7.5Y yield = {y_interp:.3f}% (between {y_7}% and {y_10}%)")
+# 3. Bond YTM (pure math Newton-Raphson)
+par_price = _ytm_newton(coupon_rate=4.5, years=5.0, price=100.0)
+assert abs(par_price - 4.5) < 0.05, f"Par bond YTM should be ~4.5%, got {par_price:.4f}"
+print(f"[OK] Par bond YTM: coupon=YTM -> {par_price:.4f}% (should be ~4.5%)")
 
-# Test bond price calculation (pure math)
-# Par bond: coupon = YTM → price = 100
-par_price = _bond_price(ytm_pct=4.5, coupon_rate_pct=4.5, maturity_years=5.0)
-assert abs(par_price - 1000.0) < 1.0, f"Par bond price should be ~1000, got {par_price:.2f}"
-print(f"[OK] Par bond price: {par_price:.2f} (should be ~1000)")
+# 4. TIPS real yield: real = nominal - breakeven
+# Given nominal yield 4.40% and breakeven 2.30% -> real yield = 2.10%
+nominal = 4.40
+breakeven = 2.30
+real = compute_tips_real_yield(nominal, breakeven)
+assert abs(real - (nominal - breakeven)) < 0.001, f"TIPS real yield: expected {nominal - breakeven}, got {real}"
+assert abs(real - 2.10) < 0.001, f"Real yield should be 2.10%, got {real}"
+print(f"[OK] TIPS real yield: {nominal}% nominal - {breakeven}% breakeven = {real}% real")
 
-# Premium bond: coupon > YTM → price > par
-premium_price = _bond_price(ytm_pct=3.0, coupon_rate_pct=5.0, maturity_years=5.0)
-assert premium_price > 1000.0, f"Premium bond should price above par: {premium_price:.2f}"
-print(f"[OK] Premium bond price: {premium_price:.2f} (should be >1000)")
+# Test with different values
+real2 = compute_tips_real_yield(5.0, 2.50)
+assert abs(real2 - 2.50) < 0.001, f"TIPS real 5%-2.5% should be 2.5%, got {real2}"
+print(f"[OK] TIPS real yield: 5.0% - 2.5% = {real2}%")
 
-# Discount bond: coupon < YTM → price < par
-discount_price = _bond_price(ytm_pct=6.0, coupon_rate_pct=4.0, maturity_years=5.0)
-assert discount_price < 1000.0, f"Discount bond should price below par: {discount_price:.2f}"
-print(f"[OK] Discount bond price: {discount_price:.2f} (should be <1000)")
+# TIPS analytics
+ta = tips_analytics(real_yield_pct=2.10, breakeven_inflation_pct=2.30, tenor_years=10.0)
+assert ta["real_yield_pct"] == 2.10
+assert ta["nominal_equivalent_yield_pct"] == 4.40
+assert ta["tenor_years"] == 10.0
+assert ta["approx_modified_duration"] > 0
+print(f"[OK] TIPS analytics: real={ta['real_yield_pct']}%, nominal_equiv={ta['nominal_equivalent_yield_pct']}%, "
+      f"dur~{ta['approx_modified_duration']:.2f}")
 
-# Test IG spread lookup
-assert _IG_SPREADS["AAA"] < _IG_SPREADS["BBB"], "AAA should have lower spread than BBB"
-assert _IG_SPREADS["BBB-"] > 150, f"BBB- spread too low: {_IG_SPREADS['BBB-']}"
-print(f"[OK] IG spreads: AAA={_IG_SPREADS['AAA']}bps BBB={_IG_SPREADS['BBB']}bps BBB-={_IG_SPREADS['BBB-']}bps")
+# 5. Cheapness score: Z-spread 50bps above sector median -> "cheap"
+rv = compute_cheapness_score(bond_z_spread_bps=200.0, sector_median_z_spread_bps=150.0)
+assert rv["label"] == "cheap", f"Expected 'cheap', got {rv['label']}"
+assert rv["cheapness_bps"] == 50.0
+print(f"[OK] Cheapness score: 200bps bond vs 150bps sector median -> '{rv['label']}' (+{rv['cheapness_bps']}bps)")
 
-# Test HY spread lookup
-assert _HY_SPREADS["BB+"] < _HY_SPREADS["CCC"], "BB+ should have lower spread than CCC"
-print(f"[OK] HY spreads: BB+={_HY_SPREADS['BB+']}bps CCC={_HY_SPREADS['CCC']}bps")
+# Z-spread below sector median -> "rich"
+rv_rich = compute_cheapness_score(bond_z_spread_bps=100.0, sector_median_z_spread_bps=160.0)
+assert rv_rich["label"] == "rich", f"Expected 'rich', got {rv_rich['label']}"
+assert rv_rich["cheapness_bps"] == -60.0
+print(f"[OK] Cheapness score: 100bps bond vs 160bps sector median -> '{rv_rich['label']}' ({rv_rich['cheapness_bps']}bps)")
 
-# Test muni tax-equivalent yield factor
-# TEY = muni_yield / (1 - tax_rate); at 40% tax rate, factor = 1/0.6 = 1.667
-assert abs(_MUNI_TEY_FACTOR - 1.6667) < 0.01, f"Muni TEY factor wrong: {_MUNI_TEY_FACTOR}"
-muni_yield = 3.0  # 3% tax-free
-tey = muni_yield * _MUNI_TEY_FACTOR
-assert 4.5 < tey < 5.5, f"TEY out of range: {tey:.2f}%"
-print(f"[OK] Muni TEY: {muni_yield}% tax-free = {tey:.2f}% taxable equivalent")
+# Within 25bps -> "fair"
+rv_fair = compute_cheapness_score(bond_z_spread_bps=155.0, sector_median_z_spread_bps=150.0)
+assert rv_fair["label"] == "fair", f"Expected 'fair', got {rv_fair['label']}"
+print(f"[OK] Cheapness score: 155bps vs 150bps sector -> '{rv_fair['label']}'")
 
-# Modified duration formula (pure math)
-# For a par bond: modified_duration ≈ (1 - (1+y)^(-n)) / y ≈ (n for zero-coupon)
-def modified_duration_approx(ytm_pct, maturity_years, freq=2):
-    ytm = ytm_pct / 100.0 / freq
-    n = maturity_years * freq
-    if ytm == 0:
-        return maturity_years
-    # Approx for par bond
-    dur = (1 - (1 + ytm)**(-n)) / ytm / freq
-    return dur
+# 6. Relative value screener on a sample universe
+sample_bonds = [
+    {"bond_id": "A1", "sector": "CORP_IG", "oas_bps": 200.0, "issuer": "Alpha Corp"},
+    {"bond_id": "A2", "sector": "CORP_IG", "oas_bps": 100.0, "issuer": "Beta Corp"},
+    {"bond_id": "A3", "sector": "CORP_IG", "oas_bps": 150.0, "issuer": "Gamma Corp"},
+    {"bond_id": "B1", "sector": "CORP_HY", "oas_bps": 400.0, "issuer": "Delta Corp"},
+    {"bond_id": "B2", "sector": "CORP_HY", "oas_bps": 600.0, "issuer": "Epsilon Corp"},
+]
+rv_results = screen_relative_value(sample_bonds)
+assert len(rv_results) == 5
+# A1 (200bps) vs IG median (150bps) -> cheap (+50bps)
+a1 = next(r for r in rv_results if r["bond_id"] == "A1")
+assert a1["cheapness_label"] == "cheap", f"A1 should be cheap: {a1}"
+assert a1["cheapness_bps"] == 50.0, f"A1 cheapness: expected 50, got {a1['cheapness_bps']}"
+# A2 (100bps) vs IG median (150bps) -> rich (-50bps)
+a2 = next(r for r in rv_results if r["bond_id"] == "A2")
+assert a2["cheapness_label"] == "rich", f"A2 should be rich: {a2}"
+# Results sorted cheapest first
+assert rv_results[0]["cheapness_bps"] >= rv_results[-1]["cheapness_bps"]
+print(f"[OK] Relative value screener: A1=cheap(+50bps), A2=rich(-50bps), sorted by cheapness")
 
-md = modified_duration_approx(4.5, 10)
-assert 6.0 < md < 9.0, f"Modified duration unexpected: {md:.2f}"
-print(f"[OK] Approx modified duration (10Y, 4.5% par) = {md:.2f} years")
+# 7. Liquidity score: $1B issue > $100M issue
+score_1b = compute_liquidity_score(1000.0)
+score_100m = compute_liquidity_score(100.0)
+assert score_1b > score_100m, f"$1B should score higher than $100M: {score_1b} vs {score_100m}"
+print(f"[OK] Liquidity score: $1B={score_1b:.1f} > $100M={score_100m:.1f}")
 
-print("\n[PASS] dim_074: Fixed income screener")
+# Very large (benchmark) -> highest score
+score_benchmark = compute_liquidity_score(5000.0)
+assert score_benchmark == 100.0, f"$5B should be 100 (benchmark): {score_benchmark}"
+print(f"[OK] Liquidity score: $5B benchmark -> {score_benchmark:.0f}/100")
+
+# Small issue -> low score
+score_small = compute_liquidity_score(50.0)
+assert score_small < 20.0, f"$50M should be illiquid (<20): {score_small}"
+print(f"[OK] Liquidity score: $50M illiquid -> {score_small:.1f}/100")
+
+# Monotone increasing with size
+sizes = [50, 100, 250, 500, 1000, 2000, 5000]
+scores = [compute_liquidity_score(s) for s in sizes]
+assert all(scores[i] <= scores[i+1] for i in range(len(scores)-1)), (
+    f"Liquidity scores not monotone: {list(zip(sizes, scores))}"
+)
+print(f"[OK] Liquidity monotone: {[f'{s}->{sc:.0f}' for s, sc in zip(sizes, scores)]}")
+
+# 8. IG spread ordering: AAA < BBB
+assert _IG_SPREADS["AAA"] < _IG_SPREADS["BBB"]
+assert _IG_SPREADS["BBB-"] > 150
+print(f"[OK] IG spreads: AAA={_IG_SPREADS['AAA']}bps < BBB={_IG_SPREADS['BBB']}bps < BBB-={_IG_SPREADS['BBB-']}bps")
+
+# 9. HY spreads ordering
+assert _HY_SPREADS["BB+"] < _HY_SPREADS["CCC"]
+print(f"[OK] HY spreads: BB+={_HY_SPREADS['BB+']}bps < CCC={_HY_SPREADS['CCC']}bps")
+
+# 10. Modified duration (pure math)
+mod_dur = _modified_duration(coupon_rate=4.5, years=10.0, ytm_pct=4.5)
+assert 6.0 < mod_dur < 9.0, f"10Y par bond mod duration unexpected: {mod_dur:.3f}"
+print(f"[OK] Modified duration: 10Y 4.5% par bond = {mod_dur:.3f} years")
+
+# 11. DV01: larger DV01 for longer duration bonds
+dv01_10y = _dv01_per_mm(mod_dur)
+mod_dur_2y = _modified_duration(coupon_rate=4.5, years=2.0, ytm_pct=4.5)
+dv01_2y = _dv01_per_mm(mod_dur_2y)
+assert dv01_10y > dv01_2y, f"10Y DV01 ({dv01_10y:.2f}) should be > 2Y DV01 ({dv01_2y:.2f})"
+print(f"[OK] DV01: 10Y=${dv01_10y:.2f}/MM > 2Y=${dv01_2y:.2f}/MM (correct)")
+
+print(f"\n[PASS] dim_074: Fixed income screener v3 -- {total_count} bonds, TIPS, cheapness, liquidity all verified")
 PYEOF

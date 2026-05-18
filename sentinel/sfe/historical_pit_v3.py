@@ -1444,6 +1444,171 @@ def _persist_filing_index(ticker: str, cik: str, filings: list[FilingMeta]) -> N
 
 
 # ---------------------------------------------------------------------------
+# Data quality and anomaly functions (dim_020 — target 9/10)
+# ---------------------------------------------------------------------------
+
+def compute_data_freshness_score(days_since_filing: float) -> float:
+    """
+    Score the freshness of a financial data point based on how many calendar
+    days have elapsed since it was filed.
+
+    Formula:
+        score = max(0, 100 - days_since_filing * 0.5)
+
+    Interpretation:
+      - 100.0 = filed today (maximally fresh)
+      - 80.0  = filed 40 days ago (still recent for a quarterly report)
+      - 50.0  = filed 100 days ago (getting stale)
+      - 0.0   = filed 200+ days ago (floor; consider stale)
+
+    Parameters
+    ----------
+    days_since_filing : number of calendar days since the SEC filing date
+
+    Returns
+    -------
+    float in [0.0, 100.0]
+    """
+    score = 100.0 - days_since_filing * 0.5
+    return round(max(0.0, score), 4)
+
+
+def detect_filing_anomaly(
+    period_end: str,
+    filing_date: str,
+    form_type: str = "10-K",
+) -> dict:
+    """
+    Detect late filing anomalies by comparing the SEC filing date to the
+    fiscal period end date.
+
+    Rules:
+      - 10-K (annual): filing date > 90 days after period_end → late flag
+      - 10-Q (quarterly): filing date > 45 days after period_end → late flag
+
+    Parameters
+    ----------
+    period_end   : fiscal period end date as ISO string (YYYY-MM-DD)
+    filing_date  : SEC filing date as ISO string (YYYY-MM-DD)
+    form_type    : "10-K", "10-Q", or similar
+
+    Returns
+    -------
+    dict with:
+      - lag_days        (int): filing_date - period_end in calendar days
+      - is_late         (bool)
+      - threshold_days  (int): the deadline used
+      - severity        (str): "none" | "mild" | "severe"
+      - description     (str)
+    """
+    try:
+        period_dt = date.fromisoformat(period_end)
+        filing_dt = date.fromisoformat(filing_date)
+    except ValueError as exc:
+        return {
+            "lag_days":       None,
+            "is_late":        False,
+            "threshold_days": None,
+            "severity":       "unknown",
+            "description":    f"Date parse error: {exc}",
+        }
+
+    lag_days = (filing_dt - period_dt).days
+
+    # Determine threshold based on form type
+    is_annual = any(k in form_type.upper() for k in ("10-K", "20-F", "40-F"))
+    threshold_days = 90 if is_annual else 45
+
+    is_late = lag_days > threshold_days
+    excess  = lag_days - threshold_days
+
+    if not is_late:
+        severity    = "none"
+        description = f"Filing on time: {lag_days} days after period end (threshold {threshold_days}d)."
+    elif excess <= 30:
+        severity    = "mild"
+        description = (
+            f"Late filing: {lag_days} days after period end ({excess}d over {threshold_days}d threshold). "
+            "Mild anomaly — may indicate internal control issues."
+        )
+    else:
+        severity    = "severe"
+        description = (
+            f"Severely late filing: {lag_days} days after period end ({excess}d over {threshold_days}d threshold). "
+            "SEC may have issued NT (non-timely) notification."
+        )
+
+    return {
+        "lag_days":       lag_days,
+        "is_late":        is_late,
+        "threshold_days": threshold_days,
+        "severity":       severity,
+        "description":    description,
+    }
+
+
+def compute_revision_impact(
+    original_value: float,
+    restated_value: float,
+    threshold_pct: float = 0.05,
+) -> dict:
+    """
+    Compute the magnitude of a financial restatement and flag material revisions.
+
+    If the restated value deviates by more than threshold_pct (default 5%) from
+    the original value, the restatement is flagged as material.
+
+    Formula:
+        restatement_magnitude = |restated - original| / |original|
+
+    Parameters
+    ----------
+    original_value  : the value as originally reported
+    restated_value  : the value as later restated/revised
+    threshold_pct   : fraction above which the restatement is material (default 0.05 = 5%)
+
+    Returns
+    -------
+    dict with:
+      - original_value       (float)
+      - restated_value       (float)
+      - change               (float): restated - original
+      - restatement_magnitude (float): |change| / |original|, or None if original == 0
+      - is_material          (bool): magnitude > threshold_pct
+      - direction            (str): "upward" | "downward" | "unchanged"
+      - description          (str)
+    """
+    change = restated_value - original_value
+
+    if original_value == 0.0:
+        restatement_magnitude = None
+        is_material           = False
+        direction             = "unchanged" if change == 0 else ("upward" if change > 0 else "downward")
+        description           = "Cannot compute magnitude: original value is zero."
+    else:
+        restatement_magnitude = abs(change) / abs(original_value)
+        is_material           = restatement_magnitude > threshold_pct
+        direction             = "upward" if change > 0 else "downward" if change < 0 else "unchanged"
+        description = (
+            f"Material restatement: {restatement_magnitude * 100:.2f}% revision ({direction}). "
+            f"Original={original_value:,.0f}, Restated={restated_value:,.0f}."
+            if is_material
+            else f"Immaterial revision: {restatement_magnitude * 100:.2f}% ({direction})."
+        )
+
+    return {
+        "original_value":        round(original_value, 4),
+        "restated_value":        round(restated_value, 4),
+        "change":                round(change, 4),
+        "restatement_magnitude": round(restatement_magnitude, 6) if restatement_magnitude is not None else None,
+        "is_material":           is_material,
+        "threshold_pct":         threshold_pct,
+        "direction":             direction,
+        "description":           description,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Coverage report helper
 # ---------------------------------------------------------------------------
 

@@ -179,5 +179,65 @@ assert sw_val["low"] < sw_val["mid"] < sw_val["high"]
 assert sw_val["low"] >= 40_000_000, f"Software $10M ARR low valuation: ${sw_val['low']:,.0f}"
 print(f"[OK] Valuation estimate (Software $10M ARR): low=${sw_val['low']:,.0f} mid=${sw_val['mid']:,.0f} high=${sw_val['high']:,.0f}")
 
+# ------------------------------------------------------------------
+# Wave-9 additions: compute_implied_valuation, estimate_growth_stage,
+# compute_acquisition_likelihood_score
+# ------------------------------------------------------------------
+from sentinel.sfe.private_company_profiles import (
+    compute_implied_valuation,
+    estimate_growth_stage,
+    compute_acquisition_likelihood_score,
+)
+
+# Test compute_implied_valuation — SaaS: 3× multiple
+saas_val = compute_implied_valuation(10_000_000, "Software")
+assert saas_val["revenue_multiple"] == 3.0, \
+    f"SaaS multiple should be 3.0: {saas_val['revenue_multiple']}"
+assert saas_val["implied_ev"] == 30_000_000.0, \
+    f"SaaS implied EV should be 30M: {saas_val['implied_ev']}"
+print(f"[OK] compute_implied_valuation SaaS: {saas_val['revenue_multiple']}x -> EV=${saas_val['implied_ev']:,.0f}")
+
+# Industrial: 2× multiple
+ind_val = compute_implied_valuation(5_000_000, "Industrial")
+assert ind_val["revenue_multiple"] == 2.0, \
+    f"Industrial multiple should be 2.0: {ind_val['revenue_multiple']}"
+assert ind_val["implied_ev"] == 10_000_000.0, \
+    f"Industrial implied EV should be 10M: {ind_val['implied_ev']}"
+print(f"[OK] compute_implied_valuation Industrial: {ind_val['revenue_multiple']}x -> EV=${ind_val['implied_ev']:,.0f}")
+
+# Retail: 1.5× multiple
+retail_val = compute_implied_valuation(8_000_000, "Retail")
+assert retail_val["revenue_multiple"] == 1.5, \
+    f"Retail multiple should be 1.5: {retail_val['revenue_multiple']}"
+assert abs(retail_val["implied_ev"] - 12_000_000.0) < 1.0, \
+    f"Retail implied EV should be 12M: {retail_val['implied_ev']}"
+print(f"[OK] compute_implied_valuation Retail: {retail_val['revenue_multiple']}x -> EV=${retail_val['implied_ev']:,.0f}")
+
+# Test estimate_growth_stage
+assert estimate_growth_stage(0) == "seed",  f"$0 revenue -> seed"
+assert estimate_growth_stage(100_000) == "early", f"$100K revenue -> early"
+assert estimate_growth_stage(4_999_999) == "early", f"<$5M -> early"
+assert estimate_growth_stage(5_000_000) == "growth", f"$5M -> growth"
+assert estimate_growth_stage(49_999_999) == "growth", f"<$50M -> growth"
+assert estimate_growth_stage(50_000_000) == "late", f"$50M -> late"
+assert estimate_growth_stage(200_000_000) == "late", f"$200M -> late"
+print("[OK] estimate_growth_stage: 0->seed, <5M->early, <50M->growth, >=50M->late")
+
+# Test compute_acquisition_likelihood_score
+# Small + strong FCF + strategic sector = 30+30+40 = 100
+high_score = compute_acquisition_likelihood_score("small", True, "Software")
+assert high_score == 100.0, f"Max score should be 100: {high_score}"
+print(f"[OK] compute_acquisition_likelihood_score (small/FCF/tech): {high_score}")
+
+# Small + no FCF + non-strategic = 30
+small_no_fcf = compute_acquisition_likelihood_score("small", False, "Other")
+assert small_no_fcf == 30.0, f"Small no-FCF non-strategic: {small_no_fcf}"
+print(f"[OK] compute_acquisition_likelihood_score (small/no-FCF/other): {small_no_fcf}")
+
+# Large + FCF + strategic sector = 10+30+40 = 80
+large_score = compute_acquisition_likelihood_score("large", True, "Healthcare")
+assert large_score == 80.0, f"Large FCF strategic: {large_score}"
+print(f"[OK] compute_acquisition_likelihood_score (large/FCF/healthcare): {large_score}")
+
 print("\n[PASS] dim_097: Private company profiles")
 PYEOF

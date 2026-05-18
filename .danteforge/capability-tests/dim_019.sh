@@ -1,6 +1,7 @@
 #!/bin/bash
 # dim_019: Earnings KPI tracker — SurpriseResult, accruals metrics (pure computation)
 set -e
+export PYTHONIOENCODING=utf-8
 cd "$(dirname "$0")/../.."
 
 python - <<'PYEOF'
@@ -13,6 +14,9 @@ from sentinel.sfe.earnings_kpi_tracker_v3 import (
     QuarterlyResult, SurpriseResult, GuidanceEntry,
     QualityMetrics, CalendarEntry, BatchSurpriseItem,
     compute_accruals_metrics,
+    compute_earnings_quality_score,
+    detect_guidance_walk_up,
+    compute_beat_rate,
 )
 
 # Test 1: QuarterlyResult model
@@ -101,6 +105,100 @@ for kw in guidance_keywords:
     )
     assert ge.guidance_action == kw
 print(f"[OK] GuidanceEntry: all {len(guidance_keywords)} action types valid")
+
+# --------------------------------------------------------------------------
+# NEW: Test 6 — compute_earnings_quality_score (accruals ratio math)
+# --------------------------------------------------------------------------
+# Accruals ratio = (NI - CFO) / avg_assets
+# Use AAPL-like numbers (millions):
+# NI = 93_736, CFO = 109_432, avg_assets = (352_583 + 364_980) / 2 = 358_781.5
+ni_m      = 93_736.0
+cfo_m     = 109_432.0
+avg_a_m   = (352_583.0 + 364_980.0) / 2.0   # 358_781.5
+
+expected_ratio = (ni_m - cfo_m) / avg_a_m    # (93736 - 109432) / 358781.5 ≈ -0.04374
+result = compute_earnings_quality_score(ni_m, cfo_m, avg_a_m)
+
+assert result["quality_flag"] in ("HIGH", "MODERATE", "LOW", "VERY_LOW")
+assert abs(result["accruals_ratio"] - expected_ratio) < 1e-6, \
+    f"Expected {expected_ratio:.6f}, got {result['accruals_ratio']}"
+assert result["accruals_ratio"] < 0, "CFO > NI → negative accruals → high quality"
+print(f"[OK] compute_earnings_quality_score: accruals_ratio={result['accruals_ratio']:.6f}, flag={result['quality_flag']}")
+
+# Zero avg_assets must raise
+try:
+    compute_earnings_quality_score(100.0, 80.0, 0.0)
+    assert False, "Should have raised"
+except ValueError:
+    pass
+print("[OK] compute_earnings_quality_score: zero avg_assets raises ValueError")
+
+# --------------------------------------------------------------------------
+# NEW: Test 7 — detect_guidance_walk_up
+# --------------------------------------------------------------------------
+history_walk_up = [
+    {"period_label": "2024-Q1", "guidance_action": "lowers"},
+    {"period_label": "2024-Q2", "guidance_action": "raises"},
+    {"period_label": "2024-Q3", "guidance_action": "raises"},
+]
+wu = detect_guidance_walk_up(history_walk_up)
+assert wu["walk_up_detected"] is True, "Two consecutive raises should be detected"
+assert wu["consecutive_raises"] == 2
+assert wu["periods"] == ["2024-Q2", "2024-Q3"]
+print(f"[OK] detect_guidance_walk_up: walk_up={wu['walk_up_detected']}, raises={wu['consecutive_raises']}")
+
+# Single raise — no walk-up
+history_single = [
+    {"period_label": "2024-Q1", "guidance_action": "reaffirms"},
+    {"period_label": "2024-Q2", "guidance_action": "raises"},
+]
+wu2 = detect_guidance_walk_up(history_single)
+assert wu2["walk_up_detected"] is False
+assert wu2["consecutive_raises"] == 1
+print(f"[OK] detect_guidance_walk_up: single raise correctly not flagged as walk-up")
+
+# Empty history
+wu3 = detect_guidance_walk_up([])
+assert wu3["walk_up_detected"] is False
+print(f"[OK] detect_guidance_walk_up: empty history handled")
+
+# --------------------------------------------------------------------------
+# NEW: Test 8 — compute_beat_rate
+# --------------------------------------------------------------------------
+surprise_8 = [
+    {"surprise_cat": "BEAT"},
+    {"surprise_cat": "STRONG_BEAT"},
+    {"surprise_cat": "BEAT"},
+    {"surprise_cat": "MISS"},
+    {"surprise_cat": "BEAT"},
+    {"surprise_cat": "IN_LINE"},
+    {"surprise_cat": "BEAT"},
+    {"surprise_cat": "STRONG_BEAT"},
+]
+br = compute_beat_rate(surprise_8)
+assert br["quarters_used"] == 8
+assert br["beats"] == 6, f"Expected 6 beats, got {br['beats']}"
+assert abs(br["beat_rate"] - 0.75) < 1e-6, f"Expected 0.75, got {br['beat_rate']}"
+assert br["assessment"] == "HIGH"
+print(f"[OK] compute_beat_rate: beat_rate={br['beat_rate']:.2f}, assessment={br['assessment']}")
+
+# Fewer than 8 quarters — uses all available
+surprise_3 = [
+    {"surprise_cat": "MISS"},
+    {"surprise_cat": "MISS"},
+    {"surprise_cat": "MISS"},
+]
+br2 = compute_beat_rate(surprise_3)
+assert br2["quarters_used"] == 3
+assert br2["beat_rate"] == 0.0
+assert br2["assessment"] == "LOW"
+print(f"[OK] compute_beat_rate: 0/3 beats → beat_rate=0.0, assessment=LOW")
+
+# Window capped at 8 when more supplied
+surprise_10 = [{"surprise_cat": "MISS"}] * 2 + [{"surprise_cat": "BEAT"}] * 8
+br3 = compute_beat_rate(surprise_10)
+assert br3["quarters_used"] == 8, f"Expected 8, got {br3['quarters_used']}"
+print(f"[OK] compute_beat_rate: window correctly capped at 8 quarters")
 
 print("[PASS]")
 PYEOF

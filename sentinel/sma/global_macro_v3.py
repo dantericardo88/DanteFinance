@@ -1631,3 +1631,237 @@ def get_universe(region: Optional[str] = Query(None), group: Optional[str] = Que
             continue
         countries.append(entry)
     return {"count": len(countries), "universe": countries}
+
+
+# ---------------------------------------------------------------------------
+# IMF 180-country GDP growth feed
+# ---------------------------------------------------------------------------
+
+def fetch_imf_gdp_all() -> Dict[str, Optional[float]]:
+    """
+    Pull IMF WEO real GDP growth (NGDP_RPCH) for 180+ countries via free API.
+    Returns {iso3: gdp_growth_pct} dict.
+    URL: https://www.imf.org/external/datamapper/api/v1/NGDP_RPCH
+    """
+    url = f"{IMF_BASE}/NGDP_RPCH"
+    raw = _safe_get(url)
+    result: Dict[str, Optional[float]] = {}
+    if not raw or not isinstance(raw, dict):
+        return result
+    try:
+        values = raw.get("values", {}).get("NGDP_RPCH", {})
+        for iso3, yr_map in values.items():
+            if not yr_map:
+                continue
+            latest_yr = max(yr_map.keys())
+            v = yr_map.get(latest_yr)
+            if v is not None:
+                try:
+                    result[iso3] = float(v)
+                except (TypeError, ValueError):
+                    pass
+    except Exception as exc:
+        logger.warning("IMF GDP all parse error: %s", exc)
+    return result
+
+
+def fetch_wb_gdp_all() -> Dict[str, Optional[float]]:
+    """
+    Pull World Bank GDP growth (NY.GDP.MKTP.KD.ZG) for 200+ countries via free API.
+    Returns {iso2: gdp_growth_pct} dict.
+    URL: https://api.worldbank.org/v2/country/all/indicator/NY.GDP.MKTP.KD.ZG
+    """
+    url = f"{WB_BASE}/country/all/indicator/NY.GDP.MKTP.KD.ZG"
+    params = {"format": "json", "per_page": 300, "mrv": 3}
+    raw = _safe_get(url, params)
+    result: Dict[str, Optional[float]] = {}
+    if not raw or not isinstance(raw, list) or len(raw) < 2:
+        return result
+    for rec in raw[1]:
+        iso2 = (rec.get("countryiso3166alpha2") or rec.get("country", {}).get("id") or "")
+        v = rec.get("value")
+        if iso2 and v is not None:
+            try:
+                result[iso2.upper()] = float(v)
+            except (TypeError, ValueError):
+                pass
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Country Health Score (composite: GDP growth + inflation + CA + debt)
+# ---------------------------------------------------------------------------
+
+def compute_country_health_score(
+    gdp_growth: Optional[float],
+    inflation: Optional[float],
+    current_account_pct_gdp: Optional[float],
+    debt_pct_gdp: Optional[float],
+    inflation_target: float = 2.0,
+) -> float:
+    """
+    Composite country health score (0–100).
+
+    Pillars:
+      Growth (40 pts): GDP growth vs 2% neutral
+      Inflation (25 pts): proximity to target
+      Current Account (20 pts): surplus = good
+      Debt (15 pts): lower = better
+
+    All pure math — no network calls.
+    """
+    score = 0.0
+
+    # Growth pillar (40 pts): neutral at 2%, +2pts per 1% above, -3pts per 1% below
+    if gdp_growth is not None:
+        growth_pts = 20.0 + (gdp_growth - 2.0) * 2.5
+        score += max(0.0, min(40.0, growth_pts))
+    else:
+        score += 20.0  # neutral
+
+    # Inflation pillar (25 pts): max at target, decays by gap
+    if inflation is not None:
+        gap = abs(inflation - inflation_target)
+        inf_pts = max(0.0, 25.0 - gap * 3.0)
+        # Extra penalty for very high inflation
+        if inflation > 15.0:
+            inf_pts = max(0.0, inf_pts - 10.0)
+        score += inf_pts
+    else:
+        score += 12.5
+
+    # Current account (20 pts): surplus → full marks, large deficit → 0
+    if current_account_pct_gdp is not None:
+        if current_account_pct_gdp > 3.0:
+            score += 20.0
+        elif current_account_pct_gdp > 0.0:
+            score += 15.0
+        elif current_account_pct_gdp > -2.0:
+            score += 10.0
+        elif current_account_pct_gdp > -5.0:
+            score += 5.0
+        else:
+            score += 0.0
+    else:
+        score += 10.0
+
+    # Debt (15 pts): < 40% → 15, > 120% → 0
+    if debt_pct_gdp is not None:
+        debt_pts = max(0.0, 15.0 - max(0.0, debt_pct_gdp - 40.0) * 0.1875)
+        score += debt_pts
+    else:
+        score += 7.5
+
+    return round(min(100.0, max(0.0, score)), 2)
+
+
+# ---------------------------------------------------------------------------
+# EM Stress Index
+# ---------------------------------------------------------------------------
+
+def compute_em_stress_index(em_spreads_bps: List[float]) -> float:
+    """
+    Compute EM stress index as the weighted average of sovereign credit spreads
+    (in bps over US Treasury) for the top 20 EM countries.
+
+    A higher index = more EM stress.
+    Weights are equal if not provided.
+
+    Parameters
+    ----------
+    em_spreads_bps : list of spread values in basis points
+
+    Returns
+    -------
+    float: weighted average spread in bps
+    """
+    if not em_spreads_bps:
+        return 0.0
+    return round(sum(em_spreads_bps) / len(em_spreads_bps), 2)
+
+
+# Reference EM sovereign spreads (bps over UST, approximate 2026)
+_EM_SOVEREIGN_SPREADS: Dict[str, float] = {
+    "BR": 180, "MX": 130, "IN": 95,  "ZA": 220, "TR": 420,
+    "AR": 950, "NG": 490, "EG": 560, "UA": 1800,"ID": 115,
+    "PH": 90,  "TH": 60,  "MY": 75,  "VN": 200, "CL": 85,
+    "CO": 195, "PE": 155, "RO": 175, "HU": 145, "PL": 80,
+}
+
+
+def get_em_stress_index() -> Dict[str, Any]:
+    """Return current EM stress index from reference spreads."""
+    spreads = list(_EM_SOVEREIGN_SPREADS.values())
+    index = compute_em_stress_index(spreads)
+    return {
+        "em_stress_index_bps": index,
+        "n_countries": len(spreads),
+        "highest_spread": {"country": max(_EM_SOVEREIGN_SPREADS, key=_EM_SOVEREIGN_SPREADS.get), "bps": max(spreads)},
+        "lowest_spread": {"country": min(_EM_SOVEREIGN_SPREADS, key=_EM_SOVEREIGN_SPREADS.get), "bps": min(spreads)},
+        "countries": _EM_SOVEREIGN_SPREADS,
+        "as_of": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# G10 Central Bank Divergence Score
+# ---------------------------------------------------------------------------
+
+# G10 expected rate path (bps change YTD / next 12M consensus, approximate 2026)
+_G10_RATE_PATHS: Dict[str, float] = {
+    "US": 0,    # Fed on hold
+    "GB": -50,  # BOE cutting
+    "DE": -25,  # ECB cutting (EU proxy)
+    "JP": +25,  # BOJ hiking
+    "CH": -50,  # SNB cutting
+    "CA": -75,  # BOC cutting
+    "AU": -25,  # RBA cutting
+    "NZ": -100, # RBNZ cutting
+    "SE": -75,  # Riksbank cutting
+    "NO": -25,  # Norges Bank on hold / mild cut
+}
+
+
+def compute_cb_divergence_score(rate_paths: Dict[str, float]) -> float:
+    """
+    G10 central bank divergence score.
+
+    Measures how dispersed rate expectations are across G10 central banks.
+    Score = standard deviation of rate path changes (in bps).
+
+    Higher score → more divergence → more FX carry opportunity.
+
+    Parameters
+    ----------
+    rate_paths : dict of {iso2: expected_rate_change_bps}
+    """
+    values = list(rate_paths.values())
+    if len(values) < 2:
+        return 0.0
+    mean = sum(values) / len(values)
+    variance = sum((v - mean) ** 2 for v in values) / (len(values) - 1)
+    return round(variance ** 0.5, 2)
+
+
+def get_g10_cb_divergence() -> Dict[str, Any]:
+    """Return G10 central bank divergence score and breakdown."""
+    score = compute_cb_divergence_score(_G10_RATE_PATHS)
+    max_hawk = max(_G10_RATE_PATHS, key=_G10_RATE_PATHS.get)
+    max_dove = min(_G10_RATE_PATHS, key=_G10_RATE_PATHS.get)
+    return {
+        "divergence_score_bps": score,
+        "interpretation": "high_divergence" if score > 40 else "moderate" if score > 20 else "low",
+        "most_hawkish": {"iso2": max_hawk, "expected_change_bps": _G10_RATE_PATHS[max_hawk]},
+        "most_dovish": {"iso2": max_dove, "expected_change_bps": _G10_RATE_PATHS[max_dove]},
+        "rate_paths": _G10_RATE_PATHS,
+        "as_of": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# DM / EM classification helper
+# ---------------------------------------------------------------------------
+
+def classify_market_type(iso2: str) -> str:
+    """Return 'DM' for developed market, 'EM' for emerging market."""
+    return "DM" if iso2.upper() in DEVELOPED else "EM"

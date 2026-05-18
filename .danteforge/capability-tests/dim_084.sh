@@ -12,7 +12,11 @@ from datetime import datetime, timedelta, timezone
 from sentinel.sma.news_sentiment_pipeline_v3 import (
     NewsArticle, NewsType, EarningsEvent, MAEvent,
     NewsEventClassifier, NewsSentimentPipeline,
-    DECAY_LAMBDA, GDELT_TONE_SCALE
+    DECAY_LAMBDA, GDELT_TONE_SCALE,
+    MarketReactionPredictor,
+    detect_narrative_shift_from_series,
+    normalize_entity_to_ticker,
+    compute_volume_weighted_sentiment,
 )
 
 # Test NewsArticle creation and GDELT tone normalization
@@ -97,6 +101,113 @@ weight_total = sum(a.time_weight() for a in articles)
 avg_sentiment = weighted_sum / weight_total
 assert avg_sentiment > 0, f"Net sentiment should be positive: {avg_sentiment:.4f}"
 print(f"[OK] Weighted sentiment aggregation: {avg_sentiment:.4f} > 0")
+
+# ---------------------------------------------------------------
+# NEW: Market reaction model
+# ---------------------------------------------------------------
+predictor = MarketReactionPredictor()
+
+# Positive sentiment + decent volume → positive expected move
+move_pos = predictor.compute_market_reaction_model(
+    sentiment_zscore=2.0, news_volume=20, alpha=0.001
+)
+move_neg = predictor.compute_market_reaction_model(
+    sentiment_zscore=-2.0, news_volume=20, alpha=0.001
+)
+assert move_pos > 0, f"Positive sentiment should give positive move: {move_pos}"
+assert move_neg < 0, f"Negative sentiment should give negative move: {move_neg}"
+assert abs(move_pos + move_neg) < 1e-9, "Symmetric sentiment should cancel"
+print(f"[OK] Market reaction model: pos={move_pos:.5f} neg={move_neg:.5f}")
+
+# Zero volume → zero move
+move_zero = predictor.compute_market_reaction_model(
+    sentiment_zscore=3.0, news_volume=0, alpha=0.001
+)
+assert move_zero == 0.0, f"Zero volume should give zero move: {move_zero}"
+print(f"[OK] Market reaction model: zero volume -> zero move")
+
+# ---------------------------------------------------------------
+# NEW: Rolling IC (information coefficient)
+# ---------------------------------------------------------------
+# Construct series where lag-1 IC is clearly positive:
+# When sentiment_t is high, return_t+1 is high (1-day lag).
+# sent=[−0.2,−0.1,0.1,0.2,0.3], returns=[X,−0.01,−0.005,0.01,0.015,0.02]
+# sent[0:5] vs returns[1:6] → ranks align positively.
+sentiments_pos = [-0.2, -0.1,  0.1,  0.2,  0.3]
+returns_pos    = [ 0.0, -0.01, -0.005, 0.01, 0.015, 0.02]
+ic = predictor.compute_rolling_ic(sentiments_pos, returns_pos, window=30)
+assert ic > 0, f"IC should be positive (correct direction): {ic:.4f}"
+print(f"[OK] Rolling IC: {ic:.4f} > 0 (sentiment predicts returns in correct direction)")
+
+# Negative IC: high sentiment → negative next-day return
+returns_neg = [ 0.0, 0.01, 0.005, -0.01, -0.015, -0.02]
+ic_neg = predictor.compute_rolling_ic(sentiments_pos, returns_neg, window=30)
+assert ic_neg < 0, f"Anti-correlated IC should be negative: {ic_neg:.4f}"
+print(f"[OK] Rolling IC anti-corr: {ic_neg:.4f} < 0")
+
+# Short series (< 3) → returns 0.0
+ic_short = predictor.compute_rolling_ic([0.1], [0.01], window=30)
+assert ic_short == 0.0, f"Short series should return 0.0: {ic_short}"
+print(f"[OK] Rolling IC short series: 0.0")
+
+# ---------------------------------------------------------------
+# NEW: Narrative shift detection
+# ---------------------------------------------------------------
+# Stable series → no shift
+stable = [0.1] * 30
+assert not detect_narrative_shift_from_series(stable), "Stable series should not flag shift"
+print(f"[OK] Narrative shift: stable series -> no shift")
+
+# Large sudden delta → shift
+shift_series = [0.0] * 29 + [2.5]  # massive jump at the end
+assert detect_narrative_shift_from_series(shift_series, window=3, lookback=90), \
+    f"Large delta should flag as narrative shift"
+print(f"[OK] Narrative shift: large 3-day delta flagged as structural shift")
+
+# Short series → no shift (insufficient data)
+assert not detect_narrative_shift_from_series([0.1, 0.2], window=3), \
+    "Too short series should not flag shift"
+print(f"[OK] Narrative shift: short series -> no shift")
+
+# ---------------------------------------------------------------
+# NEW: Entity linking
+# ---------------------------------------------------------------
+assert normalize_entity_to_ticker("Apple") == "AAPL", \
+    f"'Apple' should map to AAPL"
+assert normalize_entity_to_ticker("AAPL") == "AAPL", \
+    f"'AAPL' should map to AAPL"
+assert normalize_entity_to_ticker("Apple Inc") == "AAPL", \
+    f"'Apple Inc' should map to AAPL"
+assert normalize_entity_to_ticker("apple inc.") == "AAPL", \
+    f"'apple inc.' should map to AAPL (case-insensitive)"
+assert normalize_entity_to_ticker("Google") == "GOOGL", \
+    f"'Google' should map to GOOGL"
+assert normalize_entity_to_ticker("UNKNOWN_COMPANY_XYZ") is None, \
+    f"Unknown entity should return None"
+print(f"[OK] Entity linking: Apple -> AAPL, Apple Inc -> AAPL, Google -> GOOGL, unknown -> None")
+
+# ---------------------------------------------------------------
+# NEW: Volume-weighted sentiment
+# ---------------------------------------------------------------
+# 3 articles at 0.1 + 1 article at 0.5 → weighted avg = (3*0.1+1*0.5)/(3+1) = 0.8/4 = 0.2
+sentiments_vw = [0.1, 0.5]
+counts_vw = [3, 1]
+vw_avg = compute_volume_weighted_sentiment(sentiments_vw, counts_vw)
+expected_vw = (3 * 0.1 + 1 * 0.5) / (3 + 1)
+assert abs(vw_avg - expected_vw) < 1e-9, \
+    f"Volume-weighted avg: {vw_avg:.4f} vs expected {expected_vw:.4f}"
+print(f"[OK] Volume-weighted sentiment: {vw_avg:.4f} == {expected_vw:.4f}")
+
+# Equal weights → same as simple average
+vw_equal = compute_volume_weighted_sentiment([0.1, 0.3, 0.5], [1, 1, 1])
+simple_avg = (0.1 + 0.3 + 0.5) / 3
+assert abs(vw_equal - simple_avg) < 1e-9, "Equal weights should equal simple average"
+print(f"[OK] Volume-weighted (equal weights) == simple average: {vw_equal:.4f}")
+
+# Zero total count → simple average fallback
+vw_zero = compute_volume_weighted_sentiment([0.2, 0.4], [0, 0])
+assert abs(vw_zero - 0.3) < 1e-9, f"Zero counts should fall back to simple avg: {vw_zero}"
+print(f"[OK] Volume-weighted (zero counts) -> simple average fallback: {vw_zero:.4f}")
 
 print("\n[PASS] dim_084: News sentiment pipeline")
 PYEOF

@@ -106,5 +106,74 @@ geo_syn = est.estimate_revenue_synergies(
 assert geo_syn["total"] > 0
 print("[OK] Multiple deal-type synergy models verified")
 
+# ------------------------------------------------------------------
+# Wave-9 additions: compute_deal_closure_probability, compute_stub_equity_value,
+# detect_arb_spread_compression
+# ------------------------------------------------------------------
+from sentinel.sfe.ma_intelligence_v3 import (
+    compute_deal_closure_probability,
+    compute_stub_equity_value,
+    detect_arb_spread_compression,
+)
+
+# Test compute_deal_closure_probability
+# Formula: reg*0.3 + fin*0.2 + shr*0.2 + fit*0.3
+prob = compute_deal_closure_probability(
+    regulatory_risk=1.0,
+    financing_risk=1.0,
+    shareholder_risk=1.0,
+    strategic_fit=1.0,
+)
+assert abs(prob - 1.0) < 1e-9, f"All 1.0 inputs -> probability=1.0: {prob}"
+print(f"[OK] compute_deal_closure_probability (all 1.0): {prob}")
+
+prob_low = compute_deal_closure_probability(0.0, 0.0, 0.0, 0.0)
+assert abs(prob_low - 0.0) < 1e-9, f"All 0.0 inputs -> probability=0.0: {prob_low}"
+print(f"[OK] compute_deal_closure_probability (all 0.0): {prob_low}")
+
+# Mixed: 0.8*0.3 + 0.9*0.2 + 0.7*0.2 + 0.85*0.3 = 0.24+0.18+0.14+0.255 = 0.815
+prob_mixed = compute_deal_closure_probability(
+    regulatory_risk=0.8,
+    financing_risk=0.9,
+    shareholder_risk=0.7,
+    strategic_fit=0.85,
+)
+expected = 0.8*0.3 + 0.9*0.2 + 0.7*0.2 + 0.85*0.3
+assert abs(prob_mixed - expected) < 1e-4, \
+    f"Mixed inputs -> {expected:.4f}: got {prob_mixed}"
+print(f"[OK] compute_deal_closure_probability (mixed): {prob_mixed:.4f} (expected {expected:.4f})")
+
+# Test compute_stub_equity_value
+stub = compute_stub_equity_value(50.0, 30.0)
+assert abs(stub - 20.0) < 1e-9, f"Stub = 50-30 = 20: {stub}"
+print(f"[OK] compute_stub_equity_value: total=50, cash=30 -> stub={stub}")
+
+stub_all_cash = compute_stub_equity_value(50.0, 50.0)
+assert stub_all_cash == 0.0, f"All-cash deal stub = 0: {stub_all_cash}"
+print(f"[OK] compute_stub_equity_value (all cash): stub={stub_all_cash}")
+
+# Test detect_arb_spread_compression
+# > 50% compression in <= 5 days → late_stage + near_close
+result = detect_arb_spread_compression(
+    initial_spread=4.0,
+    current_spread=1.5,
+    days_elapsed=4,
+)
+assert result["stage"] == "late_stage", f"Stage should be late_stage: {result['stage']}"
+assert result["near_close"] is True, f"near_close should be True: {result['near_close']}"
+assert result["spread_compression_pct"] > 50.0, \
+    f"Compression should be > 50%: {result['spread_compression_pct']}"
+print(f"[OK] detect_arb_spread_compression: compression={result['spread_compression_pct']:.1f}% stage={result['stage']} near_close={result['near_close']}")
+
+# Slow compression → early_stage
+result_slow = detect_arb_spread_compression(
+    initial_spread=4.0,
+    current_spread=3.5,
+    days_elapsed=10,
+)
+assert result_slow["stage"] == "early_stage", f"Slow compression -> early_stage: {result_slow['stage']}"
+assert result_slow["near_close"] is False
+print(f"[OK] detect_arb_spread_compression (slow): stage={result_slow['stage']}")
+
 print("\n[PASS] dim_100: M&A Deal Intelligence — all checks passed")
 PYEOF

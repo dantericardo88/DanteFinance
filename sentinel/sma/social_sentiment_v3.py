@@ -1327,6 +1327,153 @@ class SentimentScanner:
 
 
 # ---------------------------------------------------------------------------
+# Advanced signal functions (dim_085 score 8 → 9)
+# ---------------------------------------------------------------------------
+
+
+def compute_sentiment_momentum(
+    scores: list[float],
+) -> dict:
+    """
+    Compute sentiment momentum via 3-day vs 10-day moving-average crossover.
+
+    A positive crossover (3D MA rises above 10D MA) generates a bullish signal;
+    a negative crossover generates a bearish signal.
+
+    Parameters
+    ----------
+    scores : List of daily composite sentiment scores (most recent last).
+             Minimum 10 values required for a valid signal.
+
+    Returns
+    -------
+    dict with:
+      "ma_3d"        : float — 3-day simple moving average of sentiment.
+      "ma_10d"       : float — 10-day simple moving average of sentiment.
+      "signal"       : "bullish" | "bearish" | "neutral" — crossover signal.
+      "momentum"     : float — ma_3d - ma_10d (positive = bullish momentum).
+      "valid"        : bool — False if insufficient data.
+    """
+    if len(scores) < 10:
+        return {"ma_3d": None, "ma_10d": None, "signal": "neutral", "momentum": 0.0, "valid": False}
+
+    ma_3d = float(sum(scores[-3:]) / 3)
+    ma_10d = float(sum(scores[-10:]) / 10)
+    momentum = ma_3d - ma_10d
+
+    if momentum > 0.02:
+        signal = "bullish"
+    elif momentum < -0.02:
+        signal = "bearish"
+    else:
+        signal = "neutral"
+
+    return {
+        "ma_3d": round(ma_3d, 4),
+        "ma_10d": round(ma_10d, 4),
+        "signal": signal,
+        "momentum": round(momentum, 4),
+        "valid": True,
+    }
+
+
+def compute_retail_vs_institutional_divergence(
+    social_sentiment: float,
+    analyst_consensus: float,
+    divergence_threshold: float = 0.30,
+) -> dict:
+    """
+    Compute the divergence between retail social sentiment and analyst consensus.
+
+    A large gap between retail sentiment (from Reddit/StockTwits) and analyst
+    consensus (normalised to the same -1..+1 scale) may signal a contrarian
+    opportunity: if retail is extremely bullish but analysts are bearish, the
+    stock may be overextended.
+
+    Parameters
+    ----------
+    social_sentiment  : Composite social sentiment score in [-1, 1].
+    analyst_consensus : Analyst mean recommendation normalised to [-1, 1].
+                        Conversion: 1.0 (Strong Buy) → +1.0,
+                                    3.0 (Hold)        →  0.0,
+                                    5.0 (Strong Sell) → -1.0.
+                        Formula: (3.0 - rating) / 2.0
+    divergence_threshold : Minimum |gap| to flag a contrarian signal (default 0.30).
+
+    Returns
+    -------
+    dict with:
+      "social_sentiment"    : float
+      "analyst_consensus"   : float
+      "divergence"          : float — social_sentiment - analyst_consensus
+      "abs_divergence"      : float
+      "contrarian_signal"   : bool — True if abs_divergence > threshold
+      "direction"           : "retail_bullish_analyst_bearish" | "retail_bearish_analyst_bullish" | "aligned"
+      "threshold"           : float
+    """
+    divergence = social_sentiment - analyst_consensus
+    abs_div = abs(divergence)
+    contrarian = abs_div > divergence_threshold
+
+    if contrarian and divergence > 0:
+        direction = "retail_bullish_analyst_bearish"
+    elif contrarian and divergence < 0:
+        direction = "retail_bearish_analyst_bullish"
+    else:
+        direction = "aligned"
+
+    return {
+        "social_sentiment": round(social_sentiment, 4),
+        "analyst_consensus": round(analyst_consensus, 4),
+        "divergence": round(divergence, 4),
+        "abs_divergence": round(abs_div, 4),
+        "contrarian_signal": contrarian,
+        "direction": direction,
+        "threshold": divergence_threshold,
+    }
+
+
+def compute_viral_coefficient(
+    mentions_today: float,
+    mentions_7day_avg: float,
+) -> dict:
+    """
+    Compute the viral coefficient: ratio of today's mentions to the 7-day rolling average.
+
+    A ratio > 3× is flagged as a viral spike (unusual attention surge).
+
+    Parameters
+    ----------
+    mentions_today   : Number of social mentions in the most recent day.
+    mentions_7day_avg : Rolling 7-day average of daily mention counts.
+
+    Returns
+    -------
+    dict with:
+      "viral_coefficient" : float — mentions_today / mentions_7day_avg
+      "viral_spike"       : bool — True if viral_coefficient > 3.0
+      "mentions_today"    : float
+      "mentions_7day_avg" : float
+    """
+    if mentions_7day_avg <= 0:
+        return {
+            "viral_coefficient": float("inf") if mentions_today > 0 else 1.0,
+            "viral_spike": mentions_today > 0,
+            "mentions_today": mentions_today,
+            "mentions_7day_avg": mentions_7day_avg,
+        }
+
+    coeff = mentions_today / mentions_7day_avg
+
+    return {
+        "viral_coefficient": round(coeff, 10),
+        "viral_spike": coeff > 3.0,
+        "mentions_today": mentions_today,
+        "mentions_7day_avg": mentions_7day_avg,
+    }
+
+
+# ---------------------------------------------------------------------------
 # FastAPI router (optional — only registered if fastapi is available)
 # ---------------------------------------------------------------------------
 

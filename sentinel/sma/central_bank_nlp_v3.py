@@ -116,6 +116,17 @@ HAWKISH_TERMS: Dict[str, float] = {
     "strong growth": 0.5, "robust growth": 0.5, "overheated": 1.0,
     "accelerate": 0.6, "accelerating": 0.6, "ongoing increases": 0.9,
     "removal of accommodation": 0.9, "normalize": 0.5, "normalization": 0.5,
+    # N-gram bigram additions (higher specificity → higher weight)
+    "tighten policy": 1.2, "policy tightening": 1.2,
+    "above-target inflation": 1.1, "inflation above target": 1.1,
+    "premature to cut": 1.5, "premature to ease": 1.5,
+    "not considering rate cuts": 1.3, "not considering cuts": 1.1,
+    "rate hike expected": 1.2, "hike expected": 1.0,
+    "inflation well above": 1.0, "significantly above": 0.9,
+    "materially above target": 1.1, "persistently high": 0.9,
+    "further tightening": 1.1, "additional tightening": 1.1,
+    "tightening stance": 1.0, "hawkish stance": 1.2,
+    "inflation risks skewed": 0.9, "upside risks to inflation": 1.0,
 }
 
 DOVISH_TERMS: Dict[str, float] = {
@@ -137,6 +148,17 @@ DOVISH_TERMS: Dict[str, float] = {
     "below potential": -0.6, "spare capacity": -0.7, "output gap": -0.5,
     "financial conditions tighten": -0.5, "tighten automatically": -0.4,
     "welfare": -0.3, "inclusive": -0.3, "maximum employment": -0.5,
+    # N-gram bigram additions
+    "well anchored": -0.9,
+    "remain patient": -1.0, "patient approach": -0.9,
+    "premature to hike": -1.2, "not considering hikes": -1.1,
+    "monitoring data": -0.7, "monitor developments": -0.6,
+    "inflation expectations anchored": -1.0, "anchored expectations": -0.9,
+    "dovish stance": -1.2, "easing bias": -1.1,
+    "rate cut expected": -1.2, "cut expected soon": -1.1,
+    "inflation cooling": -0.8, "inflation declining": -0.8,
+    "labor market softening": -0.9, "growth slowing": -0.8,
+    "downside risks prevail": -1.0, "risks to downside": -0.9,
 }
 
 NEUTRAL_TERMS: Dict[str, float] = {
@@ -148,6 +170,63 @@ NEUTRAL_TERMS: Dict[str, float] = {
     "incoming data": 0.0, "evolving outlook": 0.0, "developments": 0.0,
     "circumstances": 0.0, "carefully": 0.0, "modestly": 0.0,
 }
+
+# Negation tokens — if any appear within 6 tokens before a hawk/dove term, invert the score
+_NEGATION_TOKENS: frozenset = frozenset({
+    "not", "no", "never", "neither", "nor", "without", "hardly", "barely",
+    "scarcely", "isn't", "aren't", "wasn't", "weren't", "haven't", "hasn't",
+    "hadn't", "wouldn't", "couldn't", "shouldn't", "won't", "don't", "didn't",
+    "cannot", "can't", "less", "unlikely", "insufficient", "refrain",
+})
+
+# Intensity modifier multipliers — scale the base lexicon score
+INTENSITY_MODIFIERS: Dict[str, float] = {
+    "significantly": 1.5,
+    "materially": 1.4,
+    "substantially": 1.35,
+    "dramatically": 1.5,
+    "sharply": 1.4,
+    "strongly": 1.3,
+    "considerably": 1.3,
+    "markedly": 1.3,
+    "decisively": 1.3,
+    "aggressively": 1.4,
+    "modestly": 0.6,
+    "slightly": 0.5,
+    "marginally": 0.4,
+    "somewhat": 0.6,
+    "mildly": 0.55,
+    "gradually": 0.65,
+    "partially": 0.7,
+}
+
+# Paragraph-level section keywords — sentences in "policy outlook" sections
+# receive a weight multiplier vs "economic data" sections.
+_POLICY_OUTLOOK_KEYWORDS = [
+    "policy outlook", "going forward", "forward guidance", "policy path",
+    "rate path", "future meetings", "next meeting", "appropriate stance",
+    "monetary policy stance", "policy rate", "federal funds rate target",
+    "committee anticipates", "committee expects", "we expect", "we anticipate",
+    "policy decision", "rate decision", "tightening cycle", "easing cycle",
+]
+
+_ECONOMIC_DATA_KEYWORDS = [
+    "economic data", "labor market data", "inflation data", "cpi reading",
+    "pce reading", "jobs report", "nonfarm payroll", "unemployment rate",
+    "gdp growth", "retail sales", "industrial production", "housing starts",
+    "trade deficit", "consumer spending", "ism manufacturing",
+]
+
+# FOMC minutes section qualifier phrases and their frequencies
+FOMC_PARTICIPANT_PHRASES = [
+    "participants noted", "participants observed", "participants agreed",
+    "many participants", "most participants", "some participants",
+    "several participants", "a few participants", "a number of participants",
+    "members noted", "members observed", "members agreed",
+    "many members", "most members", "some members",
+    "committee members", "the committee noted", "the committee agreed",
+    "participants expressed", "participants indicated", "participants viewed",
+]
 
 # Forward guidance phrase tracker
 GUIDANCE_PHRASES = [
@@ -1087,10 +1166,20 @@ class HawkishDovishScorer:
     """
     Scores central bank documents on hawk/dove spectrum using custom
     financial lexicon plus optional VADER sentiment signal.
+
+    Enhancements (v3.1):
+      - N-gram bigram lexicon entries (higher specificity phrases)
+      - Sentence-level negation inversion ("not hawkish" inverts the score)
+      - Intensity modifiers ("significantly", "materially", "modestly")
+      - Paragraph-level section context weighting (policy outlook vs economic data)
+      - Tone change detector: compare vs rolling 3-speech average
+      - FOMC minutes section parser: "participants noted", "many members" frequency
     """
 
     def __init__(self):
         self._word_cache: Dict[str, float] = {}
+        # Rolling score history for tone change detection: bank -> list of scores
+        self._rolling_scores: Dict[str, List[float]] = {}
 
     def _tokenize_sentences(self, text: str) -> List[str]:
         """Split text into sentences."""
@@ -1104,21 +1193,66 @@ class HawkishDovishScorer:
         text = re.sub(r"[^\w\s\-'/.%]", " ", text.lower())
         return re.sub(r"\s+", " ", text).strip()
 
+    def _detect_negation(self, text_before_match: str, window_tokens: int = 6) -> bool:
+        """
+        Check whether a negation token appears within window_tokens words
+        before the current match position.
+        """
+        tokens = text_before_match.lower().split()
+        preceding = tokens[-window_tokens:] if len(tokens) >= window_tokens else tokens
+        return any(t.rstrip(".,;:") in _NEGATION_TOKENS for t in preceding)
+
+    def _get_intensity_multiplier(self, text_before_match: str, window_tokens: int = 4) -> float:
+        """
+        Look for intensity modifiers within window_tokens before a match.
+        Returns the highest multiplier found, or 1.0 if none.
+        """
+        tokens = text_before_match.lower().split()
+        preceding = tokens[-window_tokens:] if len(tokens) >= window_tokens else tokens
+        multiplier = 1.0
+        for tok in preceding:
+            tok_clean = tok.rstrip(".,;:")
+            if tok_clean in INTENSITY_MODIFIERS:
+                candidate = INTENSITY_MODIFIERS[tok_clean]
+                if candidate > multiplier:
+                    multiplier = candidate
+        return multiplier
+
+    def _classify_section(self, sentence: str) -> str:
+        """
+        Classify a sentence as belonging to 'policy_outlook', 'economic_data',
+        or 'general'.  Policy outlook sentences receive higher weight.
+        """
+        lower = sentence.lower()
+        if any(kw in lower for kw in _POLICY_OUTLOOK_KEYWORDS):
+            return "policy_outlook"
+        if any(kw in lower for kw in _ECONOMIC_DATA_KEYWORDS):
+            return "economic_data"
+        return "general"
+
+    def _section_weight(self, section: str) -> float:
+        """Return paragraph-level weight multiplier for a given section type."""
+        return {"policy_outlook": 1.5, "economic_data": 0.8, "general": 1.0}.get(section, 1.0)
+
     def score_sentence(self, sentence: str) -> float:
         """
         Score a single sentence on hawk/dove spectrum.
         Returns float: positive = hawkish, negative = dovish.
+
+        Applies:
+          - Bigram + unigram lexicon matching (longest match first)
+          - Negation inversion: "not hawkish" inverts the score
+          - Intensity modifiers: "significantly" scales the base score
         """
         clean = self._clean_text(sentence)
         score = 0.0
-        match_count = 0
 
-        # Multi-word phrase matching (check longest first)
-        all_terms = dict(
-            **{k: v for k, v in HAWKISH_TERMS.items()},
-            **{k: v for k, v in DOVISH_TERMS.items()},
-            **{k: v for k, v in NEUTRAL_TERMS.items()},
-        )
+        # Multi-word phrase matching (check longest first).
+        # Build merged dict: NEUTRAL has zero-weight entries; HAWKISH/DOVISH override.
+        all_terms: Dict[str, float] = {}
+        all_terms.update(NEUTRAL_TERMS)
+        all_terms.update(HAWKISH_TERMS)
+        all_terms.update(DOVISH_TERMS)
         # Sort by length descending to match multi-word phrases first
         sorted_terms = sorted(all_terms.items(), key=lambda x: len(x[0].split()), reverse=True)
 
@@ -1130,8 +1264,18 @@ class HawkishDovishScorer:
                 # Check if any position already matched
                 overlap = any(p in range(start, end) for p in matched_positions)
                 if not overlap:
-                    score += weight
-                    match_count += 1
+                    text_before = clean[:start]
+
+                    # Negation inversion
+                    if self._detect_negation(text_before):
+                        effective_weight = -weight  # invert the direction
+                    else:
+                        effective_weight = weight
+                        # Apply intensity modifier only when not negated
+                        multiplier = self._get_intensity_multiplier(text_before)
+                        effective_weight *= multiplier
+
+                    score += effective_weight
                     matched_positions.update(range(start, end))
 
         # Normalize by sentence length proxy
@@ -1144,6 +1288,11 @@ class HawkishDovishScorer:
         """
         Score a full central bank document.
         Returns HawkScore with composite -10 to +10 reading.
+
+        Applies paragraph-level section context weighting:
+          - 'policy_outlook' sentences: weight × 1.5
+          - 'economic_data' sentences: weight × 0.8
+          - 'general' sentences: weight × 1.0
         """
         text = doc.text
         if not text or len(text) < 10:
@@ -1153,15 +1302,25 @@ class HawkishDovishScorer:
         if not sentences:
             sentences = [text[:500]]
 
-        sentence_scores = [(s, self.score_sentence(s)) for s in sentences]
-        sentence_scores.sort(key=lambda x: abs(x[1]), reverse=True)
+        # Score each sentence and apply section weight
+        raw_sentence_data: List[Tuple[str, float, float]] = []  # (sentence, raw_score, section_weight)
+        for s in sentences:
+            raw_sc = self.score_sentence(s)
+            section = self._classify_section(s)
+            sw = self._section_weight(section)
+            raw_sentence_data.append((s, raw_sc, sw))
 
-        # Aggregate score
-        raw_scores = [sc for _, sc in sentence_scores]
+        # Sort by absolute score descending for phrase extraction
+        sentence_scores = [(s, sc) for s, sc, _ in sorted(
+            raw_sentence_data, key=lambda x: abs(x[1]), reverse=True
+        )]
+
+        # Aggregate score with section weighting
+        raw_scores = [sc * sw for _, sc, sw in raw_sentence_data]
         if not raw_scores:
             return HawkScore(bank=doc.bank, date=doc.date, score=0.0)
 
-        # Weighted average: more weight to extreme sentences
+        # Weighted average: more weight to extreme sentences (after section weighting)
         weights = np.array([1.0 / (1 + abs(sc) * 0.5) for sc in raw_scores])
         weights = 1.0 / (weights + 1e-6)  # invert: higher weight for stronger sentences
         weights = weights / weights.sum()
@@ -1238,6 +1397,121 @@ class HawkishDovishScorer:
         score1 = self.score_document(doc1).score
         score2 = self.score_document(doc2).score
         return round(score2 - score1, 3)
+
+    def compute_tone_change_vs_rolling(
+        self,
+        doc: CentralBankDocument,
+        prior_docs: List[CentralBankDocument],
+        rolling_n: int = 3,
+    ) -> Dict[str, float]:
+        """
+        Compare the current document's hawk/dove score against the rolling
+        average of the most recent `rolling_n` prior documents.
+
+        Returns a dict with:
+          - 'current_score'  : hawk/dove score of `doc` (-10..+10)
+          - 'rolling_avg'    : mean of up to rolling_n prior scores
+          - 'delta'          : current_score − rolling_avg
+                               (positive = more hawkish shift)
+          - 'direction'      : 'hawkish_shift' | 'dovish_shift' | 'stable'
+        """
+        current_score = self.score_document(doc).score
+
+        # Score the prior documents (use up to rolling_n most recent)
+        prior_scores: List[float] = []
+        for pd_ in prior_docs[-rolling_n:]:
+            prior_scores.append(self.score_document(pd_).score)
+
+        if not prior_scores:
+            rolling_avg = 0.0
+        else:
+            rolling_avg = float(np.mean(prior_scores))
+
+        delta = round(current_score - rolling_avg, 3)
+
+        if delta > 0.5:
+            direction = "hawkish_shift"
+        elif delta < -0.5:
+            direction = "dovish_shift"
+        else:
+            direction = "stable"
+
+        return {
+            "current_score": round(current_score, 3),
+            "rolling_avg": round(rolling_avg, 3),
+            "delta": delta,
+            "direction": direction,
+            "n_prior_docs": len(prior_scores),
+        }
+
+    def parse_fomc_minutes_sections(self, text: str) -> Dict[str, Any]:
+        """
+        Extract FOMC-specific participant/member phrase frequencies from
+        meeting minutes text.
+
+        Returns a dict with:
+          - 'participant_phrase_counts'  : {phrase: count} for all FOMC_PARTICIPANT_PHRASES
+          - 'total_participant_mentions' : sum of all phrase counts
+          - 'many_participants_count'    : count of "many participants/members"
+          - 'some_participants_count'    : count of "some participants/members"
+          - 'most_participants_count'    : count of "most participants/members"
+          - 'consensus_strength'         : 'strong' | 'moderate' | 'divided'
+          - 'hawk_dove_from_minutes'     : hawk/dove score on the participant discussion
+        """
+        lower = text.lower()
+        phrase_counts: Dict[str, int] = {}
+        for phrase in FOMC_PARTICIPANT_PHRASES:
+            count = len(re.findall(re.escape(phrase), lower))
+            phrase_counts[phrase] = count
+
+        total = sum(phrase_counts.values())
+
+        many_count = sum(
+            phrase_counts.get(p, 0)
+            for p in FOMC_PARTICIPANT_PHRASES
+            if p.startswith("many ")
+        )
+        some_count = sum(
+            phrase_counts.get(p, 0)
+            for p in FOMC_PARTICIPANT_PHRASES
+            if p.startswith("some ")
+        )
+        most_count = sum(
+            phrase_counts.get(p, 0)
+            for p in FOMC_PARTICIPANT_PHRASES
+            if p.startswith("most ")
+        )
+
+        # Consensus strength heuristic
+        if most_count > 0 and some_count == 0:
+            consensus_strength = "strong"
+        elif some_count > many_count:
+            consensus_strength = "divided"
+        else:
+            consensus_strength = "moderate"
+
+        # Score the participant-discussion portion (extract relevant sentences)
+        participant_sentences = [
+            s for s in self._tokenize_sentences(text)
+            if any(phrase in s.lower() for phrase in FOMC_PARTICIPANT_PHRASES[:9])
+        ]
+        participant_text = " ".join(participant_sentences[:30])
+        hawk_dove_from_minutes = 0.0
+        if participant_text:
+            dummy_doc = CentralBankDocument(
+                bank="FED", doc_type="minutes_section", text=participant_text
+            )
+            hawk_dove_from_minutes = self.score_document(dummy_doc).score
+
+        return {
+            "participant_phrase_counts": phrase_counts,
+            "total_participant_mentions": total,
+            "many_participants_count": many_count,
+            "some_participants_count": some_count,
+            "most_participants_count": most_count,
+            "consensus_strength": consensus_strength,
+            "hawk_dove_from_minutes": round(hawk_dove_from_minutes, 3),
+        }
 
     def get_lexicon_coverage(self, text: str) -> dict:
         """Diagnostic: return which lexicon terms matched."""

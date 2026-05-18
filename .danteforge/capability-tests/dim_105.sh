@@ -138,5 +138,87 @@ assert abs(portfolio_sdg3 - expected) < 1e-9, \
     f"Portfolio SDG3 should be {expected}: {portfolio_sdg3}"
 print(f"[OK] Portfolio SDG3 score: {portfolio_sdg3:.2f} (weighted average)")
 
+# ------------------------------------------------------------------
+# Wave-9 additions: compute_sdg_alignment_score, detect_sdg_conflicts,
+# rank_by_sdg_impact
+# ------------------------------------------------------------------
+from sentinel.sfe.sdg_impact_scoring import (
+    compute_sdg_alignment_score,
+    detect_sdg_conflicts,
+    rank_by_sdg_impact,
+)
+
+# Test compute_sdg_alignment_score
+# Formula: positive_sic_revenue / total_revenue * 100
+# SIC 2836 (BioTech) → positive SDG 3; SIC 2911 (Oil refining) → negative
+sic_revenues = {"2836": 700_000_000, "2911": 300_000_000}
+score = compute_sdg_alignment_score(sic_revenues)
+expected = (700_000_000 / 1_000_000_000) * 100.0  # 70.0
+assert abs(score - expected) < 0.01, \
+    f"Alignment score should be {expected}: {score}"
+print(f"[OK] compute_sdg_alignment_score (biotech+oil): {score:.2f}% (expected {expected:.2f}%)")
+
+# All negative SIC → 0%
+all_neg = compute_sdg_alignment_score({"2911": 500_000_000, "13": 500_000_000})
+assert all_neg == 0.0, f"All negative SICs -> 0%: {all_neg}"
+print(f"[OK] compute_sdg_alignment_score (all negative): {all_neg}%")
+
+# All positive SIC → 100%
+all_pos = compute_sdg_alignment_score({"2836": 500_000_000, "8011": 500_000_000})
+assert abs(all_pos - 100.0) < 0.01, f"All positive SICs -> 100%: {all_pos}"
+print(f"[OK] compute_sdg_alignment_score (all positive): {all_pos}%")
+
+# Empty → 0%
+empty_score = compute_sdg_alignment_score({})
+assert empty_score == 0.0, f"Empty revenues -> 0%: {empty_score}"
+print(f"[OK] compute_sdg_alignment_score (empty): {empty_score}%")
+
+# Test detect_sdg_conflicts
+# SDG 7 (positive) + SDG 15 (negative) → conflict
+conflict = detect_sdg_conflicts(
+    positive_sdgs=[7, 9, 11],
+    negative_sdgs=[15, 12],
+)
+assert conflict["conflicts_detected"] is True, \
+    f"SDG7+SDG15 and SDG9+SDG12 should be conflicts: {conflict}"
+assert (7, 15) in conflict["conflict_pairs"], \
+    f"(7,15) should be detected: {conflict['conflict_pairs']}"
+assert conflict["conflict_count"] >= 2, \
+    f"At least 2 conflicts (7,15) and (9,12): {conflict['conflict_count']}"
+print(f"[OK] detect_sdg_conflicts: {conflict['conflict_count']} conflicts detected {conflict['conflict_pairs']}")
+
+# No conflicts
+no_conflict = detect_sdg_conflicts(
+    positive_sdgs=[1, 2, 3],
+    negative_sdgs=[8],  # 8 is not a conflict counterpart for 1/2/3
+)
+assert no_conflict["conflicts_detected"] is False, \
+    f"No known conflict pairs: {no_conflict}"
+print(f"[OK] detect_sdg_conflicts (none): conflicts_detected={no_conflict['conflicts_detected']}")
+
+# Test rank_by_sdg_impact
+companies = [
+    {"ticker": "ABC", "sdg_alignment_score": 55.0, "sector": "healthcare"},
+    {"ticker": "XYZ", "sdg_alignment_score": 82.0, "sector": "tech"},
+    {"ticker": "DEF", "sdg_alignment_score": 30.0, "sector": "energy"},
+    {"ticker": "GHI", "sdg_alignment_score": 75.0, "sector": "utilities"},
+]
+ranked = rank_by_sdg_impact(companies, top_n=3)
+assert len(ranked) == 3, f"Should return top 3: {len(ranked)}"
+assert ranked[0]["ticker"] == "XYZ", f"Rank 1 should be XYZ (82.0): {ranked[0]}"
+assert ranked[0]["rank"] == 1, f"First entry rank should be 1: {ranked[0]['rank']}"
+assert ranked[1]["ticker"] == "GHI", f"Rank 2 should be GHI (75.0): {ranked[1]}"
+assert ranked[2]["ticker"] == "ABC", f"Rank 3 should be ABC (55.0): {ranked[2]}"
+# Scores should be descending
+for i in range(len(ranked) - 1):
+    assert ranked[i]["sdg_alignment_score"] >= ranked[i+1]["sdg_alignment_score"], \
+        f"Scores should be descending: {ranked}"
+print(f"[OK] rank_by_sdg_impact: top3 = {[r['ticker'] for r in ranked]}")
+
+# top_n > total companies → return all
+all_ranked = rank_by_sdg_impact(companies, top_n=20)
+assert len(all_ranked) == 4, f"Should return all 4: {len(all_ranked)}"
+print(f"[OK] rank_by_sdg_impact (top_n>len): returns all {len(all_ranked)}")
+
 print("\n[PASS] dim_105: SDG impact scoring")
 PYEOF

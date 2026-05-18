@@ -1216,6 +1216,75 @@ class PortfolioBacktester:
 
 
 # ---------------------------------------------------------------------------
+# Class 3b: DrawdownRiskMetrics — secondary analytics (Calmar, Ulcer, Pain)
+# ---------------------------------------------------------------------------
+
+class DrawdownRiskMetrics:
+    """
+    Secondary drawdown-based risk metrics: Calmar ratio, Ulcer Index, Pain ratio.
+    All methods are pure-math; no network I/O.
+    """
+
+    @staticmethod
+    def compute_calmar_ratio(annualized_return: float, max_drawdown: float) -> float:
+        """
+        Calmar ratio = annualized_return / abs(max_drawdown).
+
+        Args:
+            annualized_return: CAGR as a decimal (e.g. 0.15 for 15%).
+            max_drawdown: Maximum drawdown as a negative decimal (e.g. -0.10) or positive.
+
+        Returns:
+            Calmar ratio (0.0 if max_drawdown is 0).
+        """
+        mdd = abs(max_drawdown)
+        if mdd == 0.0:
+            return 0.0
+        return annualized_return / mdd
+
+    @staticmethod
+    def compute_ulcer_index(equity_curve: "pd.Series") -> float:
+        """
+        Ulcer Index = sqrt( mean( (drawdown_pct ** 2) ) ).
+
+        Measures the depth and duration of drawdowns simultaneously.
+        Each drawdown_pct is expressed as a percentage (e.g. -10 for -10%).
+
+        Args:
+            equity_curve: pd.Series of portfolio equity values.
+
+        Returns:
+            Ulcer Index (lower = better).
+        """
+        if equity_curve is None or len(equity_curve) < 2:
+            return 0.0
+        roll_max = equity_curve.cummax()
+        # drawdown_pct as percentage points (multiply by 100)
+        drawdown_pct = ((equity_curve - roll_max) / roll_max.clip(lower=1e-12)) * 100.0
+        ulcer = float(math.sqrt(float((drawdown_pct ** 2).mean())))
+        return ulcer
+
+    @staticmethod
+    def compute_pain_ratio(annualized_return: float, ulcer_index: float) -> float:
+        """
+        Pain ratio = annualized_return / ulcer_index.
+
+        Higher is better. Penalises strategies with persistent, deep drawdowns.
+
+        Args:
+            annualized_return: CAGR as a decimal.
+            ulcer_index: Output of compute_ulcer_index() (percentage-point scale).
+
+        Returns:
+            Pain ratio (0.0 if ulcer_index is 0).
+        """
+        if ulcer_index == 0.0:
+            return 0.0
+        # annualized_return is decimal; scale to percentage to match ulcer scale
+        return (annualized_return * 100.0) / ulcer_index
+
+
+# ---------------------------------------------------------------------------
 # Class 4: OptimizationEngine
 # ---------------------------------------------------------------------------
 

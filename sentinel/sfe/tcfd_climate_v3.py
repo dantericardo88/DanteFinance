@@ -61,6 +61,16 @@ __all__ = [
     "TCFDEngine",
     "TCFDDB",
     "tcfd_v3_router",
+    # Physical risk
+    "get_state_physical_risk",
+    "get_company_physical_risk",
+    # Transition risk
+    "get_sic_transition_risk",
+    "compute_carbon_intensity",
+    # Scenario analysis
+    "climate_scenario_analysis",
+    # Climate VaR
+    "compute_climate_var",
 ]
 
 # ---------------------------------------------------------------------------
@@ -1460,6 +1470,345 @@ class TransitionRiskAssessor:
         risk.transition_risk_score = (risk_count / total_risks) * 100.0
         risk.risk_details = details
         return risk
+
+
+# ---------------------------------------------------------------------------
+# Physical Risk — State-level flood/water risk proxy (FEMA-inspired)
+# ---------------------------------------------------------------------------
+
+# State-level physical risk scores (0–10 scale, driven by FEMA flood zone data
+# and historical climate event frequency).  Higher = more exposed.
+_STATE_PHYSICAL_RISK: dict[str, float] = {
+    # High coastal/flood risk
+    "FL": 9.0, "LA": 9.0, "MS": 8.5, "AL": 8.0, "TX": 8.0,
+    # Significant coastal/storm risk
+    "NC": 7.5, "SC": 7.5, "VA": 7.0, "MD": 6.5, "NJ": 6.5,
+    "NY": 5.0, "CT": 5.0, "MA": 5.0, "RI": 5.0, "DE": 5.5,
+    # West coast (wildfire/drought dominated)
+    "CA": 7.0, "OR": 5.5, "WA": 4.5,
+    # Interior flood-prone
+    "IA": 6.0, "MO": 6.0, "AR": 6.5, "TN": 5.5, "KY": 5.5,
+    "OH": 4.5, "IN": 4.5, "IL": 5.0, "WI": 4.0, "MN": 4.0,
+    # Arid / lower physical risk
+    "AZ": 4.0, "NM": 3.5, "NV": 3.5, "UT": 3.0, "ID": 3.5,
+    "CO": 3.0, "WY": 3.0, "MT": 3.0, "ND": 3.5, "SD": 3.5,
+    "NE": 4.0, "KS": 4.5, "OK": 5.0,
+    # Other
+    "MI": 3.5, "PA": 4.5, "GA": 5.5, "AK": 3.0, "HI": 6.0,
+    "WV": 5.0, "ME": 3.5, "NH": 3.5, "VT": 3.5,
+}
+
+_DEFAULT_STATE_RISK = 4.0  # national average fallback
+
+
+def get_state_physical_risk(state_code: str) -> float:
+    """
+    Return a 0–10 physical risk score for a US state (2-letter code).
+    Proxy for FEMA flood zone exposure + climate event frequency.
+    FL/LA score highest (9); CO/WY/MT score lowest (~3).
+    """
+    return _STATE_PHYSICAL_RISK.get(state_code.upper(), _DEFAULT_STATE_RISK)
+
+
+def get_company_physical_risk(
+    hq_state: str,
+    operations_states: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """
+    Compute aggregate physical risk score for a company given its HQ state
+    and (optionally) a list of states where it has material operations.
+
+    Returns a dict with:
+      hq_risk, operations_risk_avg, aggregate_risk (0–10), risk_tier
+    """
+    hq_risk = get_state_physical_risk(hq_state)
+
+    if operations_states:
+        ops_risks = [get_state_physical_risk(s) for s in operations_states]
+        ops_avg = sum(ops_risks) / len(ops_risks)
+        # Weight: 40% HQ, 60% operations footprint
+        aggregate = 0.4 * hq_risk + 0.6 * ops_avg
+    else:
+        ops_avg = hq_risk
+        aggregate = hq_risk
+
+    if aggregate >= 7.5:
+        tier = "very_high"
+    elif aggregate >= 6.0:
+        tier = "high"
+    elif aggregate >= 4.5:
+        tier = "medium"
+    elif aggregate >= 3.0:
+        tier = "low"
+    else:
+        tier = "very_low"
+
+    return {
+        "hq_state":              hq_state.upper(),
+        "hq_risk_score":         hq_risk,
+        "operations_risk_avg":   round(ops_avg, 2),
+        "aggregate_risk_score":  round(aggregate, 2),
+        "risk_tier":             tier,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Transition Risk — SIC-based carbon intensity tier
+# ---------------------------------------------------------------------------
+
+# SIC code → (transition_risk_tier, carbon_intensity_proxy)
+# Tier: "very_high" | "high" | "medium" | "low" | "very_low"
+_SIC_TRANSITION_TIERS: dict[str, tuple[str, float]] = {
+    # Energy — fossil fuel extraction and refining
+    "1311": ("very_high", 0.95),   # Crude Petroleum & Natural Gas
+    "1381": ("very_high", 0.90),   # Drilling Oil & Gas Wells
+    "1382": ("very_high", 0.88),   # Oil & Gas Field Services
+    "2911": ("very_high", 0.92),   # Petroleum Refining
+    "1321": ("very_high", 0.85),   # Natural Gas Liquids
+    "5171": ("high",      0.70),   # Petroleum Wholesale
+    # Utilities — fossil-heavy
+    "4911": ("very_high", 0.85),   # Electric Services
+    "4931": ("high",      0.75),   # Electric & Other Services
+    "4941": ("high",      0.65),   # Water Supply (lower GHG)
+    # Materials — high GHG intensity
+    "2819": ("high",      0.72),   # Industrial Chemicals
+    "2860": ("high",      0.68),   # Industrial Chemicals/Plastics
+    "3312": ("high",      0.80),   # Steel Works
+    "1040": ("high",      0.75),   # Gold/Silver Mining (high energy use)
+    # Industrials
+    "3559": ("medium",    0.45),   # Industrial Machinery
+    "3720": ("medium",    0.50),   # Aircraft & Parts
+    # Consumer Staples
+    "2000": ("medium",    0.40),   # Food Products
+    "5400": ("low",       0.25),   # Food Stores
+    # Consumer Discretionary
+    "5900": ("low",       0.20),   # Retail
+    "7011": ("low",       0.22),   # Hotels
+    # Health Care
+    "2836": ("low",       0.18),   # Pharmaceutical Preparations
+    "8011": ("very_low",  0.12),   # Offices of Physicians
+    # Financials — low direct emissions
+    "6020": ("very_low",  0.05),   # State Commercial Banks
+    "6022": ("very_low",  0.05),   # National Commercial Banks
+    "6211": ("very_low",  0.04),   # Security Brokers & Dealers
+    # Information Technology
+    "7372": ("low",       0.15),   # Prepackaged Software
+    "7371": ("low",       0.12),   # Computer Programming Services
+    "3674": ("medium",    0.30),   # Semiconductors (energy-intensive fabs)
+    # Communication Services
+    "4813": ("low",       0.18),   # Telephone Communications
+    # Real Estate
+    "6552": ("low",       0.25),   # Land Subdividers (excl. cemeteries)
+    "6798": ("low",       0.22),   # Real Estate Investment Trusts
+}
+
+_DEFAULT_TRANSITION_TIER = ("medium", 0.40)
+
+
+def get_sic_transition_risk(sic_code: str) -> dict[str, Any]:
+    """
+    Return transition risk tier and carbon intensity proxy for a SIC code.
+
+    Returns:
+        tier: "very_high" | "high" | "medium" | "low" | "very_low"
+        carbon_intensity_proxy: 0–1 relative intensity score
+        sector: mapped sector name from _SIC_TO_SECTOR
+    """
+    code = str(sic_code).zfill(4)
+    tier, intensity = _SIC_TRANSITION_TIERS.get(code, _DEFAULT_TRANSITION_TIER)
+    sector = _SIC_TO_SECTOR.get(code, "unknown")
+    return {
+        "sic_code":                code,
+        "transition_risk_tier":    tier,
+        "carbon_intensity_proxy":  intensity,
+        "sector":                  sector,
+    }
+
+
+def compute_carbon_intensity(scope1_mt: float, revenue_m: float) -> Optional[float]:
+    """
+    Compute Scope 1 carbon intensity = scope1 emissions (tCO2e) / revenue (USD millions).
+    Returns tCO2e per USD million, or None if inputs are invalid.
+    """
+    if revenue_m <= 0 or scope1_mt < 0:
+        return None
+    return round(scope1_mt / revenue_m, 4)
+
+
+# ---------------------------------------------------------------------------
+# Climate Scenario Analysis — 1.5°C / 2°C / 4°C
+# ---------------------------------------------------------------------------
+
+# Stranding risk = fraction of fossil/carbon-intensive assets impaired
+# under each scenario.  More aggressive (lower-temperature) targets
+# impose higher stranding risk on fossil assets.
+_SCENARIO_PARAMS: dict[str, dict[str, Any]] = {
+    "1.5C": {
+        "label":             "1.5°C — Net-Zero by 2050 (Aggressive transition)",
+        "temp_delta":        1.5,
+        "stranding_risk_fossil":   0.65,   # 65% of fossil assets stranded
+        "stranding_risk_utility":  0.40,
+        "stranding_risk_default":  0.10,
+        "carbon_price_2030":  150.0,       # $/tCO2e
+        "renewable_penetration": 0.80,
+        "policy_stringency": "very_high",
+    },
+    "2C": {
+        "label":             "2°C — Paris Agreement (Moderate transition)",
+        "temp_delta":        2.0,
+        "stranding_risk_fossil":   0.40,
+        "stranding_risk_utility":  0.25,
+        "stranding_risk_default":  0.06,
+        "carbon_price_2030":  75.0,
+        "renewable_penetration": 0.60,
+        "policy_stringency": "high",
+    },
+    "4C": {
+        "label":             "4°C — Business as Usual (Physical risk dominant)",
+        "temp_delta":        4.0,
+        "stranding_risk_fossil":   0.15,   # low transition risk; high physical risk
+        "stranding_risk_utility":  0.10,
+        "stranding_risk_default":  0.03,
+        "carbon_price_2030":  25.0,
+        "renewable_penetration": 0.30,
+        "policy_stringency": "low",
+    },
+}
+
+
+def climate_scenario_analysis(
+    ticker: str,
+    sector: str,
+    total_assets_m: float,
+    scenarios: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """
+    Run TCFD scenario analysis for 1.5°C, 2°C, and 4°C warming pathways.
+
+    Args:
+        ticker:          company ticker symbol
+        sector:          sector string (from _SIC_TO_SECTOR values)
+        total_assets_m:  total assets in USD millions
+        scenarios:       list of scenario keys to run (default: all three)
+
+    Returns a dict with per-scenario results including:
+        - stranding_risk_pct: fraction of assets at risk (0–1)
+        - stranded_assets_m: USD millions of potentially stranded assets
+        - carbon_price_usd: assumed carbon price by 2030 ($/tCO2e)
+        - policy_stringency: qualitative policy environment
+    """
+    scenarios = scenarios or ["1.5C", "2C", "4C"]
+    results: dict[str, Any] = {"ticker": ticker, "sector": sector, "scenarios": {}}
+
+    # Determine asset stranding multiplier based on sector
+    fossil_sectors = {"energy", "utilities"}
+    high_intensity = {"materials", "industrials"}
+
+    for sc_key in scenarios:
+        params = _SCENARIO_PARAMS.get(sc_key)
+        if params is None:
+            continue
+        if sector in fossil_sectors:
+            strand_pct = params["stranding_risk_fossil"]
+        elif sector in high_intensity:
+            strand_pct = (params["stranding_risk_fossil"] + params["stranding_risk_default"]) / 2
+        else:
+            strand_pct = params["stranding_risk_default"]
+
+        stranded_assets_m = round(total_assets_m * strand_pct, 2)
+
+        results["scenarios"][sc_key] = {
+            "label":               params["label"],
+            "temp_delta":          params["temp_delta"],
+            "stranding_risk_pct":  round(strand_pct, 4),
+            "stranded_assets_m":   stranded_assets_m,
+            "carbon_price_2030":   params["carbon_price_2030"],
+            "renewable_penetration": params["renewable_penetration"],
+            "policy_stringency":   params["policy_stringency"],
+        }
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Climate VaR — portfolio-level
+# ---------------------------------------------------------------------------
+
+def compute_climate_var(
+    holdings: list[dict[str, Any]],
+    temperature_delta: float = 2.0,
+) -> dict[str, Any]:
+    """
+    Compute portfolio Climate Value-at-Risk (Climate VaR).
+
+    Formula: Climate VaR = Σ(weight_i × climate_beta_i × temperature_delta)
+
+    where climate_beta_i is derived from the sector's carbon intensity proxy.
+
+    Args:
+        holdings: list of dicts with keys:
+            - "ticker": str
+            - "weight": float (portfolio weight, must sum to ~1.0)
+            - "sic_code": str (optional; used for climate_beta lookup)
+            - "sector": str (optional; fallback if sic_code missing)
+            - "climate_beta": float (optional; overrides computed beta)
+        temperature_delta: warming above pre-industrial baseline (°C)
+
+    Returns:
+        climate_var: float (fraction of portfolio value at risk)
+        breakdown: per-holding contribution
+    """
+    # Sector → implied climate beta (sensitivity of asset value to 1°C warming)
+    _SECTOR_CLIMATE_BETA: dict[str, float] = {
+        "energy":                  0.25,
+        "utilities":               0.18,
+        "materials":               0.14,
+        "industrials":             0.10,
+        "consumer_staples":        0.06,
+        "consumer_discretionary":  0.05,
+        "health_care":             0.03,
+        "financials":              0.04,
+        "information_technology":  0.04,
+        "communication_services":  0.03,
+        "real_estate":             0.08,
+        "default":                 0.07,
+    }
+
+    breakdown = []
+    total_var = 0.0
+    total_weight = 0.0
+
+    for h in holdings:
+        weight = float(h.get("weight", 0))
+        total_weight += weight
+
+        # Resolve climate beta
+        beta = h.get("climate_beta")
+        if beta is None:
+            sic = str(h.get("sic_code", ""))
+            if sic:
+                sic_info = get_sic_transition_risk(sic)
+                sector = sic_info["sector"]
+            else:
+                sector = h.get("sector", "default")
+            beta = _SECTOR_CLIMATE_BETA.get(sector, _SECTOR_CLIMATE_BETA["default"])
+
+        contribution = weight * beta * temperature_delta
+        total_var += contribution
+
+        breakdown.append({
+            "ticker":        h.get("ticker", ""),
+            "weight":        round(weight, 4),
+            "climate_beta":  round(beta, 4),
+            "contribution":  round(contribution, 6),
+        })
+
+    return {
+        "climate_var":       round(total_var, 6),
+        "temperature_delta": temperature_delta,
+        "total_weight":      round(total_weight, 4),
+        "breakdown":         breakdown,
+    }
 
 
 # ---------------------------------------------------------------------------

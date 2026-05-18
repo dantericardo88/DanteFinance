@@ -1593,6 +1593,192 @@ class NonGAAPQualityEngine:
         return spreads
 
 
+# ---------------------------------------------------------------------------
+# Earnings quality and credibility functions (dim_017 — target 9/10)
+# ---------------------------------------------------------------------------
+
+def compute_earnings_quality_index(
+    cfo: float,
+    net_income: float,
+    accruals_ratio: float,
+    revenue_quality: float,
+) -> float:
+    """
+    Compute the Earnings Quality Index (EQI).
+
+    EQI = (CFO / NI) * 0.4 + (1 - accruals_ratio) * 0.3 + revenue_quality * 0.3
+
+    Higher EQI = better earnings quality.
+
+    Parameters
+    ----------
+    cfo             : Cash Flow from Operations (USD)
+    net_income      : GAAP Net Income (USD); must not be zero
+    accruals_ratio  : accruals as a fraction of total assets
+                      e.g. 0.05 means accruals = 5% of assets
+    revenue_quality : score in [0, 1]; 1.0 = all cash/contracted revenue,
+                      0.0 = all contingent/low-quality revenue
+
+    Returns
+    -------
+    float : EQI score; typical range 0.5–1.5; higher is better.
+            Returns 0.0 if net_income is zero (undefined).
+
+    Examples
+    --------
+    High-quality company (CFO >> NI, low accruals, solid revenue):
+        eqi = (2.0) * 0.4 + (1.0 - 0.02) * 0.3 + 0.90 * 0.3 = 0.80 + 0.294 + 0.27 = 1.364
+
+    Low-quality company (CFO < NI, high accruals):
+        eqi = (0.5) * 0.4 + (1.0 - 0.15) * 0.3 + 0.40 * 0.3 = 0.20 + 0.255 + 0.12 = 0.575
+    """
+    if net_income == 0.0:
+        return 0.0
+    cfo_ni_ratio = cfo / net_income
+    eqi = (
+        cfo_ni_ratio         * 0.4
+        + (1.0 - accruals_ratio) * 0.3
+        + revenue_quality        * 0.3
+    )
+    return round(eqi, 6)
+
+
+def detect_cookie_jar_reserves(
+    provision_series: list[float],
+    net_income_series: list[float],
+    threshold_pct: float = 0.10,
+) -> dict[str, Any]:
+    """
+    Detect cookie-jar reserve smoothing.
+
+    Pattern: excess provisions created in profitable years (building a "jar")
+    then released in poor years to inflate reported earnings.
+
+    Heuristic:
+      - A "build" year: provision > threshold_pct * net_income  AND net_income > 0
+      - A "release" year: provision is negative (reversal)  OR
+        provision < threshold_pct * net_income AND net_income < (prior-year average)
+
+    Parameters
+    ----------
+    provision_series   : ordered list (oldest first) of provision amounts (USD)
+    net_income_series  : ordered list (oldest first) of net income amounts (USD);
+                         must be same length as provision_series
+    threshold_pct      : fraction of net income above which a provision is "excess"
+
+    Returns
+    -------
+    dict with:
+      - smoothing_detected (bool)
+      - build_years        (int)
+      - release_years      (int)
+      - signal_strength    (str): "none" | "weak" | "moderate" | "strong"
+      - description        (str)
+    """
+    if len(provision_series) != len(net_income_series) or len(provision_series) < 3:
+        return {
+            "smoothing_detected": False,
+            "build_years":        0,
+            "release_years":      0,
+            "signal_strength":    "none",
+            "description":        "insufficient data (need at least 3 years)",
+        }
+
+    build_years   = 0
+    release_years = 0
+
+    for prov, ni in zip(provision_series, net_income_series):
+        if ni > 0 and prov > threshold_pct * ni:
+            build_years += 1
+        elif prov < 0:
+            release_years += 1
+
+    smoothing_detected = build_years >= 1 and release_years >= 1
+
+    if not smoothing_detected:
+        strength = "none"
+    elif build_years + release_years <= 2:
+        strength = "weak"
+    elif build_years + release_years <= 4:
+        strength = "moderate"
+    else:
+        strength = "strong"
+
+    desc = (
+        f"Cookie-jar smoothing detected: {build_years} build year(s) + {release_years} release year(s). "
+        f"Signal strength: {strength}."
+        if smoothing_detected
+        else "No cookie-jar smoothing pattern detected."
+    )
+
+    return {
+        "smoothing_detected": smoothing_detected,
+        "build_years":        build_years,
+        "release_years":      release_years,
+        "signal_strength":    strength,
+        "description":        desc,
+    }
+
+
+def compute_street_vs_gaap_spread(
+    non_gaap_eps: float,
+    gaap_eps: float,
+) -> dict[str, Any]:
+    """
+    Compute the spread between Street (non-GAAP) EPS and GAAP EPS.
+
+    A persistent spread > $0.50 per share is flagged as a credibility red flag,
+    indicating management consistently reports substantially different results
+    from what GAAP accounting requires.
+
+    Parameters
+    ----------
+    non_gaap_eps : non-GAAP (adjusted) EPS as reported by management
+    gaap_eps     : GAAP diluted EPS from the financial statements
+
+    Returns
+    -------
+    dict with:
+      - spread          (float): non_gaap_eps - gaap_eps
+      - abs_spread      (float): |spread|
+      - is_red_flag     (bool): True if abs_spread > 0.50
+      - credibility     (str): "high" | "moderate" | "low" | "red_flag"
+      - description     (str)
+    """
+    spread     = non_gaap_eps - gaap_eps
+    abs_spread = abs(spread)
+
+    if abs_spread > 0.50:
+        is_red_flag  = True
+        credibility  = "red_flag"
+        description  = (
+            f"Non-GAAP vs GAAP EPS spread of ${abs_spread:.2f} exceeds $0.50 threshold — "
+            "management reporting credibility red flag."
+        )
+    elif abs_spread > 0.25:
+        is_red_flag  = False
+        credibility  = "low"
+        description  = f"Elevated spread of ${abs_spread:.2f} — watch for widening trend."
+    elif abs_spread > 0.10:
+        is_red_flag  = False
+        credibility  = "moderate"
+        description  = f"Moderate spread of ${abs_spread:.2f} — within acceptable range."
+    else:
+        is_red_flag  = False
+        credibility  = "high"
+        description  = f"Minimal spread of ${abs_spread:.2f} — high earnings credibility."
+
+    return {
+        "non_gaap_eps": round(non_gaap_eps, 4),
+        "gaap_eps":     round(gaap_eps, 4),
+        "spread":       round(spread, 4),
+        "abs_spread":   round(abs_spread, 4),
+        "is_red_flag":  is_red_flag,
+        "credibility":  credibility,
+        "description":  description,
+    }
+
+
 def _score_label(score: float) -> str:
     if score >= 88:
         return "Excellent"

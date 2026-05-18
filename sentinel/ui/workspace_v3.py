@@ -9,12 +9,14 @@ Usage:
 """
 from __future__ import annotations
 
+import base64
 import dataclasses
 import datetime
 import http.server
 import json
 import logging
 import os
+import pathlib
 import sys
 import threading
 import time
@@ -558,6 +560,232 @@ class WorkspaceManager:
         if workspace_id not in self._workspaces:
             raise KeyError(f"Workspace {workspace_id} not found")
         return self._workspaces[workspace_id]
+
+
+# ── Panel State Persistence ────────────────────────────────────────────────────
+
+_SENTINEL_STATE_DIR = pathlib.Path.home() / ".sentinel"
+_WORKSPACE_STATE_FILE = _SENTINEL_STATE_DIR / "workspace_state.json"
+
+
+def save_workspace_state(workspace: Workspace, path: Optional[pathlib.Path] = None) -> pathlib.Path:
+    """Persist workspace layout to ~/.sentinel/workspace_state.json (or custom path)."""
+    target = path or _WORKSPACE_STATE_FILE
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with open(target, "w", encoding="utf-8") as fh:
+        json.dump(workspace.to_dict(), fh, indent=2, default=str)
+    logger.debug("Workspace state saved to %s", target)
+    return target
+
+
+def load_workspace_state(path: Optional[pathlib.Path] = None) -> Optional[Workspace]:
+    """Load workspace layout from ~/.sentinel/workspace_state.json (or custom path)."""
+    target = path or _WORKSPACE_STATE_FILE
+    if not target.exists():
+        return None
+    try:
+        with open(target, encoding="utf-8") as fh:
+            data = json.load(fh)
+        ws = Workspace.from_dict(data)
+        logger.debug("Workspace state loaded from %s", target)
+        return ws
+    except Exception as exc:
+        logger.warning("Failed to load workspace state from %s: %s", target, exc)
+        return None
+
+
+# ── Workspace Exporter ─────────────────────────────────────────────────────────
+
+
+class WorkspaceExporter:
+    """
+    Export workspace configs and data snapshots.
+
+    Supports:
+      - JSON export: panel configs + data snapshots
+      - HTML export: self-contained report with embedded base64 PNG charts
+    """
+
+    def __init__(self, workspace: Workspace) -> None:
+        self.workspace = workspace
+        self._renderer = PanelRenderer(mode=RendererMode.PLAIN)
+
+    def export_json(self, path: str) -> str:
+        """
+        Save all panel configs + plain-text data snapshots to a JSON file.
+        Returns the path written.
+        """
+        ws_dict = self.workspace.to_dict()
+        snapshots: Dict[str, str] = {}
+        for panel in self.workspace.layout.panels:
+            try:
+                content = self._renderer.render_panel(panel)
+                snapshots[panel.id] = str(content)
+            except Exception as exc:
+                snapshots[panel.id] = f"ERROR: {exc}"
+
+        export_data = {
+            "workspace": ws_dict,
+            "snapshots": snapshots,
+            "exported_at": datetime.datetime.utcnow().isoformat(),
+        }
+        out_path = pathlib.Path(path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_path, "w", encoding="utf-8") as fh:
+            json.dump(export_data, fh, indent=2, default=str)
+        logger.info("Workspace exported to JSON: %s", out_path)
+        return str(out_path)
+
+    def export_html(self, path: str) -> str:
+        """
+        Generate a self-contained HTML report.
+        Tries to embed matplotlib PNG charts as base64; falls back to ASCII
+        sparklines when matplotlib is unavailable.
+        Returns the path written.
+        """
+        try:
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+            HAS_MPL = True
+        except ImportError:
+            HAS_MPL = False
+
+        panels_html = []
+        for panel in self.workspace.layout.panels:
+            chart_html = ""
+            # Attempt a simple matplotlib chart for price-chart panels
+            if HAS_MPL and panel.panel_type == PanelType.PRICE_CHART and panel.ticker:
+                try:
+                    df = _fetch_ohlcv(panel.ticker, period="3mo", interval="1d")
+                    if df is not None and len(df) > 5:
+                        closes = df["Close"].dropna().tolist()
+                        fig, ax = plt.subplots(figsize=(6, 2))
+                        ax.plot(closes, color="#00b894", linewidth=1.2)
+                        ax.set_facecolor("#1e272e")
+                        fig.patch.set_facecolor("#1e272e")
+                        ax.tick_params(colors="#636e72", labelsize=7)
+                        ax.set_title(f"{panel.ticker} Close", color="#dfe6e9", fontsize=9)
+                        buf = base64.b64encode(_fig_to_png(fig)).decode("utf-8")
+                        plt.close(fig)
+                        chart_html = f'<img src="data:image/png;base64,{buf}" style="width:100%;max-width:560px;">'
+                except Exception:
+                    pass
+
+            content = self._renderer.render_panel(panel)
+            content_text = str(content).replace("<", "&lt;").replace(">", "&gt;")
+            panels_html.append(
+                f"""<div class="panel">
+  <div class="panel-header">{panel.title}</div>
+  <div class="panel-body">
+    {chart_html}
+    <pre>{content_text}</pre>
+  </div>
+</div>"""
+            )
+
+        now_str = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        body = "\n".join(panels_html)
+        html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SENTINEL — {self.workspace.layout.name}</title>
+<style>
+  body {{ background:#1a1a2e; color:#dfe6e9; font-family:'Roboto Mono',monospace; margin:0; padding:16px; }}
+  h1 {{ color:#74b9ff; font-size:18px; margin-bottom:4px; }}
+  .meta {{ color:#636e72; font-size:11px; margin-bottom:16px; }}
+  .panel {{ background:#1e272e; border:1px solid #2d3436; border-radius:4px;
+            margin-bottom:12px; overflow:hidden; }}
+  .panel-header {{ background:#2d3436; padding:6px 12px; font-size:12px;
+                   font-weight:600; color:#74b9ff; }}
+  .panel-body {{ padding:8px 12px; }}
+  pre {{ font-size:11px; white-space:pre-wrap; word-break:break-word; margin:0; color:#b2bec3; }}
+</style>
+</head>
+<body>
+<h1>SENTINEL — {self.workspace.layout.name}</h1>
+<div class="meta">Generated: {now_str} | Workspace ID: {self.workspace.id}</div>
+{body}
+</body>
+</html>"""
+        out_path = pathlib.Path(path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_path, "w", encoding="utf-8") as fh:
+            fh.write(html)
+        logger.info("Workspace exported to HTML: %s", out_path)
+        return str(out_path)
+
+
+def _fig_to_png(fig: Any) -> bytes:
+    """Render a matplotlib figure to PNG bytes."""
+    import io
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight", dpi=100)
+    buf.seek(0)
+    return buf.read()
+
+
+# ── Panel Refresh Scheduler ────────────────────────────────────────────────────
+
+
+class PanelScheduler:
+    """
+    Tracks panel TTLs and determines which panels are stale.
+
+    Usage (pure computation — no threads required for tests):
+        scheduler = PanelScheduler(workspace)
+        scheduler.tick()          # increments refresh counter for stale panels
+        scheduler.refresh_counts  # Dict[panel_id, int]
+    """
+
+    def __init__(self, workspace: Workspace) -> None:
+        self.workspace = workspace
+        self.refresh_counts: Dict[str, int] = {
+            p.id: 0 for p in workspace.layout.panels
+        }
+        self._last_check: datetime.datetime = datetime.datetime.utcnow()
+
+    def stale_panels(self, now: Optional[datetime.datetime] = None) -> List[Panel]:
+        """Return panels whose last_updated is older than their TTL (or never updated)."""
+        now = now or datetime.datetime.utcnow()
+        stale = []
+        for panel in self.workspace.layout.panels:
+            if panel.last_updated is None:
+                stale.append(panel)
+            else:
+                age = (now - panel.last_updated).total_seconds()
+                if age >= panel.refresh_interval_seconds:
+                    stale.append(panel)
+        return stale
+
+    def tick(self, now: Optional[datetime.datetime] = None) -> List[str]:
+        """
+        Advance the scheduler clock. Increments refresh_counts for panels
+        that are past their TTL.  Returns the list of panel IDs that fired.
+        Does NOT actually fetch data (pure state machine).
+        """
+        now = now or datetime.datetime.utcnow()
+        fired: List[str] = []
+        for panel in self.workspace.layout.panels:
+            if panel.last_updated is None:
+                self.refresh_counts[panel.id] = self.refresh_counts.get(panel.id, 0) + 1
+                fired.append(panel.id)
+            else:
+                age = (now - panel.last_updated).total_seconds()
+                if age >= panel.refresh_interval_seconds:
+                    self.refresh_counts[panel.id] = self.refresh_counts.get(panel.id, 0) + 1
+                    fired.append(panel.id)
+        self._last_check = now
+        return fired
+
+    def mark_refreshed(self, panel_id: str, when: Optional[datetime.datetime] = None) -> None:
+        """Mark a panel as just-refreshed so it won't fire again until next TTL."""
+        now = when or datetime.datetime.utcnow()
+        for panel in self.workspace.layout.panels:
+            if panel.id == panel_id:
+                panel.last_updated = now
+                return
 
 
 # ── Data Fetchers (internal helpers) ──────────────────────────────────────────

@@ -1552,6 +1552,208 @@ class EarningsAnalytics:
             ))
         return deltas
 
+    # ------------------------------------------------------------------
+    # dim_057 additions
+    # ------------------------------------------------------------------
+
+    def extract_guidance_sentences(self, text: str) -> List[str]:
+        """Filter sentences containing guidance language near a number.
+
+        A sentence qualifies if it contains at least one guidance keyword
+        ("expect", "anticipate", "guide", "outlook", "project") AND
+        a number appears within 10 words of that keyword.
+
+        Returns a deduplicated list of qualifying sentences.
+        """
+        _GUIDANCE_KWS = re.compile(
+            r"\b(expect|anticipate|guid\w*|outlook|project\w*|forecast\w*|target)\b",
+            re.IGNORECASE,
+        )
+        _NUMBER_NEAR = re.compile(
+            r"\b\d+(?:[.,]\d+)?(?:\s*(?:billion|million|thousand|percent|%|bps?|B|M|K|x))?\b",
+            re.IGNORECASE,
+        )
+
+        # Sentence splitter
+        sentence_re = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
+        sentences = sentence_re.split(text.strip())
+
+        qualifying: List[str] = []
+        seen: set = set()
+
+        for sent in sentences:
+            sent = sent.strip()
+            if len(sent) < 20:
+                continue
+
+            # Find each guidance keyword position
+            kw_match = _GUIDANCE_KWS.search(sent)
+            if not kw_match:
+                continue
+
+            # Check whether a number appears within 10 words of the keyword
+            kw_pos = kw_match.start()
+            words = sent.split()
+            kw_word_idx: Optional[int] = None
+            char_count = 0
+            for i, w in enumerate(words):
+                if char_count >= kw_pos:
+                    kw_word_idx = i
+                    break
+                char_count += len(w) + 1  # +1 for space
+
+            if kw_word_idx is None:
+                kw_word_idx = 0
+
+            window_start = max(0, kw_word_idx - 10)
+            window_end   = min(len(words), kw_word_idx + 11)
+            window_text  = " ".join(words[window_start:window_end])
+
+            if _NUMBER_NEAR.search(window_text):
+                key = sent[:80]
+                if key not in seen:
+                    seen.add(key)
+                    qualifying.append(sent)
+
+        return qualifying
+
+    def compute_tone_shift_score(
+        self,
+        current_text: str,
+        prior_text: str,
+    ) -> Dict[str, float]:
+        """Compare guidance sentiment between current and prior quarter.
+
+        Sentiment score per text:
+            s = (pos_count - neg_count) / max(pos_count + neg_count, 1)
+
+        Returns:
+        {
+            "current_score":  float in [-1, 1],
+            "prior_score":    float in [-1, 1],
+            "delta":          current_score - prior_score,
+            "direction":      "improving" | "deteriorating" | "stable",
+        }
+        """
+        _POS = frozenset([
+            "strong", "growth", "increase", "beat", "exceeded", "record",
+            "confident", "positive", "upside", "robust", "accelerat", "improve",
+            "outperform", "momentum", "opportunity", "raised", "above",
+        ])
+        _NEG = frozenset([
+            "decline", "decrease", "miss", "below", "concern", "headwind",
+            "pressure", "uncertain", "cautious", "challenge", "disappoint",
+            "weak", "lower", "reduce", "deteriorat", "volatile", "difficult",
+        ])
+
+        def _score(txt: str) -> float:
+            words = txt.lower().split()
+            pos = sum(1 for w in words if w.rstrip(".,;:!?") in _POS)
+            neg = sum(1 for w in words if w.rstrip(".,;:!?") in _NEG)
+            total = pos + neg
+            return round((pos - neg) / max(total, 1), 4)
+
+        current_score = _score(current_text)
+        prior_score   = _score(prior_text)
+        delta         = round(current_score - prior_score, 4)
+
+        direction = "stable"
+        if delta > 0.05:
+            direction = "improving"
+        elif delta < -0.05:
+            direction = "deteriorating"
+
+        return {
+            "current_score": current_score,
+            "prior_score":   prior_score,
+            "delta":         delta,
+            "direction":     direction,
+        }
+
+    def build_earnings_timeline(
+        self,
+        transcripts: List[EarningsTranscript],
+    ) -> List[Dict[str, Any]]:
+        """Build a timeline of earnings events with beat/miss/in-line labels.
+
+        For each transcript, extract the first revenue KPI and compare it to
+        any guidance mentioned in the same text.  Label:
+          - "beat"    if actual > guidance by > 1%
+          - "miss"    if actual < guidance by > 1%
+          - "in-line" otherwise
+
+        Returns a list of dicts sorted by date ascending:
+        [{
+            "ticker": str,
+            "quarter": str,
+            "date": str,
+            "label": "beat" | "miss" | "in-line" | "unknown",
+            "revenue_kpi": float | None,
+            "guidance_kpi": float | None,
+            "word_count": int,
+        }]
+        """
+        _GUIDANCE_RE = re.compile(
+            r"(?:guidance|expect|project|forecast|anticipate)[^\d]{0,40}"
+            r"\$?\s*([\d,]+(?:\.\d+)?)\s*(billion|million|B|M)?",
+            re.IGNORECASE,
+        )
+        _ACTUAL_RE = re.compile(
+            r"(?:revenue|sales|net revenue)[^\d]{0,30}"
+            r"\$?\s*([\d,]+(?:\.\d+)?)\s*(billion|million|B|M)?",
+            re.IGNORECASE,
+        )
+
+        def _parse_val(num_str: str, unit_str: str) -> Optional[float]:
+            try:
+                val = float(num_str.replace(",", ""))
+                unit = (unit_str or "").lower()
+                mult = {"billion": 1e9, "b": 1e9, "million": 1e6, "m": 1e6}.get(unit, 1.0)
+                return val * mult
+            except (ValueError, TypeError):
+                return None
+
+        timeline: List[Dict[str, Any]] = []
+        for t in transcripts:
+            text = t.full_text
+
+            # Extract first actual revenue mention
+            actual_val: Optional[float] = None
+            am = _ACTUAL_RE.search(text)
+            if am:
+                actual_val = _parse_val(am.group(1), am.group(2))
+
+            # Extract first guidance revenue mention
+            guidance_val: Optional[float] = None
+            gm = _GUIDANCE_RE.search(text)
+            if gm:
+                guidance_val = _parse_val(gm.group(1), gm.group(2))
+
+            # Label
+            label = "unknown"
+            if actual_val is not None and guidance_val is not None and guidance_val > 0:
+                ratio = actual_val / guidance_val
+                if ratio > 1.01:
+                    label = "beat"
+                elif ratio < 0.99:
+                    label = "miss"
+                else:
+                    label = "in-line"
+
+            timeline.append({
+                "ticker":       t.ticker,
+                "quarter":      t.quarter,
+                "date":         t.date,
+                "label":        label,
+                "revenue_kpi":  actual_val,
+                "guidance_kpi": guidance_val,
+                "word_count":   t.word_count,
+            })
+
+        # Sort by date ascending (ISO date strings sort lexicographically)
+        timeline.sort(key=lambda x: x["date"])
+        return timeline
+
     def compute_call_quality_score(self, transcript: EarningsTranscript) -> float:
         """Score 0-100 based on call completeness and detail."""
         score = 0.0

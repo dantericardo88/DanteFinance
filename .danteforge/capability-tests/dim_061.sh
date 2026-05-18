@@ -81,5 +81,59 @@ assert e_rsi.shape == prices.shape
 assert e_rsi.dtypes.iloc[0] == bool
 print(f"[OK] StrategyLibrary.rsi_mean_reversion() -> shape={e_rsi.shape}")
 
-print("\n[PASS] dim_061: VectorBT NumpyPortfolio fallback verified")
+import math as _math
+
+# ---- New math: Calmar, Ulcer Index, Pain Ratio ----
+from sentinel.sbx.vectorbt_backtest_v3 import DrawdownRiskMetrics
+
+drm = DrawdownRiskMetrics()
+
+# -- compute_calmar_ratio precision to 1e-10 --
+ann_return  = 0.18   # 18% annual
+max_dd      = -0.10  # 10% drawdown
+calmar_expected = ann_return / abs(max_dd)   # = 1.80
+calmar_result   = drm.compute_calmar_ratio(ann_return, max_dd)
+assert abs(calmar_result - calmar_expected) < 1e-10, \
+    f"Calmar: expected {calmar_expected} got {calmar_result}"
+print(f"[OK] DrawdownRiskMetrics.compute_calmar_ratio({ann_return}, {max_dd}) = {calmar_result:.12f}  (expected {calmar_expected:.12f})")
+
+# also works with positive max_dd arg
+calmar_pos = drm.compute_calmar_ratio(0.20, 0.05)
+assert abs(calmar_pos - 4.0) < 1e-10, f"Calmar (pos dd): expected 4.0 got {calmar_pos}"
+print(f"[OK] compute_calmar_ratio(0.20, 0.05) = {calmar_pos:.12f}  (expected 4.0)")
+
+# zero drawdown returns 0
+assert drm.compute_calmar_ratio(0.15, 0.0) == 0.0
+print("[OK] compute_calmar_ratio with zero drawdown returns 0.0")
+
+# -- compute_ulcer_index --
+# Flat equity curve -> no drawdown -> ulcer = 0
+flat_equity = pd.Series([100_000.0] * 252, index=idx)
+ulcer_flat = drm.compute_ulcer_index(flat_equity)
+assert abs(ulcer_flat) < 1e-9, f"Flat equity should give Ulcer=0, got {ulcer_flat}"
+print(f"[OK] compute_ulcer_index (flat equity) = {ulcer_flat:.6f}  (expected 0.0)")
+
+# Manual verification: 5-step series
+test_eq = pd.Series([100.0, 95.0, 90.0, 85.0, 80.0])
+roll_max_t = test_eq.cummax()
+dd_pct_t   = ((test_eq - roll_max_t) / roll_max_t) * 100  # [0, -5, -10, -15, -20]
+expected_ulcer = _math.sqrt(float((dd_pct_t ** 2).mean()))  # sqrt(mean([0,25,100,225,400]))=sqrt(150)
+actual_ulcer   = drm.compute_ulcer_index(test_eq)
+assert abs(actual_ulcer - expected_ulcer) < 1e-9, \
+    f"Ulcer manual: expected {expected_ulcer:.8f} got {actual_ulcer:.8f}"
+print(f"[OK] compute_ulcer_index manual check = {actual_ulcer:.8f}  (expected {expected_ulcer:.8f})")
+
+# -- compute_pain_ratio --
+ann_r        = 0.20
+pain_expected = (ann_r * 100.0) / actual_ulcer
+pain_result   = drm.compute_pain_ratio(ann_r, actual_ulcer)
+assert abs(pain_result - pain_expected) < 1e-9, \
+    f"Pain ratio: expected {pain_expected} got {pain_result}"
+print(f"[OK] compute_pain_ratio({ann_r}, {actual_ulcer:.4f}) = {pain_result:.8f}  (expected {pain_expected:.8f})")
+
+# zero ulcer returns 0
+assert drm.compute_pain_ratio(0.15, 0.0) == 0.0
+print("[OK] compute_pain_ratio with zero ulcer returns 0.0")
+
+print("\n[PASS] dim_061: VectorBT NumpyPortfolio fallback + Calmar/Ulcer/Pain verified")
 PYEOF

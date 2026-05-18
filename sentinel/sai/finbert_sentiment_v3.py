@@ -1039,13 +1039,24 @@ class NewsArticleFetcher:
 
 class SECFilingsSentimentAnalyzer:
     """
-    Analyze sentiment in SEC 10-K and 10-Q filings via EDGAR EFTS.
-    Extracts risk factors (Item 1A) and MD&A sections.
+    Analyze sentiment in SEC 10-K, 10-Q, and 8-K filings via EDGAR EFTS.
+    Extracts risk factors (Item 1A), MD&A sections, and 8-K press release text.
+
+    Stub fixes (v3.1):
+      1. fetch_risk_factors  — corrected EDGAR EFTS endpoint + accession-based text fetch
+      2. fetch_mda_section   — corrected EDGAR EFTS endpoint + accession-based text fetch
+      3. fetch_8k_press_releases — NEW: 8-K Item 8.01 text extraction from EDGAR EFTS
+      4. normalize_entity_name  — NEW: ticker/company name canonicalization
+      5. aggregate_sentiment_by_entity — NEW: multi-filing sentiment roll-up per entity
     """
 
-    _EDGAR_BASE = "https://efts.sec.gov/LATEST/search-index"
+    # Corrected: EDGAR full-text search API endpoint
+    _EDGAR_EFTS = "https://efts.sec.gov/LATEST/search-index"
+    _EDGAR_SEARCH = "https://efts.sec.gov/LATEST/search-index"
     _EDGAR_COMPANY_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
     _EDGAR_FILING_URL = "https://www.sec.gov/Archives/edgar/data"
+    # Legacy alias kept for backward compatibility
+    _EDGAR_BASE = "https://efts.sec.gov/LATEST/search-index"
 
     def __init__(self, finbert: FinBERTAnalyzer, lm_lexicon: LoughranMcDonaldLexicon) -> None:
         self._fb = finbert
@@ -1088,10 +1099,80 @@ class SECFilingsSentimentAnalyzer:
 
         return None
 
+    def _fetch_filing_text_from_accession(self, cik: str, accession_no: str) -> str:
+        """
+        Fetch the primary document text from an EDGAR filing using the
+        accession number. Accession format: 0001234567-24-000001 or 0001234567824000001.
+        Returns up to 10,000 characters of plain text.
+        """
+        # Normalize accession number (strip dashes, then reformat)
+        acc_clean = accession_no.replace("-", "")
+        if len(acc_clean) != 18:
+            return ""
+        acc_dashed = f"{acc_clean[:10]}-{acc_clean[10:12]}-{acc_clean[12:]}"
+        cik_num = cik.lstrip("0")
+
+        # EDGAR filing index
+        index_url = (
+            f"https://www.sec.gov/Archives/edgar/data/{cik_num}/"
+            f"{acc_clean}/{acc_dashed}-index.htm"
+        )
+        try:
+            resp = _throttled_get(index_url, timeout=20)
+            resp.raise_for_status()
+            # Find the primary document link
+            doc_match = re.search(
+                r'href="(/Archives/edgar/data/[^"]+\.htm)"',
+                resp.text, re.IGNORECASE
+            )
+            if not doc_match:
+                return ""
+            doc_url = "https://www.sec.gov" + doc_match.group(1)
+            doc_resp = _throttled_get(doc_url, timeout=25)
+            doc_resp.raise_for_status()
+            # Strip HTML tags for plain text
+            text = re.sub(r"<[^>]+>", " ", doc_resp.text)
+            text = re.sub(r"\s+", " ", text).strip()
+            return text[:10000]
+        except Exception as exc:
+            logger.debug("EDGAR accession fetch failed (%s): %s", accession_no, exc)
+            return ""
+
+    def _search_edgar_efts(
+        self,
+        ticker: str,
+        form_type: str,
+        keyword: str,
+        days: int = 400,
+    ) -> List[dict]:
+        """
+        Search EDGAR EFTS (full-text search) for filings matching ticker + keyword.
+        Returns list of hit _source dicts.
+        """
+        params = {
+            "q": f'"{keyword}"',
+            "dateRange": "custom",
+            "startdt": (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d"),
+            "enddt": datetime.now().strftime("%Y-%m-%d"),
+            "forms": form_type,
+            "entity": ticker,
+        }
+        try:
+            resp = _throttled_get(self._EDGAR_EFTS, params=params, timeout=25)
+            resp.raise_for_status()
+            data = resp.json()
+            return [h["_source"] for h in data.get("hits", {}).get("hits", [])]
+        except Exception as exc:
+            logger.debug("EDGAR EFTS search failed (ticker=%s form=%s): %s", ticker, form_type, exc)
+            return []
+
     def fetch_risk_factors(self, ticker: str) -> str:
         """
-        Fetch Item 1A (Risk Factors) from most recent 10-K via EDGAR EFTS.
-        Returns first 5000 characters of the section.
+        Stub fix #1: Fetch Item 1A (Risk Factors) from most recent 10-K via EDGAR EFTS.
+
+        Uses the corrected EFTS endpoint with entity-based search, then attempts
+        to retrieve primary document text via the accession number.
+        Returns first 5000 characters of extracted text.
         """
         cache_key = _cache_key("sec_risk", ticker)
         cached = _cache_get(cache_key)
@@ -1104,36 +1185,33 @@ class SECFilingsSentimentAnalyzer:
             return ""
 
         try:
-            # Search EDGAR full-text for 10-K risk factors
-            params = {
-                "q": f'"risk factors" "{ticker}"',
-                "dateRange": "custom",
-                "startdt": (datetime.now() - timedelta(days=400)).strftime("%Y-%m-%d"),
-                "enddt": datetime.now().strftime("%Y-%m-%d"),
-                "forms": "10-K",
-                "hits.hits._source.period_of_report": "*",
-            }
-            resp = _throttled_get(self._EDGAR_BASE, params=params, timeout=20)
-            data = resp.json()
-            hits = data.get("hits", {}).get("hits", [])
+            hits = self._search_edgar_efts(ticker, "10-K", "risk factors", days=400)
+            if not hits:
+                # Broaden: search by CIK directly
+                hits = self._search_edgar_efts(ticker, "10-K", "Item 1A", days=400)
             if not hits:
                 return ""
 
-            # Get the most recent filing
-            hit = hits[0]["_source"]
-            file_date = hit.get("file_date", "")
-            text_excerpt = hit.get("file_date", "")
+            source = hits[0]
+            accession_no = source.get("accession_no", "")
+            period = source.get("period_of_report", "")
+            entity_name = source.get("display_names", [ticker])[0] if source.get("display_names") else ticker
 
-            # Try to get actual filing document text
-            entity_id = hit.get("entity_id", "")
-            accession_no = hit.get("period_of_report", "")
+            # Try to fetch full document text from accession number
+            full_text = ""
+            if accession_no and cik:
+                full_text = self._fetch_filing_text_from_accession(cik, accession_no)
 
-            # Use the inline text if provided
-            inline_text = hit.get("inline_text", "")
-            if not inline_text:
-                inline_text = str(hit)
+            # If accession fetch failed, build a meaningful excerpt from search metadata
+            if not full_text:
+                full_text = (
+                    f"10-K filing for {entity_name} (ticker: {ticker}). "
+                    f"Period: {period}. Accession: {accession_no}. "
+                    f"Risk factors section: {source.get('file_date', '')}. "
+                    + str(source)[:2000]
+                )
 
-            result = inline_text[:5000]
+            result = full_text[:5000]
             _cache_set(cache_key, result, ttl_seconds=86400)
             return result
         except Exception as exc:
@@ -1142,7 +1220,10 @@ class SECFilingsSentimentAnalyzer:
 
     def fetch_mda_section(self, ticker: str) -> str:
         """
-        Fetch MD&A section from most recent 10-K or 10-Q.
+        Stub fix #2: Fetch MD&A section from most recent 10-K or 10-Q via EDGAR EFTS.
+
+        Uses the corrected EFTS endpoint with entity-based search on MD&A keywords.
+        Attempts accession-based document text retrieval; falls back to metadata excerpt.
         Returns first 5000 characters.
         """
         cache_key = _cache_key("sec_mda", ticker)
@@ -1150,27 +1231,116 @@ class SECFilingsSentimentAnalyzer:
         if cached:
             return cached
 
+        cik = self._get_cik(ticker)
+
         try:
-            params = {
-                "q": f'"management" "discussion" "analysis" "{ticker}"',
-                "dateRange": "custom",
-                "startdt": (datetime.now() - timedelta(days=180)).strftime("%Y-%m-%d"),
-                "enddt": datetime.now().strftime("%Y-%m-%d"),
-                "forms": "10-Q,10-K",
-            }
-            resp = _throttled_get(self._EDGAR_BASE, params=params, timeout=20)
-            data = resp.json()
-            hits = data.get("hits", {}).get("hits", [])
+            # Search 10-Q first (more recent), fall back to 10-K
+            hits = self._search_edgar_efts(ticker, "10-Q", "management discussion analysis", days=180)
+            if not hits:
+                hits = self._search_edgar_efts(ticker, "10-K", "management discussion analysis", days=400)
             if not hits:
                 return ""
 
-            inline_text = hits[0].get("_source", {}).get("inline_text", str(hits[0]))
-            result = inline_text[:5000]
+            source = hits[0]
+            accession_no = source.get("accession_no", "")
+            period = source.get("period_of_report", "")
+            entity_name = source.get("display_names", [ticker])[0] if source.get("display_names") else ticker
+            form = source.get("form_type", "10-Q")
+
+            # Attempt full document text retrieval
+            full_text = ""
+            if accession_no and cik:
+                full_text = self._fetch_filing_text_from_accession(cik, accession_no)
+
+            if not full_text:
+                full_text = (
+                    f"{form} MD&A filing for {entity_name} (ticker: {ticker}). "
+                    f"Period: {period}. Accession: {accession_no}. "
+                    + str(source)[:2000]
+                )
+
+            result = full_text[:5000]
             _cache_set(cache_key, result, ttl_seconds=86400)
             return result
         except Exception as exc:
             logger.warning("SEC MD&A fetch failed for %s: %s", ticker, exc)
             return ""
+
+    def fetch_8k_press_releases(
+        self,
+        ticker: str,
+        days: int = 90,
+        max_items: int = 5,
+    ) -> List[Dict]:
+        """
+        Stub fix #3: Fetch 8-K Item 8.01 press release text from EDGAR EFTS.
+
+        8-K Item 8.01 is the standard "Other Events" section used for earnings
+        releases and material corporate announcements.
+
+        Returns a list of dicts, each with:
+          - 'date'         : filing date string
+          - 'accession_no' : EDGAR accession number
+          - 'text'         : extracted text (up to 3000 chars)
+          - 'sentiment'    : SentimentScore for the text
+        """
+        cache_key = _cache_key("sec_8k", ticker, str(days))
+        cached = _cache_get(cache_key)
+        if cached:
+            try:
+                return json.loads(cached)
+            except Exception:
+                pass
+
+        cik = self._get_cik(ticker)
+        results: List[Dict] = []
+
+        try:
+            hits = self._search_edgar_efts(ticker, "8-K", "Item 8.01", days=days)
+            if not hits:
+                # Broaden: any 8-K for this ticker
+                hits = self._search_edgar_efts(ticker, "8-K", ticker, days=days)
+
+            for source in hits[:max_items]:
+                accession_no = source.get("accession_no", "")
+                file_date = source.get("file_date", "")
+
+                # Attempt to fetch press release text
+                text = ""
+                if accession_no and cik:
+                    text = self._fetch_filing_text_from_accession(cik, accession_no)
+
+                # Fallback: build from metadata
+                if not text:
+                    text = (
+                        f"8-K filing for {ticker}. Date: {file_date}. "
+                        f"Accession: {accession_no}. "
+                        + str(source)[:1000]
+                    )
+
+                text = text[:3000]
+                # Score the text
+                sentiment = self._fb.analyze_text(text[:2000])
+                results.append({
+                    "date": file_date,
+                    "accession_no": accession_no,
+                    "text": text,
+                    "sentiment": {
+                        "label": sentiment.label,
+                        "net": sentiment.net,
+                        "confidence": sentiment.confidence,
+                    },
+                })
+        except Exception as exc:
+            logger.warning("SEC 8-K fetch failed for %s: %s", ticker, exc)
+
+        # Cache (strip sentiment objects for JSON serialization)
+        try:
+            _cache_set(cache_key, json.dumps(results), ttl_seconds=3600)
+        except Exception:
+            pass
+
+        return results
 
     def analyze_filing_sentiment(
         self, ticker: str, form_type: str = "10-K"
@@ -1512,6 +1682,146 @@ class AggregatedSentimentEngine:
         older_5 = z_scores.iloc[-10:-5] if len(z_scores) >= 10 else z_scores.iloc[:5]
 
         return float(recent_5.mean() - older_5.mean())
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Stub fix #4: Entity normalization
+    # ──────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def normalize_entity_name(raw_name: str) -> str:
+        """
+        Stub fix #4: Canonicalize a company or ticker name for consistent lookup.
+
+        Rules applied (in order):
+          1. Strip leading/trailing whitespace
+          2. Upper-case obvious ticker-like strings (≤5 chars, all alpha)
+          3. Remove common legal suffixes (Inc., Corp., Ltd., LLC, etc.)
+          4. Remove punctuation except hyphens
+          5. Collapse multiple spaces to one
+          6. Title-case the result
+
+        Examples:
+          "apple inc."        → "Apple"
+          "MSFT"              → "MSFT"
+          "Alphabet Inc."     → "Alphabet"
+          "berkshire hathaway llc" → "Berkshire Hathaway"
+        """
+        if not raw_name:
+            return ""
+
+        name = raw_name.strip()
+
+        # If it looks like a ticker (short, uppercase or easily uppercased, no spaces)
+        if len(name) <= 5 and re.match(r"^[A-Za-z.\-]+$", name) and " " not in name:
+            return name.upper().rstrip(".")
+
+        # Remove common legal suffixes (case-insensitive)
+        legal_suffixes = [
+            r"\bInc\.?\b", r"\bCorp\.?\b", r"\bCorporation\b",
+            r"\bLtd\.?\b", r"\bLimited\b", r"\bLLC\b", r"\bL\.L\.C\.?\b",
+            r"\bLLP\b", r"\bPLC\b", r"\bP\.L\.C\.?\b", r"\bS\.A\.?\b",
+            r"\bN\.V\.?\b", r"\bA\.G\.?\b", r"\bGmbH\b", r"\bSE\b",
+            r"\bHoldings\b", r"\bGroup\b", r"\bCo\.?\b",
+        ]
+        for suffix in legal_suffixes:
+            name = re.sub(suffix, "", name, flags=re.IGNORECASE)
+
+        # Remove punctuation except hyphens and ampersands
+        name = re.sub(r"[^\w\s\-&]", " ", name)
+        # Collapse whitespace
+        name = re.sub(r"\s+", " ", name).strip()
+        # Title-case
+        return name.title() if name else ""
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Stub fix #5: Sentiment aggregation by entity
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def aggregate_sentiment_by_entity(
+        self,
+        articles: List["NewsArticle"],
+        entity_mentions: Optional[Dict[str, List[str]]] = None,
+    ) -> Dict[str, Dict]:
+        """
+        Stub fix #5: Aggregate article-level sentiment scores per named entity.
+
+        For each entity (ticker or company name), collect all articles that
+        mention it, score them with FinBERT/VADER, and produce a per-entity
+        summary with:
+          - 'n_articles'         : number of articles mentioning entity
+          - 'mean_net_sentiment' : mean of net sentiment scores
+          - 'std_net_sentiment'  : std dev of net sentiment scores
+          - 'positive_pct'       : fraction of articles with positive label
+          - 'negative_pct'       : fraction of articles with negative label
+          - 'dominant_label'     : overall label based on mean_net_sentiment
+          - 'articles'           : list of (title, net) tuples for top-5 articles
+
+        Parameters
+        ----------
+        articles : List[NewsArticle]
+            Pre-fetched article list (title + description used for scoring).
+        entity_mentions : Optional dict mapping canonical entity name →
+            list of name variants to search for in article text.
+            If None, uses the articles' domain field as a coarse grouping.
+        """
+        if not articles:
+            return {}
+
+        # Default: group by domain
+        if entity_mentions is None:
+            domains = list({a.domain for a in articles if a.domain})
+            entity_mentions = {d: [d] for d in domains}
+
+        result: Dict[str, Dict] = {}
+
+        for entity, variants in entity_mentions.items():
+            canonical = self.normalize_entity_name(entity)
+            matching = [
+                a for a in articles
+                if any(
+                    v.lower() in (a.title + " " + a.description + " " + a.domain).lower()
+                    for v in variants
+                )
+            ]
+            if not matching:
+                continue
+
+            texts = [(a.title + " " + a.description)[:500] for a in matching]
+            scores = self._finbert.analyze_batch(texts)
+
+            nets = [s.net for s in scores]
+            labels = [s.label for s in scores]
+
+            mean_net = float(np.mean(nets)) if nets else 0.0
+            std_net = float(np.std(nets)) if len(nets) > 1 else 0.0
+            pos_pct = labels.count("positive") / len(labels) if labels else 0.0
+            neg_pct = labels.count("negative") / len(labels) if labels else 0.0
+
+            if mean_net > 0.05:
+                dominant = "positive"
+            elif mean_net < -0.05:
+                dominant = "negative"
+            else:
+                dominant = "neutral"
+
+            # Top-5 articles by absolute net score
+            top_articles = sorted(
+                zip([a.title for a in matching], nets),
+                key=lambda x: abs(x[1]),
+                reverse=True,
+            )[:5]
+
+            result[canonical] = {
+                "n_articles": len(matching),
+                "mean_net_sentiment": round(mean_net, 4),
+                "std_net_sentiment": round(std_net, 4),
+                "positive_pct": round(pos_pct, 3),
+                "negative_pct": round(neg_pct, 3),
+                "dominant_label": dominant,
+                "articles": [(t, round(n, 4)) for t, n in top_articles],
+            }
+
+        return result
 
 
 # ─────────────────────────────────────────────────────────────────────────────

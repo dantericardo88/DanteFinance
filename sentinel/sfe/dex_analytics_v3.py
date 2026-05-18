@@ -1061,6 +1061,117 @@ class LiquidityFlowAnalyzer:
 
         return min(100.0, round(score, 1))
 
+    def compute_rugpull_score_from_signals(
+        self,
+        tvl_change_1d: float,
+        has_audit: bool,
+        sell_tax_pct: float = 0.0,
+        ownership_renounced: bool = True,
+        price_impact_small_trade_pct: float = 0.0,
+    ) -> Dict[str, Any]:
+        """
+        Composite rugpull risk scoring from on-chain signals.
+
+        Scoring:
+          - Liquidity removal speed: tvl_change_1d < -0.50 (>50% drop) → +40
+          - No audit:                has_audit == False → +30
+          - Honeypot: sell_tax > 10% or ownership not renounced → +20
+          - Price impact anomaly:    price_impact_small_trade_pct > 5% → +15
+
+        Score 0-100. > 70 = HIGH RISK.
+
+        Args:
+            tvl_change_1d:              Fraction change in TVL over 1 day (e.g., -0.60 = -60%).
+            has_audit:                  Whether contract is audited (DefiLlama has_audit).
+            sell_tax_pct:               Sell tax percentage (0-100). >10 = honeypot signal.
+            ownership_renounced:        Whether contract ownership has been renounced.
+            price_impact_small_trade_pct: Price impact of a small trade. >5% = thin liquidity.
+
+        Returns:
+            dict with score, risk_level, and per-signal breakdown.
+        """
+        score = 0.0
+        signals: Dict[str, Any] = {}
+
+        # 1. Liquidity removal speed
+        if tvl_change_1d < -0.50:
+            score += 40.0
+            signals["liquidity_removal"] = {
+                "value": round(tvl_change_1d * 100, 2),
+                "flag": "CRITICAL — >50% TVL removed in 1 day",
+                "points": 40,
+            }
+        elif tvl_change_1d < -0.20:
+            score += 20.0
+            signals["liquidity_removal"] = {
+                "value": round(tvl_change_1d * 100, 2),
+                "flag": "WARNING — >20% TVL removed in 1 day",
+                "points": 20,
+            }
+        else:
+            signals["liquidity_removal"] = {
+                "value": round(tvl_change_1d * 100, 2),
+                "flag": "OK",
+                "points": 0,
+            }
+
+        # 2. Anonymous team / no audit (uses DefiLlama has_audit field proxy)
+        if not has_audit:
+            score += 30.0
+            signals["no_audit"] = {
+                "flag": "CRITICAL — contract not audited",
+                "points": 30,
+            }
+        else:
+            signals["no_audit"] = {"flag": "OK — audited", "points": 0}
+
+        # 3. Honeypot indicators
+        honeypot_pts = 0.0
+        honeypot_flags = []
+        if sell_tax_pct > 10.0:
+            honeypot_pts += 15.0
+            honeypot_flags.append(f"sell_tax={sell_tax_pct:.1f}%")
+        if not ownership_renounced:
+            honeypot_pts += 5.0
+            honeypot_flags.append("ownership_not_renounced")
+        score += honeypot_pts
+        signals["honeypot"] = {
+            "sell_tax_pct": sell_tax_pct,
+            "ownership_renounced": ownership_renounced,
+            "flags": honeypot_flags,
+            "points": honeypot_pts,
+        }
+
+        # 4. Price impact anomaly — small trade causes >5% impact = thin liquidity
+        if price_impact_small_trade_pct > 5.0:
+            impact_pts = 15.0
+            score += impact_pts
+            signals["price_impact_anomaly"] = {
+                "value_pct": price_impact_small_trade_pct,
+                "flag": f"HIGH — {price_impact_small_trade_pct:.1f}% impact on small trade",
+                "points": impact_pts,
+            }
+        else:
+            signals["price_impact_anomaly"] = {
+                "value_pct": price_impact_small_trade_pct,
+                "flag": "OK",
+                "points": 0,
+            }
+
+        score = min(100.0, round(score, 1))
+        if score >= 70:
+            risk_level = "HIGH RISK"
+        elif score >= 40:
+            risk_level = "MEDIUM RISK"
+        else:
+            risk_level = "LOW RISK"
+
+        return {
+            "rug_score": score,
+            "risk_level": risk_level,
+            "signals": signals,
+        }
+
 
 # ---------------------------------------------------------------------------
 # YieldFarmingAnalyzer
@@ -1529,6 +1640,135 @@ class DEXScreener:
             "gap_count": len(gaps),
             "gaps": sorted(gaps, key=lambda g: g["gap_width_ticks"], reverse=True)[:20],
         }
+
+
+# ---------------------------------------------------------------------------
+# ILCalculator — Impermanent Loss for AMM LPs (dim_110)
+# ---------------------------------------------------------------------------
+
+class ILCalculator:
+    """
+    Impermanent loss mathematics for constant-product AMM pools (x*y=k).
+
+    IL Formula:
+        IL = 2*sqrt(price_ratio) / (1 + price_ratio) - 1
+
+    where price_ratio = P_t / P_0.
+
+    IL is always <= 0 (a loss relative to simply holding the tokens).
+    IL = 0 when price_ratio = 1 (no price change).
+
+    This class is consistent with ImpermanentLossCalculator in defi_analytics_v3.
+    """
+
+    @staticmethod
+    def compute_il(price_ratio_0_to_1: float) -> float:
+        """
+        Compute impermanent loss as a decimal fraction.
+
+        Args:
+            price_ratio_0_to_1: P_t / P_0 — ratio of token1-in-token0 price
+                                 at withdrawal vs deposit. Must be > 0.
+
+        Returns:
+            IL as a negative decimal (e.g. -0.0572 for a price doubling).
+        """
+        if price_ratio_0_to_1 <= 0:
+            raise ValueError(f"price_ratio must be > 0, got {price_ratio_0_to_1}")
+        sqrt_r = math.sqrt(price_ratio_0_to_1)
+        il = (2.0 * sqrt_r / (1.0 + price_ratio_0_to_1)) - 1.0
+        return il  # always <= 0
+
+    @staticmethod
+    def compute_pool_il(pool_data: PoolData, current_prices: Dict[str, float]) -> Dict[str, Any]:
+        """
+        Compute full impermanent loss for an LP position in a pool.
+
+        Requires current prices for both tokens in USD.
+        Assumes LP entered when token0_price / token1_price = pool_data entry ratio.
+        Uses token0_price from PoolData as the entry reference.
+
+        Args:
+            pool_data:      PoolData object with token0_price (entry price).
+            current_prices: Dict mapping token symbol → current USD price.
+                            e.g. {"ETH": 3200.0, "USDC": 1.0}
+
+        Returns:
+            dict with:
+                - il_pct:         IL as a percentage (e.g., -5.72)
+                - il_decimal:     IL as decimal (e.g., -0.0572)
+                - price_ratio:    current P_t / P_0
+                - entry_price:    token0 price at entry (from pool_data.token0_price)
+                - current_price:  token0 current price (from current_prices)
+                - hodl_value:     hypothetical value if simply holding 50/50
+                - lp_value_pct:   LP value relative to hodl (= 1 + IL)
+                - pool_id:        pool identifier
+        """
+        t0 = pool_data.token0_symbol
+        t1 = pool_data.token1_symbol
+
+        # Entry price: pool's stored token0_price (in token1 units)
+        entry_price = pool_data.token0_price
+        if entry_price <= 0:
+            return {
+                "error": "Entry price unavailable (token0_price = 0 in pool_data)",
+                "pool_id": pool_data.id,
+                "il_pct": 0.0,
+                "il_decimal": 0.0,
+            }
+
+        # Compute current price ratio using provided prices
+        t0_current = current_prices.get(t0, 0.0)
+        t1_current = current_prices.get(t1, 0.0)
+
+        if t0_current > 0 and t1_current > 0:
+            # price of t0 in t1 units = USD(t0) / USD(t1)
+            current_price = t0_current / t1_current
+        elif t0_current > 0:
+            # Only t0 price available — use pool's token1_price
+            t1_ref = pool_data.token1_price if pool_data.token1_price > 0 else 1.0
+            current_price = t0_current / t1_ref
+        else:
+            # Fallback: use pool's current token0_price directly
+            current_price = pool_data.token0_price
+
+        price_ratio = current_price / entry_price if entry_price > 0 else 1.0
+
+        il = ILCalculator.compute_il(price_ratio)
+
+        return {
+            "pool_id": pool_data.id,
+            "token_pair": f"{t0}/{t1}",
+            "entry_price": entry_price,
+            "current_price": round(current_price, 8),
+            "price_ratio": round(price_ratio, 6),
+            "il_decimal": round(il, 6),
+            "il_pct": round(il * 100, 4),
+            "lp_value_pct": round((1.0 + il) * 100, 4),
+            "tvl_usd": pool_data.tvl_usd,
+        }
+
+    @staticmethod
+    def il_table(price_ratios: Optional[List[float]] = None) -> List[Dict[str, float]]:
+        """
+        Generate a lookup table of IL values for common price ratios.
+
+        Args:
+            price_ratios: List of P_t/P_0 values (default: standard multiples).
+
+        Returns:
+            List of dicts with price_ratio, il_pct.
+        """
+        if price_ratios is None:
+            price_ratios = [0.25, 0.50, 0.75, 1.0, 1.25, 1.50, 2.0, 3.0, 4.0, 5.0]
+        rows = []
+        for r in price_ratios:
+            if r > 0:
+                rows.append({
+                    "price_ratio": r,
+                    "il_pct": round(ILCalculator.compute_il(r) * 100, 4),
+                })
+        return rows
 
 
 # ---------------------------------------------------------------------------

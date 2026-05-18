@@ -210,9 +210,9 @@ class TrendsDashboard:
     ticker: str
     search_score: TrendsScore
     earnings_prediction: Optional[EarningsPrediction]
-    product_signals: Dict[str, float]      # product → interest score
+    product_signals: Dict[str, Any]         # product → {interest, acceleration, surprise_prob}
     competitive_share: Dict[str, float]    # competitor → share-of-search %
-    fear_greed_index: float                # -100 to +100
+    fear_greed_index: float                # 0-100 composite fear/greed
     macro_context: Dict[str, float]        # macro index values
     raw_interest_series: List[Dict]        # [{date, value}]
     timestamp: str = ""
@@ -718,57 +718,227 @@ class TrendsSignalEngine:
         self,
         market_terms: Optional[List[str]] = None,
     ) -> float:
-        """Fear/greed proxy from search terms.
+        """Fear/greed composite index (0-100 scale).
 
-        Returns -100 (extreme fear) to +100 (extreme greed).
-        Uses built-in fear/greed term lists unless overridden.
+        Combines 5 equally-weighted signals (20% each):
+
+        1. search_volume  — ratio of crash vs tips search intensity (inverted = fear)
+        2. momentum       — 125d vs 250d MA ratio from SPY price (proxy from trends)
+        3. breadth        — stocks above 50d MA proxy (trend strength of "stock market")
+        4. junk_bond_proxy — "high yield bonds" search vs "treasury bonds"
+        5. volatility_proxy — "market volatility" search intensity (inverted = fear)
+
+        Score mapping: <25=Extreme Fear, 25-45=Fear, 45-55=Neutral,
+                       55-75=Greed, >75=Extreme Greed.
+
+        Returns score in [0, 100].
         """
-        fear_terms = _FEAR_TERMS[:2]  # limit to 2 to stay under pytrends 5-kw limit
-        greed_terms = _GREED_TERMS[:2]
-        all_terms = fear_terms + greed_terms
+        # Component weights (must sum to 1.0)
+        W_SEARCH   = 0.20
+        W_MOMENTUM = 0.20
+        W_BREADTH  = 0.20
+        W_JUNK     = 0.20
+        W_VOL      = 0.20
 
+        # ----- Component 1: Search volume (crash vs tips) -----
+        # Higher "market crash" search = more fear → lower score
+        search_score = 50.0  # neutral default
+        try:
+            crash_terms = ["market crash", "stock tips"]
+            df_search = self._fetcher.fetch_interest_over_time(
+                crash_terms, timeframe="today 3-m"
+            )
+            if _PANDAS_OK and df_search is not None and not df_search.empty:
+                recent = df_search.tail(4)
+                crash_col = next(
+                    (c for c in recent.columns if "crash" in c.lower()), None
+                )
+                tips_col = next(
+                    (c for c in recent.columns if "tip" in c.lower()), None
+                )
+                crash_val = float(recent[crash_col].mean()) if crash_col else 50.0
+                tips_val  = float(recent[tips_col].mean())  if tips_col  else 50.0
+                total = crash_val + tips_val
+                if total > 0:
+                    # High crash → low score (fear); high tips → high score (greed)
+                    search_score = _clamp(100.0 * (tips_val / total), 0.0, 100.0)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("fear_greed search_volume component failed: %s", exc)
+
+        # ----- Component 2: Momentum (SPY trend proxy via "SPY ETF" trends) -----
+        # Use 125-week vs 250-week interest ratio as a momentum proxy
+        momentum_score = 50.0
+        try:
+            spy_terms = ["SPY ETF"]
+            df_spy = self._fetcher.fetch_interest_over_time(
+                spy_terms, timeframe="today 5-y"
+            )
+            if _PANDAS_OK and df_spy is not None and not df_spy.empty:
+                col = df_spy.columns[0]
+                vals = [float(v) for v in df_spy[col].tolist()]
+                if len(vals) >= 250:
+                    ma125 = sum(vals[-125:]) / 125.0
+                    ma250 = sum(vals[-250:]) / 250.0
+                    if ma250 > 0:
+                        ratio = ma125 / ma250
+                        # ratio > 1 = uptrend = greed; < 1 = fear
+                        momentum_score = _clamp(50.0 + 100.0 * (ratio - 1.0), 0.0, 100.0)
+                elif len(vals) >= 10:
+                    # Short history: compare recent 25% vs full history
+                    half = max(1, len(vals) // 4)
+                    recent_mean = sum(vals[-half:]) / half
+                    full_mean = sum(vals) / len(vals)
+                    if full_mean > 0:
+                        ratio = recent_mean / full_mean
+                        momentum_score = _clamp(50.0 + 100.0 * (ratio - 1.0), 0.0, 100.0)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("fear_greed momentum component failed: %s", exc)
+
+        # ----- Component 3: Breadth (stock market health proxy) -----
+        # Use "stock market rally" vs "stock market crash" as a breadth proxy
+        breadth_score = 50.0
+        try:
+            breadth_terms = ["stock market rally", "stock market crash"]
+            df_breadth = self._fetcher.fetch_interest_over_time(
+                breadth_terms, timeframe="today 3-m"
+            )
+            if _PANDAS_OK and df_breadth is not None and not df_breadth.empty:
+                recent = df_breadth.tail(4)
+                rally_col = next(
+                    (c for c in recent.columns if "rally" in c.lower()), None
+                )
+                crash_col = next(
+                    (c for c in recent.columns if "crash" in c.lower()), None
+                )
+                rally_val = float(recent[rally_col].mean()) if rally_col else 50.0
+                crash_val = float(recent[crash_col].mean()) if crash_col else 50.0
+                total = rally_val + crash_val
+                if total > 0:
+                    breadth_score = _clamp(100.0 * (rally_val / total), 0.0, 100.0)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("fear_greed breadth component failed: %s", exc)
+
+        # ----- Component 4: Junk bond demand proxy -----
+        # Higher "high yield bonds" vs "treasury bonds" = risk-on = greed
+        junk_score = 50.0
+        try:
+            bond_terms = ["high yield bonds", "treasury bonds"]
+            df_bonds = self._fetcher.fetch_interest_over_time(
+                bond_terms, timeframe="today 3-m"
+            )
+            if _PANDAS_OK and df_bonds is not None and not df_bonds.empty:
+                recent = df_bonds.tail(4)
+                hy_col  = next(
+                    (c for c in recent.columns if "high yield" in c.lower()), None
+                )
+                tsy_col = next(
+                    (c for c in recent.columns if "treasury" in c.lower()), None
+                )
+                hy_val  = float(recent[hy_col].mean())  if hy_col  else 50.0
+                tsy_val = float(recent[tsy_col].mean()) if tsy_col else 50.0
+                total = hy_val + tsy_val
+                if total > 0:
+                    junk_score = _clamp(100.0 * (hy_val / total), 0.0, 100.0)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("fear_greed junk_bond component failed: %s", exc)
+
+        # ----- Component 5: Market volatility proxy -----
+        # Higher "market volatility" search = more fear → lower score
+        vol_score = 50.0
+        try:
+            vol_terms = ["market volatility", "stock market news"]
+            df_vol = self._fetcher.fetch_interest_over_time(
+                vol_terms, timeframe="today 3-m"
+            )
+            if _PANDAS_OK and df_vol is not None and not df_vol.empty:
+                recent = df_vol.tail(4)
+                vol_col  = next(
+                    (c for c in recent.columns if "volatility" in c.lower()), None
+                )
+                news_col = next(
+                    (c for c in recent.columns if "news" in c.lower()), None
+                )
+                vol_val  = float(recent[vol_col].mean())  if vol_col  else 50.0
+                news_val = float(recent[news_col].mean()) if news_col else 50.0
+                total = vol_val + news_val
+                if total > 0:
+                    # Higher volatility search = more fear = lower score
+                    vol_score = _clamp(100.0 * (news_val / total), 0.0, 100.0)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("fear_greed volatility component failed: %s", exc)
+
+        # ----- Override with custom market_terms if provided -----
         if market_terms:
-            all_terms = market_terms[:5]
-            fear_terms = [t for t in market_terms if any(
+            # Legacy behavior: use provided terms directly
+            fear_terms_custom = [t for t in market_terms if any(
                 bad in t.lower() for bad in ("crash", "recession", "bear", "collapse", "layoff")
             )]
-            greed_terms = [t for t in market_terms if t not in fear_terms]
+            greed_terms_custom = [t for t in market_terms if t not in fear_terms_custom]
+            all_terms = market_terms[:5]
+            df = self._fetcher.fetch_interest_over_time(all_terms, timeframe="today 3-m")
+            if _PANDAS_OK and df is not None and not df.empty:
+                recent = df.tail(4)
+                fear_scores: List[float] = []
+                greed_scores: List[float] = []
+                for col in recent.columns:
+                    val = float(recent[col].mean())
+                    if any(f.lower() in col.lower() for f in fear_terms_custom):
+                        fear_scores.append(val)
+                    elif any(g.lower() in col.lower() for g in greed_terms_custom):
+                        greed_scores.append(val)
+                fear_avg = sum(fear_scores) / len(fear_scores) if fear_scores else 50.0
+                greed_avg = sum(greed_scores) / len(greed_scores) if greed_scores else 50.0
+                total = fear_avg + greed_avg
+                if total > 0:
+                    raw_ratio = greed_avg / total
+                    return round(_clamp(raw_ratio * 100.0, 0.0, 100.0), 2)
 
-        df = self._fetcher.fetch_interest_over_time(all_terms, timeframe="today 3-m")
-        if not _PANDAS_OK or df is None or df.empty:
-            return 0.0
+        # ----- Composite: weighted average of 5 components -----
+        composite = (
+            W_SEARCH   * search_score
+            + W_MOMENTUM * momentum_score
+            + W_BREADTH  * breadth_score
+            + W_JUNK     * junk_score
+            + W_VOL      * vol_score
+        )
+        return round(_clamp(composite, 0.0, 100.0), 2)
 
-        # Use last 4 weeks of data
-        recent = df.tail(4)
-        fear_scores: List[float] = []
-        greed_scores: List[float] = []
-
-        for col in recent.columns:
-            val = float(recent[col].mean())
-            if any(f.lower() in col.lower() for f in fear_terms):
-                fear_scores.append(val)
-            elif any(g.lower() in col.lower() for g in greed_terms):
-                greed_scores.append(val)
-
-        fear_avg = sum(fear_scores) / len(fear_scores) if fear_scores else 0.0
-        greed_avg = sum(greed_scores) / len(greed_scores) if greed_scores else 0.0
-
-        total = fear_avg + greed_avg
-        if total < 1:
-            return 0.0
-
-        # Greed ratio → map to -100..+100
-        greed_ratio = greed_avg / total
-        return round((greed_ratio - 0.5) * 200, 2)
+    @staticmethod
+    def classify_fear_greed(score: float) -> str:
+        """Return human-readable label for a 0-100 fear/greed score."""
+        if score < 25:
+            return "Extreme Fear"
+        elif score < 45:
+            return "Fear"
+        elif score <= 55:
+            return "Neutral"
+        elif score <= 75:
+            return "Greed"
+        else:
+            return "Extreme Greed"
 
     def get_product_cycle_signal(
         self,
         ticker: str,
         products: Optional[List[str]] = None,
-    ) -> Dict[str, float]:
+    ) -> Dict[str, Any]:
         """Track product-specific search trends as leading revenue indicator.
 
-        Returns {product_name: current_interest_score (0-100)}.
+        Returns a dict with per-product interest scores, week-over-week
+        acceleration, and a quarterly revenue surprise probability mapping.
+
+        Keys per product:
+            "interest"        — 4-week average interest (0-100)
+            "acceleration"    — week-over-week growth rate (2nd derivative proxy)
+            "surprise_prob"   — estimated probability of positive revenue surprise (0-1)
+
+        Methodology:
+            - Fetch weekly interest for each product keyword
+            - Compute trend acceleration = WoW growth rate at tail of series
+            - Map acceleration to surprise probability:
+                acceleration > +2 pts/week → prob ~0.65
+                acceleration > 0            → prob ~0.55
+                acceleration <= 0           → prob ~0.45
         """
         if products is None:
             # Default product keywords by ticker
@@ -785,15 +955,52 @@ class TrendsSignalEngine:
         products = products[:5]
         df = self._fetcher.fetch_interest_over_time(products, timeframe="today 3-m")
         if not _PANDAS_OK or df is None or df.empty:
-            return {p: 0.0 for p in products}
+            return {
+                p: {"interest": 0.0, "acceleration": 0.0, "surprise_prob": 0.5}
+                for p in products
+            }
 
-        result: Dict[str, float] = {}
+        result: Dict[str, Any] = {}
         for product in products:
             col = next((c for c in df.columns if product.lower() in c.lower()), None)
             if col:
-                result[product] = round(float(df[col].tail(4).mean()), 2)
+                series = [float(v) for v in df[col].tolist()]
+                interest = round(float(df[col].tail(4).mean()), 2)
+
+                # Trend acceleration: week-over-week change in the last 2 weeks
+                if len(series) >= 3:
+                    # WoW growth rate at tail: (last - penultimate) - (penultimate - ante)
+                    d1_last = series[-1] - series[-2]
+                    d1_prev = series[-2] - series[-3]
+                    acceleration = round(d1_last - d1_prev, 4)
+                elif len(series) >= 2:
+                    acceleration = round(series[-1] - series[-2], 4)
+                else:
+                    acceleration = 0.0
+
+                # Map acceleration to revenue surprise probability
+                if acceleration > 2.0:
+                    surprise_prob = 0.65
+                elif acceleration > 0.5:
+                    surprise_prob = 0.60
+                elif acceleration > 0.0:
+                    surprise_prob = 0.55
+                elif acceleration > -0.5:
+                    surprise_prob = 0.50
+                else:
+                    surprise_prob = 0.45
+
+                result[product] = {
+                    "interest": interest,
+                    "acceleration": acceleration,
+                    "surprise_prob": surprise_prob,
+                }
             else:
-                result[product] = 0.0
+                result[product] = {
+                    "interest": 0.0,
+                    "acceleration": 0.0,
+                    "surprise_prob": 0.5,
+                }
         return result
 
 

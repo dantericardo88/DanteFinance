@@ -1752,6 +1752,195 @@ def _extract_deadline_months(text: str) -> Optional[int]:
 
 
 # ---------------------------------------------------------------------------
+# dim_030 additions: pop prediction, lockup signal, quality classification
+# ---------------------------------------------------------------------------
+
+
+def compute_ipo_pop_prediction(
+    revenue_growth_rate: float,
+    brand_recognition_score: float,
+    market_conditions: float,
+    underwriter_tier: float,
+) -> dict:
+    """
+    Predict first-day IPO "pop" using a weighted linear factor model.
+
+    Formula
+    -------
+    pop_score = (revenue_growth_rate  × 0.3
+               + brand_recognition_score × 0.2
+               + market_conditions        × 0.3
+               + underwriter_tier         × 0.2)
+
+    All four inputs should be on a normalised 0–1 scale where 1 = best.
+
+    Parameters
+    ----------
+    revenue_growth_rate : float
+        YoY revenue growth normalised to [0, 1].
+        E.g. 100% growth → 1.0, flat → 0.5, declining → 0.0.
+    brand_recognition_score : float
+        Brand strength/awareness on [0, 1] (1 = household name).
+    market_conditions : float
+        Macro / sentiment environment on [0, 1]
+        (1 = hot market, 0 = cold/bear market).
+    underwriter_tier : float
+        Underwriter quality on [0, 1]
+        (1 = Goldman/Morgan Stanley bulge bracket, 0 = unknown boutique).
+
+    Returns
+    -------
+    dict with keys:
+        pop_score             : float   composite score [0, 1]
+        pop_prediction_pct    : float   estimated first-day return %
+        inputs                : dict    echoed input values
+        formula               : str     human-readable formula
+    """
+    for name, val in [
+        ("revenue_growth_rate", revenue_growth_rate),
+        ("brand_recognition_score", brand_recognition_score),
+        ("market_conditions", market_conditions),
+        ("underwriter_tier", underwriter_tier),
+    ]:
+        if not (0.0 <= val <= 1.0):
+            raise ValueError(f"{name}={val} must be in [0.0, 1.0]")
+
+    pop_score = (
+        revenue_growth_rate      * 0.3
+        + brand_recognition_score * 0.2
+        + market_conditions       * 0.3
+        + underwriter_tier        * 0.2
+    )
+
+    # Convert [0,1] composite to an estimated first-day return %.
+    # Historical median pop is ~14%; score of 0.5 maps to ~14%.
+    # Linear interpolation: pop_pct = pop_score × 28%
+    pop_prediction_pct = round(pop_score * 28.0, 2)
+
+    return {
+        "pop_score": round(pop_score, 4),
+        "pop_prediction_pct": pop_prediction_pct,
+        "inputs": {
+            "revenue_growth_rate": revenue_growth_rate,
+            "brand_recognition_score": brand_recognition_score,
+            "market_conditions": market_conditions,
+            "underwriter_tier": underwriter_tier,
+        },
+        "formula": (
+            "pop_score = revenue_growth_rate×0.3 "
+            "+ brand_recognition_score×0.2 "
+            "+ market_conditions×0.3 "
+            "+ underwriter_tier×0.2"
+        ),
+    }
+
+
+def compute_lockup_expiry_signal(
+    ipo_date: date,
+    lockup_days: int = 180,
+    expected_return_pct: float = -8.0,
+) -> dict:
+    """
+    Compute the lockup expiry date and expected price pressure signal.
+
+    Empirical research shows average -8% abnormal return around day-180
+    lockup expiry as insiders and early investors sell.
+
+    Parameters
+    ----------
+    ipo_date : date
+        The IPO pricing/trading date.
+    lockup_days : int
+        Standard lockup period in calendar days (default 180).
+    expected_return_pct : float
+        Expected price change around lockup expiry (default -8.0%).
+
+    Returns
+    -------
+    dict with keys:
+        ipo_date             : str    ISO date
+        lockup_expiry_date   : str    ISO date
+        lockup_days          : int
+        expected_return_pct  : float  typically -8%
+        days_until_expiry    : int    relative to today (negative = past)
+        signal               : str    APPROACHING | PAST | ACTIVE
+    """
+    lockup_expiry = ipo_date + timedelta(days=lockup_days)
+    today = date.today()
+    days_until = (lockup_expiry - today).days
+
+    if days_until < 0:
+        signal = "PAST"
+    elif days_until <= 30:
+        signal = "APPROACHING"
+    else:
+        signal = "ACTIVE"
+
+    return {
+        "ipo_date": ipo_date.isoformat(),
+        "lockup_expiry_date": lockup_expiry.isoformat(),
+        "lockup_days": lockup_days,
+        "expected_return_pct": expected_return_pct,
+        "days_until_expiry": days_until,
+        "signal": signal,
+    }
+
+
+def classify_ipo_quality(
+    lead_underwriter: Optional[str],
+    ebitda_positive: bool,
+) -> dict:
+    """
+    Classify IPO quality into Tier 1 / Tier 2 / Tier 3 based on underwriter
+    prestige and profitability.
+
+    Tier 1: Bulge-bracket lead underwriter AND positive EBITDA (profitable).
+    Tier 2: Major (non-bulge) underwriter, OR bulge bracket but loss-making.
+    Tier 3: Boutique / unknown underwriter.
+
+    Parameters
+    ----------
+    lead_underwriter : str | None
+        Name of the lead underwriter (as found in _BULGE_BRACKET / _MAJOR_UNDERWRITERS).
+    ebitda_positive : bool
+        True if the company reported positive EBITDA in its last fiscal year.
+
+    Returns
+    -------
+    dict with keys:
+        tier              : str    "Tier 1" | "Tier 2" | "Tier 3"
+        lead_underwriter  : str | None
+        is_bulge_bracket  : bool
+        is_major          : bool
+        ebitda_positive   : bool
+        rationale         : str
+    """
+    is_bulge = lead_underwriter in _BULGE_BRACKET if lead_underwriter else False
+    is_major = lead_underwriter in _MAJOR_UNDERWRITERS if lead_underwriter else False
+
+    if is_bulge and ebitda_positive:
+        tier = "Tier 1"
+        rationale = "Bulge-bracket underwriter with positive EBITDA — highest quality signal."
+    elif is_major or is_bulge:
+        tier = "Tier 2"
+        rationale = (
+            "Major underwriter without positive EBITDA, or bulge-bracket but loss-making."
+        )
+    else:
+        tier = "Tier 3"
+        rationale = "Boutique or unknown underwriter — higher execution and aftermarket risk."
+
+    return {
+        "tier": tier,
+        "lead_underwriter": lead_underwriter,
+        "is_bulge_bracket": is_bulge,
+        "is_major": is_major,
+        "ebitda_positive": ebitda_positive,
+        "rationale": rationale,
+    }
+
+
+# ---------------------------------------------------------------------------
 # FastAPI router
 # ---------------------------------------------------------------------------
 

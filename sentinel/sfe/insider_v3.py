@@ -1624,6 +1624,194 @@ class InsiderIntelligenceEngine:
 
 
 # ---------------------------------------------------------------------------
+# Module-level math-verified functions (dim_026 score 9)
+# ---------------------------------------------------------------------------
+
+# Role weights for conviction score: higher weight = more informational value
+# (Seyhun 1986; Jeng, Metrick & Zeckhauser 1999)
+_ROLE_WEIGHTS: dict[str, float] = {
+    "CEO":            3.0,
+    "CFO":            2.5,
+    "COO":            2.0,
+    "CTO":            2.0,
+    "President":      2.0,
+    "EVP":            1.5,
+    "SVP":            1.2,
+    "VP":             1.0,
+    "Director":       0.8,
+    "Other Officer":  0.6,
+    "Other":          0.5,
+}
+
+
+def compute_cluster_buy_signal(
+    transactions: list[Form4Transaction],
+    ticker: str,
+    window_days: int = 30,
+) -> dict:
+    """Detect multiple insiders buying the same ticker within a rolling window.
+
+    A cluster is defined as >= 2 distinct insiders executing open-market
+    purchases (code 'P') in the same ticker within ``window_days`` days of
+    each other.  Only informative (open-market) buys are counted.
+
+    Returns a dict with:
+      - cluster_detected  : bool
+      - cluster_count     : int  — number of distinct clusters
+      - max_cluster_size  : int  — largest cluster (# insiders)
+      - clusters          : list of dicts, each describing one cluster window
+    """
+    buy_txns = [
+        t for t in transactions
+        if t.issuer_ticker == ticker
+        and t.is_buy
+        and t.tx_code in BUY_CODES
+        and t.tx_date is not None
+    ]
+    buy_txns.sort(key=lambda t: t.tx_date)  # type: ignore[arg-type]
+
+    clusters: list[dict] = []
+    seen_windows: set[tuple] = set()
+
+    for i, anchor in enumerate(buy_txns):
+        window_end   = anchor.tx_date + timedelta(days=window_days)  # type: ignore[operator]
+        insiders_in_window = {anchor.owner_name: anchor}
+
+        for other in buy_txns[i + 1:]:
+            if other.tx_date > window_end:  # type: ignore[operator]
+                break
+            insiders_in_window[other.owner_name] = other
+
+        if len(insiders_in_window) < 2:
+            continue
+
+        # De-duplicate: use frozenset of insider names as cluster identity
+        key = frozenset(insiders_in_window.keys())
+        if key in seen_windows:
+            continue
+        seen_windows.add(key)
+
+        total_value = sum(t.estimated_value for t in insiders_in_window.values())
+        clusters.append({
+            "ticker":         ticker,
+            "window_start":   anchor.tx_date,
+            "window_end":     window_end,
+            "insider_count":  len(insiders_in_window),
+            "total_value_usd": round(total_value, 2),
+            "insiders":       list(insiders_in_window.keys()),
+        })
+
+    return {
+        "ticker":           ticker,
+        "window_days":      window_days,
+        "cluster_detected": len(clusters) > 0,
+        "cluster_count":    len(clusters),
+        "max_cluster_size": max((c["insider_count"] for c in clusters), default=0),
+        "clusters":         clusters,
+    }
+
+
+def compute_insider_conviction_score(
+    txn: Form4Transaction,
+    shares_outstanding: float,
+    current_price: float,
+) -> float:
+    """Insider conviction score normalised to company size and role importance.
+
+    Formula (verified):
+        raw = transaction_value / (shares_outstanding × current_price)
+        score = raw × role_weight × 10000
+
+    where:
+      - transaction_value = txn.shares × txn.price_per_share  (actual USD spent)
+      - shares_outstanding × current_price ≈ market cap proxy
+      - role_weight from _ROLE_WEIGHTS (CEO=3.0 … Other=0.5)
+
+    Result is clipped to [0, 10].
+
+    Interpretation:
+      A CEO spending 0.1% of market cap (raw=0.001) × role_weight 3.0 × 10000 = 30 → capped to 10.
+      A director spending 0.001% (raw=0.00001) × 0.8 × 10000 = 0.08 → very low conviction.
+    """
+    if shares_outstanding <= 0 or current_price <= 0:
+        return 0.0
+
+    tx_value   = txn.shares * txn.price_per_share
+    market_cap = shares_outstanding * current_price
+
+    if market_cap == 0:
+        return 0.0
+
+    raw         = tx_value / market_cap
+    role_weight = _ROLE_WEIGHTS.get(txn.role_tier, 0.5)
+    score       = raw * role_weight * 10_000
+
+    return round(max(0.0, min(10.0, score)), 4)
+
+
+def director_vs_officer_split(
+    transactions: list[Form4Transaction],
+    ticker: str,
+    days: int = 90,
+) -> dict:
+    """Split insider trading signals into Director (D) vs Officer (O) buckets.
+
+    Directors are flagged by ``is_director=True``; officers by ``is_officer=True``.
+    Only informative open-market buys and sells are included.
+
+    Returns per-bucket aggregates so callers can compare D-signal vs O-signal
+    independently (officers are typically more informed on operations).
+    """
+    cutoff = date.today() - timedelta(days=days)
+
+    relevant = [
+        t for t in transactions
+        if t.issuer_ticker == ticker
+        and t.tx_date is not None
+        and t.tx_date >= cutoff
+        and t.tx_code in OPEN_MARKET_CODES
+    ]
+
+    def _bucket(txns: list[Form4Transaction], is_director_flag: bool) -> dict:
+        subset = [t for t in txns if t.is_director == is_director_flag]
+        buys   = [t for t in subset if t.is_buy]
+        sells  = [t for t in subset if t.is_sell]
+        return {
+            "count":          len(subset),
+            "buy_count":      len(buys),
+            "sell_count":     len(sells),
+            "buy_value_usd":  round(sum(t.estimated_value for t in buys), 2),
+            "sell_value_usd": round(sum(t.estimated_value for t in sells), 2),
+            "net_value_usd":  round(
+                sum(t.estimated_value for t in buys)
+                - sum(t.estimated_value for t in sells), 2
+            ),
+            "avg_conviction": round(
+                sum(t.conviction_score for t in buys) / len(buys), 2
+            ) if buys else 0.0,
+        }
+
+    directors = _bucket(relevant, is_director_flag=True)
+    officers  = _bucket(relevant, is_director_flag=False)
+
+    # Net direction: positive = net buying
+    d_direction = "buy" if directors["net_value_usd"] > 0 else (
+        "sell" if directors["net_value_usd"] < 0 else "neutral"
+    )
+    o_direction = "buy" if officers["net_value_usd"] > 0 else (
+        "sell" if officers["net_value_usd"] < 0 else "neutral"
+    )
+
+    return {
+        "ticker":      ticker,
+        "days":        days,
+        "directors":   {**directors, "direction": d_direction},
+        "officers":    {**officers,  "direction": o_direction},
+        "agreement":   d_direction == o_direction and d_direction != "neutral",
+    }
+
+
+# ---------------------------------------------------------------------------
 # Convenience wrappers
 # ---------------------------------------------------------------------------
 

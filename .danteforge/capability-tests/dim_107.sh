@@ -6,7 +6,7 @@ set -e
 cd "$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
 
 python - <<'PYEOF'
-import sys, os
+import sys, os, math
 sys.path.insert(0, os.getcwd())
 
 # 1. Import all public classes
@@ -21,12 +21,13 @@ from sentinel.sfe.defi_analytics_v3 import (
     ProtocolScore,
     YieldAllocation,
     BridgeFlow,
+    ImpermanentLossCalculator,
     KNOWN_HACKS,
     KNOWN_AUDITS,
     PROTOCOL_COINGECKO_IDS,
     TOKEN_EMISSION_SCHEDULES,
 )
-print("[OK] All DeFi analytics classes imported")
+print("[OK] All DeFi analytics classes imported (including ImpermanentLossCalculator)")
 
 # 2. LendingProtocolAnalyzer — pure math (no network)
 lender = LendingProtocolAnalyzer()
@@ -142,5 +143,108 @@ l2_gas = yield_engine.estimate_gas_cost_impact(apy=5.0, capital=10_000, chain="b
 assert l2_gas["gas_cost_usd"] < 5.0  # Base L2 very cheap
 print(f"[OK] L2 gas (Base): ${l2_gas['gas_cost_usd']} per round trip")
 
-print("\n[PASS] dim_107: DeFi Protocol Analytics — all checks passed")
+# ===========================================================================
+# 9. ImpermanentLossCalculator — IL formula (pure math)
+# ===========================================================================
+
+# IL when price doubles: ratio = 2
+# Expected: IL = 2*sqrt(2)/(1+2) - 1 = 2*1.41421/3 - 1 = 0.94281 - 1 = -0.05719
+price_ratio = 2.0
+il = ImpermanentLossCalculator.compute_il(price_ratio)
+expected_il = 2 * math.sqrt(2) / (1 + 2) - 1
+assert abs(il - expected_il) < 1e-9, f"IL mismatch: {il} vs {expected_il}"
+assert abs(il - (-0.05719)) < 1e-4, f"IL should be ~-5.72%, got {il*100:.4f}%"
+print(f"[OK] IL formula (price doubles): {il*100:.4f}% (expected ~-5.72%)")
+
+# IL is always <= 0
+for ratio in [0.1, 0.5, 1.0, 1.5, 2.0, 5.0, 10.0]:
+    il_r = ImpermanentLossCalculator.compute_il(ratio)
+    assert il_r <= 0.0, f"IL must be <= 0, got {il_r} at ratio={ratio}"
+print("[OK] IL is always <= 0 across all price ratios")
+
+# IL = 0 when price unchanged (ratio = 1.0)
+il_no_change = ImpermanentLossCalculator.compute_il(1.0)
+assert abs(il_no_change) < 1e-12, f"IL should be 0 when no price change, got {il_no_change}"
+print(f"[OK] IL = 0 when price unchanged (ratio=1.0)")
+
+# Symmetric: IL(ratio=r) == IL(ratio=1/r)
+il_up   = ImpermanentLossCalculator.compute_il(2.0)
+il_down = ImpermanentLossCalculator.compute_il(0.5)
+assert abs(il_up - il_down) < 1e-9, f"IL should be symmetric: up={il_up:.6f} down={il_down:.6f}"
+print(f"[OK] IL is symmetric: price x2 and price /2 give same IL = {il_up*100:.4f}%")
+
+# 10. IL in dollar terms
+initial_value = 100_000.0
+il_dollar = ImpermanentLossCalculator.compute_il_dollar(initial_value, price_ratio=2.0)
+assert il_dollar < 0, "IL dollar must be negative"
+assert abs(il_dollar - initial_value * expected_il) < 1e-6
+print(f"[OK] IL dollar: $100k position, price doubles -> ${il_dollar:.2f} loss")
+
+# 11. LP P&L — can be positive if fees > IL
+fees_earned = 5_000.0  # $5k fees
+pnl_positive = ImpermanentLossCalculator.compute_lp_pnl(
+    initial_value=100_000.0,
+    price_ratio=2.0,
+    fees_earned=fees_earned,
+    opportunity_cost=0.0,
+)
+# IL dollar ~ -$5,720, fees = $5,000 -> pnl ~ -$720 (still negative)
+# But with higher fees it becomes positive:
+pnl_profitable = ImpermanentLossCalculator.compute_lp_pnl(
+    initial_value=100_000.0,
+    price_ratio=2.0,
+    fees_earned=10_000.0,
+    opportunity_cost=0.0,
+)
+assert pnl_profitable > il_dollar, "Higher fees improve LP P&L"
+print(f"[OK] LP P&L: fees=${fees_earned:.0f} -> pnl={pnl_positive:.2f}; fees=$10k -> pnl={pnl_profitable:.2f}")
+
+# LP P&L sign: fees > |IL| -> positive P&L
+big_fees = abs(il_dollar) + 1000
+pnl_net_positive = ImpermanentLossCalculator.compute_lp_pnl(100_000.0, 2.0, big_fees)
+assert pnl_net_positive > 0, f"Fees exceeding IL should yield positive P&L: {pnl_net_positive}"
+print(f"[OK] LP P&L positive when fees > IL magnitude: {pnl_net_positive:.2f}")
+
+# 12. IL fee APY breakeven
+breakeven_apy = ImpermanentLossCalculator.compute_fee_apy_breakeven(price_ratio=2.0, holding_period_years=1.0)
+assert breakeven_apy > 0, "Breakeven fee APY should be positive"
+assert abs(breakeven_apy - abs(expected_il)) < 1e-9, f"Breakeven mismatch: {breakeven_apy}"
+print(f"[OK] Breakeven fee APY for price doubling: {breakeven_apy*100:.4f}%/yr")
+
+# 13. Liquidation cascade simulation
+positions = [
+    {"collateral_value": 100_000, "debt_value": 75_000, "liquidation_threshold": 0.80},
+    {"collateral_value": 80_000,  "debt_value": 65_000, "liquidation_threshold": 0.80},
+    {"collateral_value": 50_000,  "debt_value": 38_000, "liquidation_threshold": 0.80},
+]
+result = ImpermanentLossCalculator.simulate_liquidation_cascade(
+    positions=positions,
+    initial_price_drop_pct=20.0,
+    cascade_multiplier=0.10,
+)
+
+# With 20% price drop: effective collateral = 80% of original
+# Position 1: 100k*0.8=80k collateral vs 75k/0.8=93.75k threshold -> LIQUIDATED
+# Position 2: 80k*0.8=64k collateral vs 65k/0.8=81.25k threshold -> LIQUIDATED
+# Position 3: 50k*0.8=40k collateral vs 38k/0.8=47.5k threshold -> LIQUIDATED
+assert result["positions_liquidated"] >= 1, f"At least 1 position should liquidate: {result}"
+assert result["total_liquidated_value"] > 0, "Liquidated value must be > 0"
+print(f"[OK] Cascade: {result['positions_liquidated']} positions liquidated, "
+      f"${result['total_liquidated_value']:,.0f} total, "
+      f"{result['liquidation_rounds']} rounds")
+
+# Empty positions -> zero result
+empty_result = ImpermanentLossCalculator.simulate_liquidation_cascade([], 20.0)
+assert empty_result["total_liquidated_value"] == 0.0
+print("[OK] Empty cascade returns zero liquidated value")
+
+# 14. ImpermanentLossCalculator interface
+assert hasattr(ImpermanentLossCalculator, 'compute_il')
+assert hasattr(ImpermanentLossCalculator, 'compute_il_dollar')
+assert hasattr(ImpermanentLossCalculator, 'compute_lp_pnl')
+assert hasattr(ImpermanentLossCalculator, 'compute_fee_apy_breakeven')
+assert hasattr(ImpermanentLossCalculator, 'simulate_liquidation_cascade')
+print("[OK] ImpermanentLossCalculator: all 5 methods present")
+
+print("\n[PASS] dim_107: DeFi Protocol Analytics — all checks passed (including IL + cascade)")
 PYEOF

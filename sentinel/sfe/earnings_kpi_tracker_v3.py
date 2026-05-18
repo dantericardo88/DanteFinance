@@ -1582,6 +1582,154 @@ def get_batch_surprise(
 
 
 # ---------------------------------------------------------------------------
+# dim_019 additions: earnings quality score, guidance walk-up, beat rate
+# ---------------------------------------------------------------------------
+
+
+def compute_earnings_quality_score(
+    net_income: float,
+    cfo: float,
+    avg_assets: float,
+) -> dict:
+    """
+    Compute earnings quality score from the Sloan accruals ratio.
+
+    Accruals ratio = (NI - CFO) / avg_assets
+
+    A **negative** accruals ratio means CFO > NI — cash earnings exceed
+    reported earnings — which signals **higher quality**.  Sloan (1996)
+    showed that high-accruals firms subsequently underperform.
+
+    Parameters
+    ----------
+    net_income : float
+        Annual net income (same currency units as avg_assets).
+    cfo : float
+        Annual cash flow from operations.
+    avg_assets : float
+        Average of beginning-of-year and end-of-year total assets.
+
+    Returns
+    -------
+    dict with keys:
+        accruals_ratio : float        (NI - CFO) / avg_assets
+        quality_flag   : str          HIGH | MODERATE | LOW | VERY_LOW
+        interpretation : str          plain-English note
+    """
+    if avg_assets == 0:
+        raise ValueError("avg_assets must be non-zero")
+
+    accruals_ratio = (net_income - cfo) / avg_assets
+
+    # Quality thresholds (Sloan-convention, absolute value)
+    if abs(accruals_ratio) <= 0.02:
+        quality_flag = "HIGH"
+        interpretation = "Low accruals: cash earnings closely match reported earnings."
+    elif abs(accruals_ratio) <= 0.05:
+        quality_flag = "MODERATE"
+        interpretation = "Moderate accruals: some divergence between cash and reported earnings."
+    elif abs(accruals_ratio) <= 0.10:
+        quality_flag = "LOW"
+        interpretation = "High accruals: reported earnings substantially diverge from cash flow."
+    else:
+        quality_flag = "VERY_LOW"
+        interpretation = "Very high accruals: aggressive accounting or earnings management risk."
+
+    return {
+        "accruals_ratio": round(accruals_ratio, 6),
+        "quality_flag": quality_flag,
+        "interpretation": interpretation,
+        "net_income": net_income,
+        "cfo": cfo,
+        "avg_assets": avg_assets,
+    }
+
+
+def detect_guidance_walk_up(guidance_history: list[dict]) -> dict:
+    """
+    Detect whether EPS guidance has been raised for ≥2 consecutive quarters.
+
+    Parameters
+    ----------
+    guidance_history : list[dict]
+        Ordered (oldest first) list of guidance entries.  Each dict must
+        contain at least {"period_label": str, "guidance_action": str}
+        where guidance_action is one of: raises | lowers | reaffirms |
+        initiates | withdraws | none_found.
+
+    Returns
+    -------
+    dict with keys:
+        walk_up_detected : bool    True if ≥2 consecutive "raises"
+        consecutive_raises : int   Length of current raise streak
+        periods : list[str]        Period labels in the raise streak
+    """
+    if not guidance_history:
+        return {"walk_up_detected": False, "consecutive_raises": 0, "periods": []}
+
+    # Work backwards from most recent to find the current raise streak
+    streak: list[str] = []
+    for entry in reversed(guidance_history):
+        if entry.get("guidance_action") == "raises":
+            streak.append(entry.get("period_label", ""))
+        else:
+            break  # streak broken
+
+    streak.reverse()  # oldest first
+    walk_up = len(streak) >= 2
+
+    return {
+        "walk_up_detected": walk_up,
+        "consecutive_raises": len(streak),
+        "periods": streak,
+    }
+
+
+def compute_beat_rate(surprise_history: list[dict]) -> dict:
+    """
+    Compute the fraction of the last 8 quarters where actual EPS > consensus.
+
+    Parameters
+    ----------
+    surprise_history : list[dict]
+        Ordered (oldest first) list of surprise records.  Each dict must
+        contain at least {"surprise_cat": str} where surprise_cat is one
+        of: STRONG_BEAT | BEAT | IN_LINE | MISS | STRONG_MISS.
+
+    Returns
+    -------
+    dict with keys:
+        beat_rate      : float   Fraction in [0.0, 1.0]
+        beats          : int     Number of beat quarters
+        quarters_used  : int     Number of quarters examined (≤8)
+        assessment     : str     HIGH / MODERATE / LOW
+    """
+    BEAT_CATS = {"BEAT", "STRONG_BEAT"}
+    window = surprise_history[-8:]  # last 8 quarters
+    total = len(window)
+
+    if total == 0:
+        return {"beat_rate": 0.0, "beats": 0, "quarters_used": 0, "assessment": "INSUFFICIENT_DATA"}
+
+    beats = sum(1 for q in window if q.get("surprise_cat") in BEAT_CATS)
+    beat_rate = beats / total
+
+    if beat_rate >= 0.75:
+        assessment = "HIGH"
+    elif beat_rate >= 0.50:
+        assessment = "MODERATE"
+    else:
+        assessment = "LOW"
+
+    return {
+        "beat_rate": round(beat_rate, 4),
+        "beats": beats,
+        "quarters_used": total,
+        "assessment": assessment,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Standalone utilities (callable outside FastAPI)
 # ---------------------------------------------------------------------------
 

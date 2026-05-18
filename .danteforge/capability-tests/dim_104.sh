@@ -174,5 +174,83 @@ assert "UNKNOWN" in dist, "UNKNOWN should be in distribution"
 assert dist["FRAUD"] == 1
 print(f"[OK] get_category_distribution: {dist}")
 
+# ------------------------------------------------------------------
+# Wave-9 additions: compute_controversy_severity_index,
+# detect_reputation_cascade, compute_controversy_market_impact
+# ------------------------------------------------------------------
+from sentinel.sma.controversy_monitor_v3 import (
+    compute_controversy_severity_index,
+    detect_reputation_cascade,
+    compute_controversy_market_impact,
+)
+
+# Test compute_controversy_severity_index
+# Weights: reg=40%, legal=30%, esg=20%, media=10%
+idx = compute_controversy_severity_index(80.0, 60.0, 50.0, 40.0)
+expected = 80*0.4 + 60*0.3 + 50*0.2 + 40*0.1
+assert abs(idx - expected) < 1e-4, \
+    f"Severity index should be {expected}: {idx}"
+print(f"[OK] compute_controversy_severity_index: {idx:.4f} (expected {expected:.4f})")
+
+# All zeros → 0
+zero_idx = compute_controversy_severity_index(0, 0, 0, 0)
+assert zero_idx == 0.0, f"All zeros -> 0: {zero_idx}"
+print(f"[OK] compute_controversy_severity_index (zeros): {zero_idx}")
+
+# All 100 → 100
+max_idx = compute_controversy_severity_index(100, 100, 100, 100)
+assert abs(max_idx - 100.0) < 1e-4, f"All 100 -> 100: {max_idx}"
+print(f"[OK] compute_controversy_severity_index (max): {max_idx}")
+
+# Test detect_reputation_cascade
+from datetime import datetime, timedelta, timezone
+now = datetime.now(timezone.utc)
+
+# 3 events in 30 days → cascade
+events_close = [
+    now - timedelta(days=10),
+    now - timedelta(days=20),
+    now - timedelta(days=30),
+]
+cascade_result = detect_reputation_cascade(events_close, window_days=90)
+assert cascade_result["cascade_risk"] is True, \
+    f"3 events in 30 days -> cascade risk: {cascade_result}"
+assert cascade_result["event_count"] == 3
+print(f"[OK] detect_reputation_cascade (3 in 30 days): cascade_risk={cascade_result['cascade_risk']}")
+
+# Events spread > 90 days apart → no cascade
+events_far = [
+    now - timedelta(days=200),
+    now - timedelta(days=100),
+    now - timedelta(days=5),
+]
+no_cascade = detect_reputation_cascade(events_far, window_days=90)
+assert no_cascade["cascade_risk"] is False, \
+    f"Events >90 days apart -> no cascade: {no_cascade}"
+print(f"[OK] detect_reputation_cascade (spread out): cascade_risk={no_cascade['cascade_risk']}")
+
+# < 3 events → no cascade
+few_events = detect_reputation_cascade([now - timedelta(days=1), now], window_days=90)
+assert few_events["cascade_risk"] is False, f"< 3 events -> no cascade"
+print(f"[OK] detect_reputation_cascade (<3 events): cascade_risk={few_events['cascade_risk']}")
+
+# Test compute_controversy_market_impact
+impact = compute_controversy_market_impact(tier1_count=2, tier2_count=4, days=5)
+expected_t1 = 2 * -2.0   # -4.0
+expected_t2 = 4 * -0.5   # -2.0
+expected_total = expected_t1 + expected_t2   # -6.0
+assert abs(impact["tier1_impact_pct"] - expected_t1) < 1e-9, \
+    f"Tier1 impact: {impact['tier1_impact_pct']} vs {expected_t1}"
+assert abs(impact["tier2_impact_pct"] - expected_t2) < 1e-9, \
+    f"Tier2 impact: {impact['tier2_impact_pct']} vs {expected_t2}"
+assert abs(impact["estimated_impact_pct"] - expected_total) < 1e-9, \
+    f"Total impact: {impact['estimated_impact_pct']} vs {expected_total}"
+print(f"[OK] compute_controversy_market_impact: 2xTier1 + 4xTier2 = {impact['estimated_impact_pct']}%")
+
+# No controversies → 0 impact
+zero_impact = compute_controversy_market_impact(0, 0)
+assert zero_impact["estimated_impact_pct"] == 0.0, f"No controversies -> 0%: {zero_impact}"
+print(f"[OK] compute_controversy_market_impact (zero): {zero_impact['estimated_impact_pct']}%")
+
 print("\n[PASS] dim_104: Controversy monitor")
 PYEOF

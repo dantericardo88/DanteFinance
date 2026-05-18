@@ -582,6 +582,153 @@ def _fetch_ticker_data(ticker: str, max_expirations: int) -> dict:
 
 # ── Entry Points ──────────────────────────────────────────────────────────────
 
+# ── New analytics functions ───────────────────────────────────────────────────
+
+def compute_unusual_options_activity(
+    contracts: list[OptionContract],
+    average_vol_oi_ratio: Optional[float] = None,
+    threshold_multiple: float = 5.0,
+) -> list[dict]:
+    """Unusual Options Activity (UOA) detection.
+
+    UOA score = volume / open_interest for each contract.
+    A contract is flagged unusual when its vol/OI ratio exceeds
+    ``threshold_multiple × average_vol_oi_ratio`` across the chain.
+
+    Args:
+        contracts: List of OptionContract objects.
+        average_vol_oi_ratio: Pre-computed chain average vol/OI.  If None,
+                               computed from ``contracts``.
+        threshold_multiple: Flag when vol/OI > this multiple of the average
+                            (default 5×).
+
+    Returns:
+        List of dicts [{contract, uoa_score, is_unusual, multiple}] sorted
+        by uoa_score descending.
+    """
+    if not contracts:
+        return []
+
+    # Compute per-contract vol/OI
+    ratios = [c.volume / c.open_interest if c.open_interest > 0 else 0.0 for c in contracts]
+
+    if average_vol_oi_ratio is None:
+        valid_ratios = [r for r in ratios if r > 0]
+        average_vol_oi_ratio = float(np.mean(valid_ratios)) if valid_ratios else 1.0
+
+    threshold = average_vol_oi_ratio * threshold_multiple
+    results = []
+    for c, ratio in zip(contracts, ratios):
+        multiple = ratio / average_vol_oi_ratio if average_vol_oi_ratio > 0 else 0.0
+        results.append({
+            "contract": c,
+            "uoa_score": round(ratio, 4),
+            "is_unusual": ratio > threshold,
+            "multiple_of_avg": round(multiple, 2),
+        })
+
+    results.sort(key=lambda x: x["uoa_score"], reverse=True)
+    return results
+
+
+def compute_put_call_skew(
+    contracts: list[OptionContract],
+    target_delta: float = 0.25,
+) -> Optional[float]:
+    """Put/Call IV Skew at the 25-delta strikes.
+
+    skew = IV_25_put - IV_25_call
+
+    Positive skew → fear (puts more expensive than calls).
+    Negative skew → greed (calls more expensive, upside demand).
+
+    Args:
+        contracts: Full option chain (calls and puts).
+        target_delta: Target absolute delta for strike selection (default 0.25).
+
+    Returns:
+        Skew value in IV points, or None if insufficient data.
+    """
+    calls = [c for c in contracts if c.option_type == "call" and c.delta is not None]
+    puts = [c for c in contracts if c.option_type == "put" and c.delta is not None]
+
+    if not calls or not puts:
+        return None
+
+    # Find the call closest to +target_delta
+    call_25 = min(calls, key=lambda c: abs(abs(c.delta or 0) - target_delta))
+    # Find the put closest to -target_delta
+    put_25 = min(puts, key=lambda c: abs(abs(c.delta or 0) - target_delta))
+
+    skew = put_25.implied_volatility - call_25.implied_volatility
+    return round(float(skew), 4)
+
+
+def detect_block_sweep(
+    contracts: list[OptionContract],
+    min_legs: int = 3,
+    time_window_seconds: int = 60,
+) -> list[dict]:
+    """Detect coordinated multi-leg block sweeps.
+
+    A block sweep is defined as ≥ ``min_legs`` contracts sharing the same
+    expiry and strike executed at or near the ask price within a short time
+    window, indicating coordinated institutional buying.
+
+    Since OptionContract objects do not carry a timestamp, this function
+    groups contracts by (expiry, strike, option_type) and returns groups
+    where all contracts have:
+      - bid == None or last_price >= bid  (executed at/near ask)
+      - volume >= open_interest * 0.10   (meaningful size)
+
+    Args:
+        contracts: List of OptionContract objects.
+        min_legs: Minimum number of contracts to qualify as a sweep (default 3).
+        time_window_seconds: Logical grouping window (informational; noted in output).
+
+    Returns:
+        List of sweep dicts:
+          [{expiration, strike, option_type, n_legs, total_volume,
+            total_dollar_premium, at_ask_flag, coordinated_buying}]
+    """
+    from collections import defaultdict
+
+    groups: dict = defaultdict(list)
+    for c in contracts:
+        key = (c.expiration, c.strike, c.option_type)
+        groups[key].append(c)
+
+    sweeps = []
+    for (expiration, strike, option_type), group in groups.items():
+        if len(group) < min_legs:
+            continue
+
+        # Check at-ask execution (last_price >= bid when bid is known)
+        at_ask_count = sum(
+            1 for c in group
+            if c.bid is None or c.last_price >= (c.bid or 0)
+        )
+        at_ask_flag = at_ask_count == len(group)
+
+        total_vol = sum(c.volume for c in group)
+        total_prem = sum(c.dollar_premium for c in group)
+
+        sweeps.append({
+            "expiration": expiration,
+            "strike": strike,
+            "option_type": option_type,
+            "n_legs": len(group),
+            "total_volume": total_vol,
+            "total_dollar_premium": round(total_prem, 2),
+            "at_ask_flag": at_ask_flag,
+            "coordinated_buying": at_ask_flag and option_type == "call",
+            "time_window_seconds": time_window_seconds,
+        })
+
+    sweeps.sort(key=lambda s: s["total_dollar_premium"], reverse=True)
+    return sweeps
+
+
 async def get_options_flow(
     ticker: str,
     min_unusual_score: float = 3.0,

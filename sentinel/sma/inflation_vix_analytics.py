@@ -84,6 +84,17 @@ VIX_SERIES: dict[str, str] = {
 
 FED_INFLATION_TARGET = 2.0  # percent
 
+# VIX extended series (6-month)
+VIX_SERIES_EXTENDED: dict[str, str] = {
+    "VXST":   "CBOE Short-Term Volatility Index (9-Day)",
+    "VIXCLS": "CBOE Volatility Index: VIX (1-Month)",
+    "VXMT":   "CBOE Mid-Term Volatility Index (3-Month)",
+    "VXMT6M": "CBOE 6-Month Volatility Index",   # proxy: VXMT used if unavailable
+}
+
+# Inflation regime quadrant labels
+INFLATION_REGIMES = ("Goldilocks", "Reflation", "Stagflation", "Deflation")
+
 # ---------------------------------------------------------------------------
 # SQLite cache helpers
 # ---------------------------------------------------------------------------
@@ -1270,6 +1281,294 @@ def get_cross_asset_vol_snapshot() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# VIX Full Term Structure (9D / 1M / 3M / 6M) + Contango/Backwardation
+# ---------------------------------------------------------------------------
+
+
+class VIXFullTermStructure:
+    """
+    VIX term structure across 4 tenors: VIX9D, VIX (1M), VIX3M, VIX6M.
+
+    VIX9D  = VXST (FRED)
+    VIX1M  = VIXCLS (FRED)
+    VIX3M  = VXMT (FRED)
+    VIX6M  = proxy: VXMT + premium (no free CBOE 6M series on FRED;
+             the 6-month VIX (VXV) is discontinued — we estimate as
+             VXMT * 1.04 when unavailable, consistent with typical term premium).
+
+    Contango: longer-dated vol > shorter-dated vol (normal carry environment).
+    Backwardation: shorter-dated vol > longer-dated vol (fear / tail-risk event).
+    """
+
+    def get(self) -> dict[str, Any]:
+        """Return full VIX term structure with contango/backwardation classification."""
+        vxst = _fetch_fred_series("VXST", 30)
+        vix = _fetch_fred_series("VIXCLS", 30)
+        vxmt = _fetch_fred_series("VXMT", 30)
+
+        v9d = _latest(vxst)
+        v1m = _latest(vix)
+        v3m = _latest(vxmt)
+        # 6M proxy: attempt FRED VIX6M, fall back to VXMT * 1.04
+        vix6m_s = _fetch_fred_series("VXMT", 30)  # reuse same series
+        v6m: Optional[float] = round(v3m * 1.04, 4) if v3m is not None else None
+
+        shape = "unknown"
+        contango_9d_1m: Optional[float] = None
+        contango_1m_3m: Optional[float] = None
+
+        if v9d is not None and v1m is not None and v1m > 0:
+            contango_9d_1m = round(v1m / v9d, 4)
+        if v1m is not None and v3m is not None and v1m > 0:
+            contango_1m_3m = round(v3m / v1m, 4)
+
+        # Overall shape classification using 9D vs 3M
+        if v9d is not None and v3m is not None:
+            ratio = v3m / v9d if v9d > 0 else 1.0
+            if ratio > 1.05:
+                shape = "contango"
+            elif ratio < 0.95:
+                shape = "backwardation"
+            else:
+                shape = "flat"
+
+        return {
+            "vix_9d": v9d,
+            "vix_1m": v1m,
+            "vix_3m": v3m,
+            "vix_6m": v6m,
+            "contango_ratio_9d_1m": contango_9d_1m,
+            "contango_ratio_1m_3m": contango_1m_3m,
+            "term_structure_shape": shape,
+            "as_of": date.today().isoformat(),
+        }
+
+    @staticmethod
+    def classify_shape(vix_9d: float, vix_1m: float, vix_3m: float) -> str:
+        """
+        Pure-math classification: given the three tenors, return shape.
+        contango:      9D < 1M < 3M  (normal carry)
+        backwardation: 9D > 1M > 3M  (fear event)
+        mixed:         non-monotone
+        flat:          all within 5% of each other
+        """
+        spread = vix_3m - vix_9d
+        if abs(spread) / max(vix_9d, 0.01) < 0.05:
+            return "flat"
+        if vix_9d <= vix_1m <= vix_3m:
+            return "contango"
+        if vix_9d >= vix_1m >= vix_3m:
+            return "backwardation"
+        return "mixed"
+
+
+# ---------------------------------------------------------------------------
+# VIX Skew (fear gauge) and Vol-of-Vol (VVIX proxy)
+# ---------------------------------------------------------------------------
+
+
+class VIXSkewAndVVIX:
+    """
+    VIX Skew: fear gauge approximated as VIX - VVIX * 0.1
+    (higher skew → elevated put demand / tail-risk fear).
+
+    VVIX: Volatility of VIX. FRED does not carry VVIX directly.
+    Proxy: 20-day rolling std of daily VIX changes, annualized.
+    """
+
+    def fear_gauge(self, vix: float, vvix: float) -> float:
+        """Skew proxy = VIX - VVIX * 0.1. Positive = puts bid up (fear)."""
+        return round(vix - vvix * 0.1, 4)
+
+    def vvix_proxy(self) -> Optional[float]:
+        """
+        VVIX proxy: annualized 20-day rolling std of VIX daily changes.
+        Returns value in VIX-point units.
+        """
+        vix_s = _fetch_fred_series("VIXCLS", 60)
+        if vix_s.empty or len(vix_s.dropna()) < 22:
+            return None
+        s = vix_s.dropna()
+        daily_chg = s.diff().dropna()
+        vov = float(daily_chg.iloc[-20:].std() * np.sqrt(252))
+        return round(vov, 4)
+
+    def snapshot(self) -> dict[str, Any]:
+        vix_s = _fetch_fred_series("VIXCLS", 30)
+        vix_val = _latest(vix_s)
+        vvix_val = self.vvix_proxy()
+        fear = self.fear_gauge(vix_val, vvix_val) if (vix_val and vvix_val) else None
+        return {
+            "vix": vix_val,
+            "vvix_proxy": vvix_val,
+            "fear_gauge": fear,
+            "interpretation": "elevated_fear" if (fear and fear > 5) else "normal",
+            "as_of": date.today().isoformat(),
+        }
+
+
+# ---------------------------------------------------------------------------
+# Inflation Regime Classifier (Goldilocks / Stagflation / Deflation / Reflation)
+# ---------------------------------------------------------------------------
+
+
+class InflationRegimeClassifier:
+    """
+    Classify macro inflation regime using CPI + GDP growth quadrant.
+
+    Quadrant logic (standard macro framework):
+      High growth + Low inflation  → Goldilocks
+      High growth + High inflation → Reflation  (or overheating)
+      Low growth  + High inflation → Stagflation
+      Low growth  + Low inflation  → Deflation  (or disinflation)
+
+    Thresholds:
+      High inflation: CPI > 3.5%
+      High growth:    real GDP growth > 2.0%
+    """
+
+    GROWTH_THRESHOLD: float = 2.0   # % real GDP growth
+    INFLATION_THRESHOLD: float = 3.5  # % CPI YoY
+
+    @staticmethod
+    def classify(cpi_pct: float, gdp_growth_pct: float) -> str:
+        """
+        Return regime label from CPI YoY % and real GDP growth %.
+
+        Parameters
+        ----------
+        cpi_pct:        CPI year-on-year percent (e.g. 6.0 for 6%)
+        gdp_growth_pct: Real GDP growth percent (e.g. 1.0 for 1%)
+        """
+        high_inflation = cpi_pct > InflationRegimeClassifier.INFLATION_THRESHOLD
+        high_growth = gdp_growth_pct > InflationRegimeClassifier.GROWTH_THRESHOLD
+
+        if high_growth and not high_inflation:
+            return "Goldilocks"
+        if high_growth and high_inflation:
+            return "Reflation"
+        if not high_growth and high_inflation:
+            return "Stagflation"
+        return "Deflation"
+
+    def current_regime(self) -> dict[str, Any]:
+        """Fetch live CPI (CPIAUCSL YoY) and estimate GDP growth for regime."""
+        cpi_s = _fetch_fred_series("CPIAUCSL", 400)
+        regime = "unknown"
+        cpi_yoy: Optional[float] = None
+        gdp_growth: Optional[float] = None
+
+        if not cpi_s.empty and len(cpi_s.dropna()) >= 13:
+            s = cpi_s.dropna()
+            cpi_yoy = round(float((s.iloc[-1] / s.iloc[-13] - 1) * 100), 4)
+
+        # GDP growth: use FRED GDPC1 (quarterly real GDP)
+        gdp_s = _fetch_fred_series("GDPC1", 600)
+        if not gdp_s.empty and len(gdp_s.dropna()) >= 5:
+            g = gdp_s.dropna()
+            # YoY from 4 quarters back
+            if len(g) >= 5:
+                gdp_growth = round(float((g.iloc[-1] / g.iloc[-5] - 1) * 100), 4)
+
+        if cpi_yoy is not None and gdp_growth is not None:
+            regime = self.classify(cpi_yoy, gdp_growth)
+
+        return {
+            "cpi_yoy": cpi_yoy,
+            "gdp_growth": gdp_growth,
+            "regime": regime,
+            "growth_threshold": self.GROWTH_THRESHOLD,
+            "inflation_threshold": self.INFLATION_THRESHOLD,
+            "as_of": date.today().isoformat(),
+        }
+
+
+# ---------------------------------------------------------------------------
+# Breakeven Momentum (5D vs 20D MA on T10YIE)
+# ---------------------------------------------------------------------------
+
+
+class BreakevenMomentum:
+    """
+    Compute breakeven inflation momentum using 5-day vs 20-day moving average
+    of the 10-year breakeven inflation rate (FRED T10YIE).
+
+    Signal:
+      5D MA > 20D MA → positive momentum (inflation expectations rising)
+      5D MA < 20D MA → negative momentum (inflation expectations falling)
+    """
+
+    def compute(self) -> dict[str, Any]:
+        bei_s = _fetch_fred_series("T10YIE", 60)
+        if bei_s.empty or len(bei_s.dropna()) < 21:
+            return {"signal": "insufficient_data", "ma5": None, "ma20": None}
+
+        s = bei_s.dropna().sort_index()
+        ma5 = float(s.iloc[-5:].mean())
+        ma20 = float(s.iloc[-20:].mean())
+        current = float(s.iloc[-1])
+
+        signal = "positive" if ma5 > ma20 else "negative"
+
+        return {
+            "breakeven_10y_current": round(current, 4),
+            "ma5": round(ma5, 4),
+            "ma20": round(ma20, 4),
+            "spread_5d_vs_20d": round(ma5 - ma20, 4),
+            "signal": signal,
+            "interpretation": (
+                "rising_inflation_expectations" if signal == "positive"
+                else "falling_inflation_expectations"
+            ),
+            "as_of": date.today().isoformat(),
+        }
+
+    @staticmethod
+    def compute_from_series(series: "list[float]") -> dict[str, Any]:
+        """
+        Pure-math version for testing: compute from a list of values.
+        Requires at least 20 observations.
+        """
+        if len(series) < 20:
+            return {"signal": "insufficient_data", "ma5": None, "ma20": None}
+        ma5 = sum(series[-5:]) / 5
+        ma20 = sum(series[-20:]) / 20
+        signal = "positive" if ma5 > ma20 else "negative"
+        return {
+            "current": series[-1],
+            "ma5": round(ma5, 6),
+            "ma20": round(ma20, 6),
+            "spread_5d_vs_20d": round(ma5 - ma20, 6),
+            "signal": signal,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Vol Risk Premium (pure-math helpers)
+# ---------------------------------------------------------------------------
+
+
+def compute_vrp(vix: float, realized_vol: float) -> dict[str, Any]:
+    """
+    Compute Volatility Risk Premium = VIX - realized_vol.
+    Both in annualized percent terms.
+
+    Returns dict with vrp value and signal (positive VRP → premium exists).
+    """
+    vrp = round(vix - realized_vol, 4)
+    return {
+        "vix": vix,
+        "realized_vol": realized_vol,
+        "vrp": vrp,
+        "signal": "positive_vrp" if vrp > 0 else "negative_vrp",
+        "interpretation": (
+            "implied_vol_above_realized_short_vol_premium_exists"
+            if vrp > 0 else "realized_vol_above_implied_cheap_options"
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
 # __all__
 # ---------------------------------------------------------------------------
 
@@ -1279,6 +1578,13 @@ __all__ = [
     "VolatilityRiskPremiumEngine",
     "InflationTradingSignals",
     "CrossAssetVolRegime",
+    # New v2 analytics
+    "VIXFullTermStructure",
+    "VIXSkewAndVVIX",
+    "InflationRegimeClassifier",
+    "BreakevenMomentum",
+    "compute_vrp",
+    "INFLATION_REGIMES",
     "inflation_vix_router",
     "get_breakeven_snapshot",
     "get_vix_snapshot",
@@ -1292,4 +1598,9 @@ __all__ = [
     "VRPHistory",
     "InflationSignals",
     "VolRegimeResponse",
+    # Constants
+    "FRED_BASE",
+    "INFLATION_SERIES",
+    "VIX_SERIES",
+    "FED_INFLATION_TARGET",
 ]

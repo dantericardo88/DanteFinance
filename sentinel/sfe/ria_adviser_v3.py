@@ -736,6 +736,168 @@ class ADVParser:
 
         return round(min(100.0, score), 2)
 
+    # ------------------------------------------------------------------
+    # Compliance & fee analytics (dim_034 push 8→9)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def compute_adviser_drift_risk(
+        years_since_exam: float,
+        disclosures: int,
+        aum_growth_rate_deviation: float,
+    ) -> float:
+        """
+        Compute adviser drift risk score.
+
+        Combines three independent risk signals into a single 0–∞ composite:
+
+          drift_risk = years_since_exam × 0.1
+                     + disclosures × 0.3
+                     + aum_growth_rate_deviation × 0.2
+
+        Parameters
+        ----------
+        years_since_exam : years since the adviser's last regulatory exam.
+                           Stale exams increase oversight risk.
+        disclosures      : count of formal disclosures / disciplinary events on
+                           the adviser's ADV Part 2 (Item 9).
+        aum_growth_rate_deviation : absolute deviation of the adviser's AUM
+                           growth rate from the peer-median (e.g. 0.30 = 30pp
+                           above median, −0.10 = 10pp below).  Extreme outliers
+                           (either direction) can indicate mis-reporting risk.
+
+        Returns
+        -------
+        float : drift risk score.  Typical range 0.0–5.0.
+                > 1.0 warrants enhanced monitoring;
+                > 2.5 is high-risk territory.
+        """
+        drift_risk = (
+            float(years_since_exam) * 0.1
+            + float(disclosures) * 0.3
+            + float(aum_growth_rate_deviation) * 0.2
+        )
+        return round(drift_risk, 6)
+
+    @staticmethod
+    def screen_for_churning(
+        annual_transactions: float,
+        avg_account_value: float,
+    ) -> Dict[str, Any]:
+        """
+        Screen adviser accounts for potential churning (excessive trading).
+
+        Turnover Ratio = annual_transactions / avg_account_value
+
+        FINRA Rule 2111 / suitability doctrine: a ratio > 6× per year is the
+        widely cited benchmark for a churning signal (SEC Litigation Release
+        No. 18655).  Some courts use 4× as an elevated-concern threshold.
+
+        Parameters
+        ----------
+        annual_transactions : total gross dollar value of transactions in the
+                              account over a 12-month period (USD).
+        avg_account_value   : average account value over the same 12 months
+                              (USD).  Must be > 0.
+
+        Returns
+        -------
+        dict with:
+          turnover_ratio   : float — transactions / account value
+          churning_signal  : bool  — True if ratio > 6
+          severity         : str   — "Normal" / "Elevated" / "High" / "Churning"
+        """
+        if avg_account_value <= 0:
+            return {
+                "turnover_ratio": None,
+                "churning_signal": False,
+                "severity": "Unknown",
+                "error": "avg_account_value must be > 0",
+            }
+
+        turnover_ratio = float(annual_transactions) / float(avg_account_value)
+
+        if turnover_ratio > 6.0:
+            severity = "Churning"
+            churning_signal = True
+        elif turnover_ratio > 4.0:
+            severity = "High"
+            churning_signal = True
+        elif turnover_ratio > 2.0:
+            severity = "Elevated"
+            churning_signal = False
+        else:
+            severity = "Normal"
+            churning_signal = False
+
+        return {
+            "turnover_ratio": round(turnover_ratio, 4),
+            "churning_signal": churning_signal,
+            "severity": severity,
+            "threshold_churning": 6.0,
+            "threshold_high": 4.0,
+            "annual_transactions": annual_transactions,
+            "avg_account_value": avg_account_value,
+        }
+
+    @staticmethod
+    def compute_fee_competitiveness(
+        advisory_fee_pct: float,
+        median_fee_pct: float = 0.85,
+    ) -> Dict[str, Any]:
+        """
+        Assess fee competitiveness vs. the industry median AUM advisory fee.
+
+        The industry median all-in advisory fee (AUM-based) for registered
+        investment advisers is approximately 0.85% per year as of 2024
+        (Kitces Research 2023; RIA in a Box 2024 Fee Study).
+
+        Parameters
+        ----------
+        advisory_fee_pct : the adviser's annual advisory fee as a percentage
+                           of AUM (e.g. 1.0 for 1.00%).
+        median_fee_pct   : industry median fee benchmark (default 0.85%).
+
+        Returns
+        -------
+        dict with:
+          advisory_fee_pct     : input fee
+          median_fee_pct       : benchmark
+          fee_delta_pp         : advisory_fee_pct − median_fee_pct (pp)
+          fee_delta_pct        : relative premium/discount vs median (%)
+          competitiveness      : "Below Median" / "At Median" / "Above Median"
+          quartile_estimate    : rough quartile placement
+        """
+        if advisory_fee_pct < 0:
+            raise ValueError("advisory_fee_pct must be >= 0")
+        if median_fee_pct <= 0:
+            raise ValueError("median_fee_pct must be > 0")
+
+        delta_pp = advisory_fee_pct - median_fee_pct
+        delta_pct = delta_pp / median_fee_pct * 100.0
+
+        if advisory_fee_pct < median_fee_pct * 0.85:
+            competitiveness = "Below Median"
+            quartile_estimate = "Q1 (lowest fees)"
+        elif advisory_fee_pct <= median_fee_pct * 1.15:
+            competitiveness = "At Median"
+            quartile_estimate = "Q2–Q3 (market rate)"
+        elif advisory_fee_pct <= median_fee_pct * 1.50:
+            competitiveness = "Above Median"
+            quartile_estimate = "Q3 (moderately expensive)"
+        else:
+            competitiveness = "Above Median"
+            quartile_estimate = "Q4 (highest fees)"
+
+        return {
+            "advisory_fee_pct": round(advisory_fee_pct, 4),
+            "median_fee_pct": round(median_fee_pct, 4),
+            "fee_delta_pp": round(delta_pp, 4),
+            "fee_delta_pct": round(delta_pct, 4),
+            "competitiveness": competitiveness,
+            "quartile_estimate": quartile_estimate,
+        }
+
     def _parse_disciplinary_section(self, raw: dict) -> tuple[int, bool]:
         """Return (count, has_criminal) from Section 11 data."""
         section = raw.get("section11", raw.get("disciplinary", raw.get("criminalHistory", {})))

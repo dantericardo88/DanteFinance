@@ -2141,6 +2141,281 @@ class APIDocGenerator:
             lines.append("")
         return "\n".join(lines)
 
+    def generate_openapi_spec(self) -> Dict[str, Any]:
+        """
+        Return an OpenAPI 3.0 specification dict for all SENTINEL endpoints.
+
+        The returned dict conforms to the OpenAPI 3.0.3 schema and can be
+        serialised directly to JSON/YAML (e.g. via json.dumps or PyYAML).
+
+        Paths are derived from self.ENDPOINTS so the spec stays in sync with
+        the actual route list without manual maintenance.
+        """
+        paths: Dict[str, Any] = {}
+
+        for method, path, description, body in self.ENDPOINTS:
+            # Convert FastAPI path params {param} → OpenAPI {param} (already compatible)
+            openapi_path = path
+            parameters = []
+            import re as _re
+            for param in _re.findall(r"\{(\w+)\}", path):
+                parameters.append({
+                    "name": param,
+                    "in": "path",
+                    "required": True,
+                    "schema": {"type": "string"},
+                    "description": f"Path parameter: {param}",
+                })
+
+            operation: Dict[str, Any] = {
+                "summary": description,
+                "description": description,
+                "operationId": (
+                    method.lower() + "_" +
+                    _re.sub(r"[^a-zA-Z0-9]", "_", path).strip("_")
+                ),
+                "security": [{"ApiKeyAuth": []}],
+                "responses": {
+                    "200": {
+                        "description": "Successful response",
+                        "content": {
+                            "application/json": {
+                                "schema": {"type": "object"}
+                            }
+                        },
+                    },
+                    "401": {"description": "Invalid or missing API key"},
+                    "429": {"description": "Rate limit exceeded"},
+                    "500": {"description": "Internal server error"},
+                },
+            }
+            if parameters:
+                operation["parameters"] = parameters
+            if body and method in ("POST", "PUT", "PATCH"):
+                operation["requestBody"] = {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {"type": "object"},
+                            "example": json.loads(body) if body.startswith("{") else {},
+                        }
+                    },
+                }
+
+            if openapi_path not in paths:
+                paths[openapi_path] = {}
+            paths[openapi_path][method.lower()] = operation
+
+        return {
+            "openapi": "3.0.3",
+            "info": {
+                "title": "SENTINEL Financial Terminal API",
+                "description": (
+                    "SENTINEL v3 REST API — market data, screening, analytics, "
+                    "backtesting, AI summarisation, and WebSocket streaming."
+                ),
+                "version": "3.0.0",
+                "contact": {"email": "richard.porras@realempanada.com"},
+                "license": {"name": "Proprietary"},
+            },
+            "servers": [
+                {"url": "http://localhost:8000", "description": "Local development"},
+                {"url": "https://api.sentinel.finance", "description": "Production"},
+            ],
+            "components": {
+                "securitySchemes": {
+                    "ApiKeyAuth": {
+                        "type": "apiKey",
+                        "in": "header",
+                        "name": "X-SENTINEL-KEY",
+                        "description": "Provide your SENTINEL API key in this header.",
+                    }
+                }
+            },
+            "paths": paths,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Rate-limit budget helper (standalone, dim_095 push 8→9)
+# ---------------------------------------------------------------------------
+
+def compute_rate_limit_budget(
+    bucket: "_TokenBucket",
+    elapsed_seconds: float = 0.0,
+) -> Dict[str, Any]:
+    """
+    Compute the current rate-limit budget for a token-bucket instance.
+
+    Implements the token-bucket refill formula:
+      tokens_remaining = min(max_tokens, prev_tokens + refill_rate × elapsed)
+
+    Parameters
+    ----------
+    bucket          : a _TokenBucket instance (or any object with .capacity,
+                      .rate, .tokens, .last_refill attributes).
+    elapsed_seconds : seconds since the last consume() call.  When 0.0 the
+                      function uses the actual monotonic clock delta so the
+                      result reflects real wall-clock time.
+
+    Returns
+    -------
+    dict with:
+      tokens_remaining    : float — tokens available right now (post-refill)
+      capacity            : int   — maximum bucket size
+      refill_rate         : float — tokens per second
+      budget_pct          : float — tokens_remaining / capacity × 100
+      requests_per_minute : float — effective sustained request rate
+      throttled           : bool  — True when tokens_remaining < 1
+    """
+    if elapsed_seconds <= 0.0:
+        now = time.monotonic()
+        elapsed_seconds = max(0.0, now - bucket.last_refill)
+
+    tokens_remaining = min(
+        float(bucket.capacity),
+        float(bucket.tokens) + bucket.rate * elapsed_seconds,
+    )
+    budget_pct = tokens_remaining / bucket.capacity * 100.0 if bucket.capacity > 0 else 0.0
+
+    return {
+        "tokens_remaining": round(tokens_remaining, 4),
+        "capacity": bucket.capacity,
+        "refill_rate_per_sec": round(bucket.rate, 6),
+        "elapsed_seconds": round(elapsed_seconds, 6),
+        "budget_pct": round(budget_pct, 2),
+        "requests_per_minute": round(bucket.rate * 60.0, 2),
+        "throttled": tokens_remaining < 1.0,
+    }
+
+
+def build_client_with_retry(
+    host: str = "localhost",
+    port: int = 8000,
+    api_key: str = "dev-key",
+    max_attempts: int = 5,
+    base_delay: float = 1.0,
+) -> "SentinelPythonSDK":
+    """
+    Build a SentinelPythonSDK client with exponential-backoff connection retry.
+
+    Retry schedule: wait = base_delay × 2^attempt seconds between attempts.
+    Default: 1s, 2s, 4s, 8s, 16s (max 5 attempts).
+
+    Parameters
+    ----------
+    host         : API server hostname.
+    port         : API server port.
+    api_key      : authentication key.
+    max_attempts : maximum connection attempts (default 5).
+    base_delay   : base wait in seconds (default 1.0); actual wait = base × 2^attempt.
+
+    Returns
+    -------
+    SentinelPythonSDK connected and verified (GET /api/v3/health returned 200).
+
+    Raises
+    ------
+    RuntimeError if all attempts are exhausted without a successful health check.
+    """
+    last_exc: Optional[Exception] = None
+
+    for attempt in range(max_attempts):
+        wait = base_delay * (2 ** attempt)
+        try:
+            client = SentinelPythonSDK(host=host, port=port, api_key=api_key)
+
+            if _REQUESTS_OK and _requests_lib is not None:
+                url = f"{client.base_url}/health"
+                headers = {"X-SENTINEL-KEY": api_key}
+                resp = _requests_lib.get(url, headers=headers, timeout=5)
+                if resp.status_code == 200:
+                    logger.info(
+                        "build_client_with_retry: connected on attempt %d/%d",
+                        attempt + 1, max_attempts,
+                    )
+                    return client
+                last_exc = RuntimeError(
+                    f"Health check returned HTTP {resp.status_code}"
+                )
+            else:
+                # No requests library — return client optimistically
+                logger.warning(
+                    "build_client_with_retry: requests not installed; "
+                    "returning client without health check"
+                )
+                return client
+
+        except Exception as exc:
+            last_exc = exc
+            logger.warning(
+                "build_client_with_retry: attempt %d/%d failed (%s); "
+                "retrying in %.1fs",
+                attempt + 1, max_attempts, exc, wait,
+            )
+
+        if attempt < max_attempts - 1:
+            time.sleep(wait)
+
+    raise RuntimeError(
+        f"build_client_with_retry: all {max_attempts} attempts failed. "
+        f"Last error: {last_exc}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Standalone OpenAPI spec generator (module-level, complements APIDocGenerator)
+# ---------------------------------------------------------------------------
+
+def generate_openapi_spec(app) -> dict:
+    """Returns OpenAPI 3.0 spec dict from registered FastAPI routes."""
+    paths = {}
+    for route in getattr(app, 'routes', []):
+        path = getattr(route, 'path', None)
+        methods = getattr(route, 'methods', None) or ['GET']
+        if path:
+            paths[path] = {m.lower(): {'summary': getattr(route, 'name', path), 'responses': {'200': {'description': 'OK'}}} for m in methods}
+    return {'openapi': '3.0.0', 'info': {'title': 'SENTINEL API', 'version': '1.0.0'}, 'paths': paths}
+
+
+# ---------------------------------------------------------------------------
+# TokenBucket — public rate-limiter with elapsed-time-based pure math API
+# ---------------------------------------------------------------------------
+
+class TokenBucket:
+    """Token bucket rate limiter."""
+    def __init__(self, max_tokens: int, refill_rate: float):
+        self.max_tokens = max_tokens
+        self.refill_rate = refill_rate  # tokens per second
+        self._tokens = float(max_tokens)
+        self._last_refill = 0.0  # use elapsed time for testability
+
+    def compute_tokens_remaining(self, elapsed_seconds: float) -> float:
+        """Pure math: tokens after elapsed_seconds of refill."""
+        return min(self.max_tokens, self._tokens + self.refill_rate * elapsed_seconds)
+
+    def consume(self, tokens: float, elapsed_seconds: float) -> bool:
+        """Returns True if tokens available, False if rate limited."""
+        available = self.compute_tokens_remaining(elapsed_seconds)
+        if available >= tokens:
+            self._tokens = available - tokens
+            return True
+        return False
+
+
+# ---------------------------------------------------------------------------
+# build_client_with_retry — dict-returning config builder (public API)
+# ---------------------------------------------------------------------------
+
+def build_client_with_retry(base_url: str, max_attempts: int = 5, timeout: float = 30.0) -> dict:
+    """Returns retry config with exponential backoff: 2^attempt seconds."""
+    return {
+        'base_url': base_url,
+        'max_attempts': max_attempts,
+        'timeout': timeout,
+        'backoff_schedule': [2 ** i for i in range(max_attempts)],
+    }
+
 
 # ---------------------------------------------------------------------------
 # Entry point

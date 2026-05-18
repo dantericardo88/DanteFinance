@@ -1234,6 +1234,203 @@ class LendingProtocolAnalyzer:
 
 
 # ---------------------------------------------------------------------------
+# ImpermanentLossCalculator
+# ---------------------------------------------------------------------------
+
+class ImpermanentLossCalculator:
+    """
+    Impermanent loss (IL) math for AMM liquidity providers.
+
+    IL Formula (constant-product AMM):
+        IL = 2*sqrt(price_ratio) / (1 + price_ratio) - 1
+
+    where price_ratio = P_t / P_0 (current price / entry price).
+
+    IL is always <= 0 (it represents a loss relative to holding).
+    IL = 0 when price_ratio = 1 (no price change).
+    IL → -1 as price_ratio → ∞ or 0 (complete divergence).
+    """
+
+    @staticmethod
+    def compute_il(price_ratio: float) -> float:
+        """
+        Compute impermanent loss as a decimal (e.g. -0.0572 = -5.72% loss).
+
+        Args:
+            price_ratio: P_t / P_0, the ratio of current to entry price.
+                         Must be > 0.
+
+        Returns:
+            IL as a decimal fraction (<= 0).
+        """
+        if price_ratio <= 0:
+            raise ValueError(f"price_ratio must be > 0, got {price_ratio}")
+        sqrt_r = math.sqrt(price_ratio)
+        il = (2 * sqrt_r / (1 + price_ratio)) - 1
+        return il  # always <= 0
+
+    @staticmethod
+    def compute_il_dollar(initial_value: float, price_ratio: float) -> float:
+        """
+        IL in dollar terms.
+
+        Args:
+            initial_value: Total initial liquidity value (USD).
+            price_ratio:   P_t / P_0.
+
+        Returns:
+            Dollar loss from IL (negative number).
+        """
+        il_pct = ImpermanentLossCalculator.compute_il(price_ratio)
+        return initial_value * il_pct
+
+    @staticmethod
+    def compute_lp_pnl(
+        initial_value: float,
+        price_ratio: float,
+        fees_earned: float,
+        opportunity_cost: float = 0.0,
+    ) -> float:
+        """
+        Total LP P&L = IL_dollar + fees_earned - opportunity_cost.
+
+        A positive result means providing liquidity was profitable over holding.
+
+        Args:
+            initial_value:     Initial LP position value (USD).
+            price_ratio:       P_t / P_0.
+            fees_earned:       Total fees collected (USD).
+            opportunity_cost:  Additional cost (e.g., gas, staking rewards foregone).
+
+        Returns:
+            Net P&L in USD.
+        """
+        il_dollar = ImpermanentLossCalculator.compute_il_dollar(initial_value, price_ratio)
+        return il_dollar + fees_earned - opportunity_cost
+
+    @staticmethod
+    def compute_fee_apy_breakeven(
+        price_ratio: float,
+        holding_period_years: float,
+    ) -> float:
+        """
+        Minimum fee APY required to break even with IL.
+
+        breakeven_fee_apy = -IL_pct / holding_period_years
+
+        Args:
+            price_ratio:          P_t / P_0.
+            holding_period_years: How long the position was held.
+
+        Returns:
+            Required fee APY as a decimal (e.g., 0.10 = 10% APY needed).
+        """
+        if holding_period_years <= 0:
+            raise ValueError("holding_period_years must be > 0")
+        il = ImpermanentLossCalculator.compute_il(price_ratio)
+        # IL is <= 0, so breakeven is >= 0
+        return -il / holding_period_years
+
+    @staticmethod
+    def simulate_liquidation_cascade(
+        positions: List[Dict[str, float]],
+        initial_price_drop_pct: float,
+        cascade_multiplier: float = 0.10,
+    ) -> Dict[str, Any]:
+        """
+        Model a liquidation cascade across a list of borrowing positions.
+
+        When one position liquidates, forced selling depresses the price by
+        cascade_multiplier × liquidated_value / total_collateral, triggering
+        further liquidations.
+
+        Args:
+            positions: List of dicts with keys:
+                       - "collateral_value": current USD value of collateral
+                       - "debt_value":       current USD value of debt
+                       - "liquidation_threshold": LT ratio (e.g., 0.80)
+                       Each position is healthy when:
+                           collateral_value × (1 - price_drop) ≥ debt_value / liquidation_threshold
+            initial_price_drop_pct: Starting price drop % (e.g., 20.0 = -20%).
+            cascade_multiplier:     Each $1 liquidated causes this fraction of
+                                    additional price drop per $1 of total collateral.
+                                    Default 0.10 means 10% sensitivity.
+
+        Returns:
+            dict with:
+                - total_liquidated_value (USD)
+                - liquidation_rounds (int)
+                - positions_liquidated (int)
+                - cascade_price_drop_pct (total price drop including cascade)
+                - breakdown (list of per-round stats)
+        """
+        if not positions:
+            return {
+                "total_liquidated_value": 0.0,
+                "liquidation_rounds": 0,
+                "positions_liquidated": 0,
+                "cascade_price_drop_pct": initial_price_drop_pct,
+                "breakdown": [],
+            }
+
+        # Work on mutable copies
+        pos_list = [dict(p) for p in positions]
+        total_liquidated = 0.0
+        cumulative_drop = initial_price_drop_pct / 100.0  # convert to fraction
+        rounds = 0
+        breakdown = []
+        liquidated_flags = [False] * len(pos_list)
+
+        # Total collateral for cascade impact calculation
+        total_collateral = sum(p["collateral_value"] for p in pos_list)
+
+        max_rounds = len(pos_list) + 1  # safety cap
+        for _ in range(max_rounds):
+            round_liquidated = 0.0
+            round_count = 0
+
+            for idx, pos in enumerate(pos_list):
+                if liquidated_flags[idx]:
+                    continue
+
+                lt = pos.get("liquidation_threshold", 0.80)
+                effective_collateral = pos["collateral_value"] * (1.0 - cumulative_drop)
+                debt = pos["debt_value"]
+
+                # Position is liquidatable when effective_collateral < debt / lt
+                if lt > 0 and effective_collateral < debt / lt:
+                    round_liquidated += effective_collateral
+                    liquidated_flags[idx] = True
+                    round_count += 1
+
+            if round_count == 0:
+                break  # No new liquidations — cascade stops
+
+            total_liquidated += round_liquidated
+            rounds += 1
+
+            # Cascade: price drops further due to forced selling
+            if total_collateral > 0:
+                additional_drop = cascade_multiplier * round_liquidated / total_collateral
+                cumulative_drop = min(1.0, cumulative_drop + additional_drop)
+
+            breakdown.append({
+                "round": rounds,
+                "liquidated_usd": round(round_liquidated, 2),
+                "positions_in_round": round_count,
+                "cumulative_price_drop_pct": round(cumulative_drop * 100, 4),
+            })
+
+        return {
+            "total_liquidated_value": round(total_liquidated, 2),
+            "liquidation_rounds": rounds,
+            "positions_liquidated": sum(liquidated_flags),
+            "cascade_price_drop_pct": round(cumulative_drop * 100, 4),
+            "breakdown": breakdown,
+        }
+
+
+# ---------------------------------------------------------------------------
 # YieldOptimizerEngine
 # ---------------------------------------------------------------------------
 

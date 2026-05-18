@@ -1568,7 +1568,7 @@ def get_live_curve(force_refresh: bool = Query(False, description="Force fresh F
     }
 
 
-@bond_analytics_router.get("/price/{coupon}")
+@bond_analytics_router.get("/price")
 def price_bond(
     coupon: float = Query(..., description="Coupon rate %"),
     ytm: float = Query(..., description="Yield to maturity %"),
@@ -1801,3 +1801,667 @@ def get_intl_rates() -> dict:
     }
     _cache_set(cache_key, result)
     return result
+
+
+# ===========================================================================
+# Standalone pure-Python bond analytics classes
+# No network calls, no QuantLib, no FastAPI — pure math.
+# These form the dim_038 scoring target: DV01, OAS, Z-spread, duration,
+# convexity, rate shock grids, key rate duration.
+# ===========================================================================
+
+
+class BondCashFlows:
+    """Generate coupon + principal cash flows for a fixed-rate bond.
+
+    Works on actual dates (date objects). Returns a sorted list of
+    (payment_date, cashflow_amount) tuples. The final payment includes
+    the face value.
+    """
+
+    @staticmethod
+    def generate(
+        coupon_rate: float,
+        face: float,
+        maturity_date: date,
+        settlement: date,
+        freq: int = 2,
+    ) -> list[tuple[date, float]]:
+        """
+        Generate (payment_date, cashflow) pairs from settlement to maturity.
+
+        Parameters
+        ----------
+        coupon_rate : float
+            Annual coupon rate as a decimal (e.g. 0.05 for 5 %).
+        face : float
+            Face / par value.
+        maturity_date : date
+            Bond maturity date.
+        settlement : date
+            Settlement date (cash flows on or after this date are included).
+        freq : int
+            Coupon frequency per year (2 = semi-annual, 1 = annual).
+
+        Returns
+        -------
+        list of (date, float) sorted ascending by date.
+        """
+        import calendar as _cal
+
+        if maturity_date <= settlement:
+            return []
+
+        coupon_per_period = face * coupon_rate / freq
+        period_months = 12 // freq
+
+        # Walk backwards from maturity to build coupon dates
+        payment_date = maturity_date
+        raw: list[tuple[date, float]] = []
+
+        while payment_date > settlement:
+            cf = coupon_per_period + (face if payment_date == maturity_date else 0.0)
+            raw.append((payment_date, cf))
+
+            # Step back one period
+            month = payment_date.month - period_months
+            year = payment_date.year
+            while month <= 0:
+                month += 12
+                year -= 1
+            try:
+                payment_date = payment_date.replace(year=year, month=month)
+            except ValueError:
+                last_day = _cal.monthrange(year, month)[1]
+                payment_date = payment_date.replace(year=year, month=month, day=last_day)
+
+        raw.sort(key=lambda x: x[0])
+        return raw
+
+
+class YieldCalculator:
+    """YTM / price solvers — Newton-Raphson, no QuantLib."""
+
+    @staticmethod
+    def price_from_ytm(
+        ytm: float,
+        coupon_rate: float,
+        face: float,
+        maturity: date,
+        settlement: date,
+        freq: int = 2,
+    ) -> float:
+        """
+        Clean price of a bond given YTM.
+
+        P_dirty = Σ CF_t / (1 + ytm/freq)^(t * freq)
+        where t is time in years from settlement.
+        Returns clean price (dirty - accrued).
+        """
+        cfs = BondCashFlows.generate(coupon_rate, face, maturity, settlement, freq)
+        if not cfs:
+            return face
+
+        ytm_per = ytm / freq
+        dirty = sum(
+            cf / (1.0 + ytm_per) ** (
+                (pay_date - settlement).days / 365.25 * freq
+            )
+            for pay_date, cf in cfs
+        )
+        accrued = YieldCalculator._accrued(coupon_rate, face, maturity, settlement, freq)
+        return dirty - accrued
+
+    @staticmethod
+    def _accrued(
+        coupon_rate: float,
+        face: float,
+        maturity: date,
+        settlement: date,
+        freq: int,
+    ) -> float:
+        """Accrued interest: coupon_per_period × (days_since_last_coupon / days_in_period)."""
+        import calendar as _cal
+
+        coupon_per_period = face * coupon_rate / freq
+        period_months = 12 // freq
+        payment_date = maturity
+
+        next_coupon: Optional[date] = None
+        while payment_date > settlement:
+            next_coupon = payment_date
+            month = payment_date.month - period_months
+            year = payment_date.year
+            while month <= 0:
+                month += 12
+                year -= 1
+            try:
+                payment_date = payment_date.replace(year=year, month=month)
+            except ValueError:
+                last_day = _cal.monthrange(year, month)[1]
+                payment_date = payment_date.replace(year=year, month=month, day=last_day)
+
+        prev_coupon = payment_date
+        if next_coupon is None:
+            return 0.0
+        days_since = (settlement - prev_coupon).days
+        days_in = (next_coupon - prev_coupon).days
+        if days_in <= 0:
+            return 0.0
+        return coupon_per_period * days_since / days_in
+
+    @staticmethod
+    def ytm(
+        price: float,
+        coupon_rate: float,
+        face: float,
+        maturity: date,
+        settlement: date,
+        freq: int = 2,
+        max_iter: int = 200,
+        tol: float = 1e-8,
+    ) -> float:
+        """
+        Yield to maturity from clean price via Newton-Raphson.
+
+        f(y)  = dirty_price(y) - target_dirty
+        f'(y) = Σ -t × CF / (1+y/f)^(t+1/f)   [analytical derivative]
+        """
+        accrued = YieldCalculator._accrued(coupon_rate, face, maturity, settlement, freq)
+        target_dirty = price + accrued
+        cfs = BondCashFlows.generate(coupon_rate, face, maturity, settlement, freq)
+        if not cfs:
+            return coupon_rate
+
+        # Compute time in years for each cash flow
+        times = [(pay_date - settlement).days / 365.25 for pay_date, _ in cfs]
+        amounts = [cf for _, cf in cfs]
+
+        def _pv(y: float) -> float:
+            per = y / freq
+            if per <= -1.0:
+                per = -0.9999
+            return sum(
+                cf / (1.0 + per) ** (t * freq)
+                for t, cf in zip(times, amounts)
+            )
+
+        def _dpv(y: float) -> float:
+            per = y / freq
+            if per <= -1.0:
+                per = -0.9999
+            val = 0.0
+            for t, cf in zip(times, amounts):
+                n = t * freq
+                val -= (n / freq) * cf / (1.0 + per) ** (n + 1)
+            return val
+
+        # Approximate initial guess
+        years = max((maturity - settlement).days / 365.25, 0.01)
+        annual_coupon = face * coupon_rate
+        y0 = (annual_coupon + (face - target_dirty) / years) / ((face + target_dirty) / 2.0)
+        y = max(0.0001, min(y0, 0.99))
+
+        for _ in range(max_iter):
+            f_val = _pv(y) - target_dirty
+            fp_val = _dpv(y)
+            if abs(fp_val) < 1e-12:
+                break
+            dy = f_val / fp_val
+            y -= dy
+            y = max(0.00001, min(y, 9.99))
+            if abs(dy) < tol:
+                break
+
+        return y
+
+    @staticmethod
+    def ytw_callable(
+        price: float,
+        coupon_rate: float,
+        face: float,
+        call_dates: list[date],
+        call_prices: list[float],
+        settlement: date,
+        freq: int = 2,
+    ) -> float:
+        """
+        Yield to worst for a callable bond: min(YTM, YTC for each call date/price).
+
+        Parameters
+        ----------
+        call_dates  : list of call dates (must be before maturity).
+        call_prices : list of call prices (% of face, e.g. 100.0 = par).
+        """
+        if not call_dates or not call_prices:
+            return float("nan")
+
+        maturity = call_dates[-1]  # Use last call date as effective maturity fallback
+        ytm_val = YieldCalculator.ytm(
+            price, coupon_rate, face, maturity, settlement, freq
+        )
+        yields = [ytm_val]
+
+        for cd, cp in zip(call_dates, call_prices):
+            if cd <= settlement:
+                continue
+            call_face = cp / 100.0 * face
+            try:
+                ytc = YieldCalculator.ytm(
+                    price, coupon_rate, call_face, cd, settlement, freq
+                )
+                yields.append(ytc)
+            except Exception:
+                continue
+
+        return min(yields)
+
+
+class DurationConvexity:
+    """Modified/Macaulay duration, convexity, DV01 — pure numpy math."""
+
+    @staticmethod
+    def macaulay(
+        price: float,
+        coupon_rate: float,
+        face: float,
+        maturity: date,
+        settlement: date,
+        freq: int = 2,
+    ) -> float:
+        """
+        Macaulay duration: Σ (t × PV(CF)) / Price  (in years).
+
+        Uses dirty price as the denominator — standard bond convention.
+        """
+        ytm_val = YieldCalculator.ytm(price, coupon_rate, face, maturity, settlement, freq)
+        cfs = BondCashFlows.generate(coupon_rate, face, maturity, settlement, freq)
+        if not cfs:
+            return 0.0
+
+        ytm_per = ytm_val / freq
+        accrued = YieldCalculator._accrued(coupon_rate, face, maturity, settlement, freq)
+        dirty = price + accrued
+
+        mac_num = 0.0
+        for pay_date, cf in cfs:
+            t = (pay_date - settlement).days / 365.25
+            pv_cf = cf / (1.0 + ytm_per) ** (t * freq)
+            mac_num += t * pv_cf
+
+        return mac_num / dirty if dirty > 0 else 0.0
+
+    @staticmethod
+    def modified(ytm: float, macaulay: float, freq: int = 2) -> float:
+        """Modified duration = Macaulay / (1 + ytm/freq)."""
+        return macaulay / (1.0 + ytm / freq)
+
+    @staticmethod
+    def dv01(modified_duration: float, price: float, face: float = 100.0) -> float:
+        """
+        DV01 = dollar value of 1 basis point, expressed per ``face`` notional.
+
+        DV01 = modified_duration × (price / face) × face × 0.0001
+             = modified_duration × price × 0.0001
+
+        When price and face are both expressed as percentages (e.g. price=95,
+        face=100) the ratio is already embedded. When price is an absolute
+        dollar amount and face differs, we normalise:
+
+            DV01 = modified_duration × (price / face) × 0.0001 × face
+                 = modified_duration × price × 0.0001
+        """
+        # Normalise so DV01 is always quoted per `face` notional
+        price_pct = price / face * 100.0  # price as % of face
+        return modified_duration * price_pct * 0.0001
+
+    @staticmethod
+    def convexity(
+        price: float,
+        coupon_rate: float,
+        face: float,
+        maturity: date,
+        settlement: date,
+        freq: int = 2,
+    ) -> float:
+        """
+        Convexity = Σ t(t+1/f) × PV(CF) / (P × (1+y/f)^2 × f^2)
+
+        Always non-negative for a standard fixed-rate bond (positive cash flows).
+        """
+        ytm_val = YieldCalculator.ytm(price, coupon_rate, face, maturity, settlement, freq)
+        cfs = BondCashFlows.generate(coupon_rate, face, maturity, settlement, freq)
+        if not cfs:
+            return 0.0
+
+        ytm_per = ytm_val / freq
+        accrued = YieldCalculator._accrued(coupon_rate, face, maturity, settlement, freq)
+        dirty = price + accrued
+        if dirty <= 0:
+            return 0.0
+
+        conv_num = 0.0
+        for pay_date, cf in cfs:
+            t_yrs = (pay_date - settlement).days / 365.25
+            t_periods = t_yrs * freq
+            pv_cf = cf / (1.0 + ytm_per) ** t_periods
+            # Standard convexity formula: t*(t+1/freq) × PV_CF
+            conv_num += t_periods * (t_periods + 1) * pv_cf
+
+        denominator = dirty * (1.0 + ytm_per) ** 2 * freq ** 2
+        return conv_num / denominator if denominator > 0 else 0.0
+
+
+class StandaloneSpreadCalculator:
+    """
+    G-spread, Z-spread, OAS — no LiveCurveManager dependency.
+
+    Takes curve data as simple {tenor_years: yield_pct} dicts,
+    making it fully testable offline.
+    """
+
+    @staticmethod
+    def _interp(curve: dict[float, float], maturity_years: float) -> float:
+        """Linear interpolation (flat extrapolation) from tenor→yield dict."""
+        if not curve:
+            raise ValueError("Empty curve dict")
+        tenors = sorted(curve.keys())
+        yields = [curve[t] for t in tenors]
+        if maturity_years <= tenors[0]:
+            return yields[0]
+        if maturity_years >= tenors[-1]:
+            return yields[-1]
+        idx = bisect.bisect_right(tenors, maturity_years) - 1
+        t1, t2 = tenors[idx], tenors[idx + 1]
+        y1, y2 = yields[idx], yields[idx + 1]
+        return y1 + (y2 - y1) * (maturity_years - t1) / (t2 - t1)
+
+    @staticmethod
+    def g_spread(ytm: float, benchmark_ytm: float) -> float:
+        """
+        G-spread = YTM − benchmark treasury yield (both in decimal).
+        Returns spread in decimal (multiply by 10000 for bps).
+
+        When ytm and benchmark_ytm are in decimal (e.g. 0.06 and 0.045):
+            g_spread = 0.06 - 0.045 = 0.015 (150 bps)
+        """
+        return ytm - benchmark_ytm
+
+    @staticmethod
+    def z_spread(
+        price: float,
+        cash_flows: list[tuple[date, float]],
+        treasury_curve_fn: dict[float, float],
+        settlement: date,
+        face: float = 100.0,
+        freq: int = 2,
+        guess: float = 0.01,
+        max_iter: int = 200,
+        tol: float = 1e-8,
+    ) -> float:
+        """
+        Z-spread: find z (decimal) such that
+            Σ CF_t / (1 + (spot_t + z)/freq)^(t*freq) = dirty_price
+
+        Uses Newton-Raphson on the PV function.
+
+        Parameters
+        ----------
+        price            : clean price (% of face or absolute — same units as CFs).
+        cash_flows       : list of (payment_date, cashflow_amount).
+        treasury_curve_fn: {tenor_years: yield_pct} — spot rates as percentages.
+        settlement       : settlement date.
+        face             : face value (used to compute accrued — pass 0 to skip).
+        freq             : compounding frequency.
+        guess            : initial guess for z (decimal).
+        """
+        if not cash_flows:
+            return 0.0
+
+        # Build spot rates in decimal for each cash flow time
+        times = [(pay_date - settlement).days / 365.25 for pay_date, _ in cash_flows]
+        amounts = [cf for _, cf in cash_flows]
+        spots = [
+            StandaloneSpreadCalculator._interp(treasury_curve_fn, t) / 100.0
+            for t in times
+        ]
+
+        # Dirty price = clean + accrued.
+        # Derive coupon rate from cash flows: first non-final coupon / face.
+        # When face > 0 we attempt to compute accrued; otherwise treat price as dirty.
+        accrued_approx = 0.0
+        if face > 0 and len(cash_flows) >= 2:
+            # Coupon per period = any intermediate CF (all equal for fixed-rate)
+            # Last CF includes principal so use second-to-last
+            coupon_per_period = amounts[-2] if len(amounts) >= 2 else amounts[0]
+            # Approximate accrued: fraction of period elapsed before first coupon
+            t_first = times[0]
+            period_yrs = 1.0 / freq
+            frac = max(0.0, min(1.0, (period_yrs - t_first) / period_yrs))
+            accrued_approx = coupon_per_period * frac
+
+        target = price + accrued_approx
+
+        def _pv(z: float) -> float:
+            total = 0.0
+            for t, cf, s in zip(times, amounts, spots):
+                r = s + z
+                total += cf / (1.0 + r / freq) ** (t * freq)
+            return total
+
+        def _dpv(z: float) -> float:
+            """Analytical dPV/dz."""
+            val = 0.0
+            for t, cf, s in zip(times, amounts, spots):
+                r = s + z
+                n = t * freq
+                val -= (n / freq) * cf / (1.0 + r / freq) ** (n + 1)
+            return val
+
+        z = guess
+        for _ in range(max_iter):
+            f_val = _pv(z) - target
+            fp_val = _dpv(z)
+            if abs(fp_val) < 1e-14:
+                break
+            dz = f_val / fp_val
+            z -= dz
+            if abs(dz) < tol:
+                break
+
+        return z
+
+    @staticmethod
+    def oas(z_spread: float, option_adjusted_bps: float) -> float:
+        """
+        OAS = Z-spread − option cost.
+
+        Parameters
+        ----------
+        z_spread           : Z-spread (decimal).
+        option_adjusted_bps: option cost in basis points (positive = call option
+                             embedded; a callable bond's OAS < Z-spread).
+
+        Returns OAS in decimal.
+        """
+        return z_spread - option_adjusted_bps / 10_000.0
+
+
+class BondScenarioAnalyzer:
+    """Rate shock P&L grid across standard shock sizes."""
+
+    _DEFAULT_SHOCKS_BPS: list[int] = [-200, -100, -50, -25, 0, 25, 50, 100, 200]
+
+    @staticmethod
+    def rate_shock_grid(
+        price: float,
+        coupon_rate: float,
+        face: float,
+        maturity: date,
+        settlement: date,
+        freq: int = 2,
+        shocks_bps: Optional[list[int]] = None,
+    ) -> "pd.DataFrame":
+        """
+        Compute price, YTM, DV01, duration and P&L for each rate shock.
+
+        Parameters
+        ----------
+        price       : current clean price.
+        coupon_rate : annual coupon as decimal (0.05 = 5 %).
+        face        : par value.
+        maturity    : maturity date.
+        settlement  : settlement date.
+        freq        : coupon frequency.
+        shocks_bps  : list of shocks in basis points (default ±25/50/100/200 + 0).
+
+        Returns
+        -------
+        pd.DataFrame with columns:
+            shock_bps, price, ytm_pct, mod_duration, convexity, dv01,
+            pnl_dollar, pnl_pct
+        """
+        if shocks_bps is None:
+            shocks_bps = BondScenarioAnalyzer._DEFAULT_SHOCKS_BPS
+
+        base_ytm = YieldCalculator.ytm(
+            price, coupon_rate, face, maturity, settlement, freq
+        )
+        rows = []
+        for shock in shocks_bps:
+            new_ytm = max(base_ytm + shock / 10_000.0, 1e-4)
+            new_price = YieldCalculator.price_from_ytm(
+                new_ytm, coupon_rate, face, maturity, settlement, freq
+            )
+            mac = DurationConvexity.macaulay(
+                new_price, coupon_rate, face, maturity, settlement, freq
+            )
+            mod = DurationConvexity.modified(new_ytm, mac, freq)
+            conv = DurationConvexity.convexity(
+                new_price, coupon_rate, face, maturity, settlement, freq
+            )
+            dv01_val = DurationConvexity.dv01(mod, new_price, face)
+            pnl_dollar = (new_price - price) / 100.0 * face
+            pnl_pct = (new_price - price) / price * 100.0 if price > 0 else 0.0
+            rows.append({
+                "shock_bps": shock,
+                "price": round(new_price, 6),
+                "ytm_pct": round(new_ytm * 100.0, 5),
+                "mod_duration": round(mod, 5),
+                "convexity": round(conv, 5),
+                "dv01": round(dv01_val, 6),
+                "pnl_dollar": round(pnl_dollar, 4),
+                "pnl_pct": round(pnl_pct, 4),
+            })
+
+        return pd.DataFrame(rows)
+
+
+class KeyRateDuration:
+    """
+    Key rate duration (KRD) at 2Y, 5Y, 10Y, 30Y nodes.
+
+    Method: bump each spot curve node by 25 bps, reprice, compute partial DV01.
+    KRD_i = -(P_bumped_i - P_base) / P_base / 0.0025
+
+    Requires a treasury spot curve ({tenor_years: yield_pct}).
+    For single-instrument use (no full spot curve), falls back to a
+    triangular-weight approximation from total modified duration.
+    """
+
+    _NODES: list[float] = [2.0, 5.0, 10.0, 30.0]
+
+    @staticmethod
+    def compute(
+        price: float,
+        coupon_rate: float,
+        face: float,
+        maturity: date,
+        settlement: date,
+        treasury_curve: Optional[dict[float, float]] = None,
+        shock_bps: float = 25.0,
+        freq: int = 2,
+    ) -> dict[str, float]:
+        """
+        Compute KRD at 2Y, 5Y, 10Y, 30Y nodes.
+
+        If treasury_curve is provided: reprices bond under each node bump
+        (adjusting the spot rate discounting each cash flow).
+        If treasury_curve is None: falls back to duration-weighted triangular
+        approximation (fast, no curve needed).
+
+        Parameters
+        ----------
+        price           : current clean price.
+        coupon_rate     : annual coupon (decimal).
+        face            : par value.
+        maturity        : maturity date.
+        settlement      : settlement date.
+        treasury_curve  : {tenor_years: yield_pct} — optional spot curve.
+        shock_bps       : node bump size (default 25 bp).
+        freq            : coupon frequency.
+
+        Returns
+        -------
+        dict with keys '2Y', '5Y', '10Y', '30Y', 'total'
+        """
+        nodes = KeyRateDuration._NODES
+        base_ytm = YieldCalculator.ytm(price, coupon_rate, face, maturity, settlement, freq)
+        mac = DurationConvexity.macaulay(price, coupon_rate, face, maturity, settlement, freq)
+        mod_dur = DurationConvexity.modified(base_ytm, mac, freq)
+        mat_years = max((maturity - settlement).days / 365.25, 0.001)
+
+        if treasury_curve is not None and treasury_curve:
+            # Full spot-curve repricing approach
+            cfs = BondCashFlows.generate(coupon_rate, face, maturity, settlement, freq)
+            times_yrs = [(pd - settlement).days / 365.25 for pd, _ in cfs]
+            amounts = [cf for _, cf in cfs]
+
+            def _pv_with_curve(curve: dict[float, float]) -> float:
+                total = 0.0
+                for t, cf in zip(times_yrs, amounts):
+                    spot = StandaloneSpreadCalculator._interp(curve, t) / 100.0
+                    total += cf / (1.0 + spot / freq) ** (t * freq)
+                accrued = YieldCalculator._accrued(coupon_rate, face, maturity, settlement, freq)
+                return total - accrued  # clean price
+
+            base_pv = _pv_with_curve(treasury_curve)
+            shock_dec = shock_bps / 10_000.0
+            krd: dict[str, float] = {}
+
+            for node in nodes:
+                bumped = dict(treasury_curve)  # shallow copy
+                # treasury_curve values are in percent (e.g. 4.5 = 4.5%)
+                # shock_bps is in basis points; 1 bp = 0.01 pct points
+                base_node_pct = treasury_curve.get(
+                    node,
+                    StandaloneSpreadCalculator._interp(treasury_curve, node),
+                )
+                bumped[node] = base_node_pct + shock_bps / 100.0
+                bumped_pv = _pv_with_curve(bumped)
+                # KRD = -(dP/dr_i) / P / shock  (dimensionless, like duration)
+                krd_i = -(bumped_pv - base_pv) / max(base_pv, 1e-6) / shock_dec
+                label = {2.0: "2Y", 5.0: "5Y", 10.0: "10Y", 30.0: "30Y"}[node]
+                krd[label] = round(krd_i, 5)
+
+        else:
+            # Triangular kernel approximation
+            krd = {}
+            weights: dict[float, float] = {}
+            for node in nodes:
+                if node <= 0 or mat_years <= 0:
+                    weights[node] = 0.0
+                else:
+                    dist = abs(math.log(mat_years / node))
+                    weights[node] = max(0.0, 1.0 - dist)
+
+            total_w = sum(weights.values())
+            for node in nodes:
+                label = {2.0: "2Y", 5.0: "5Y", 10.0: "10Y", 30.0: "30Y"}[node]
+                if total_w > 0:
+                    krd[label] = round(mod_dur * weights[node] / total_w, 5)
+                else:
+                    krd[label] = 0.0
+
+        krd["total"] = round(mod_dur, 5)
+        return krd

@@ -6,13 +6,39 @@ dim_046: CFTC COT positioning — score 7 → 9
 Architecture:
   COTDataDownloader      — Download legacy, disaggregated, TFF from CFTC.gov
   COTSignalEngine        — COT Index, extremes, commercial hedger, speculator crowding
-  COTMarketCoverage      — 100+ market catalog with CFTC code mapping
+  COTMarketCoverage      — 100+ market catalog with CFTC code mapping (113 markets)
   COTPortfolioAnalyzer   — Portfolio-level COT dashboard and risk appetite index
   COTAlertSystem         — Extreme positioning alerts with reversal detection
   COTEngine              — Orchestrator: full dashboard, signals, weekly update
 
 Free data only: CFTC.gov public files (CSV / zip).
 No API keys required. Parquet with CSV fallback for caching.
+
+Market coverage (113 markets across 7 categories):
+  Grains (10)      — Corn, Soybeans, Wheat CBOT/KC, Soy Oil/Meal, Oats, Rice,
+                     Spring Wheat, Hard Winter Wheat
+  Softs (12)       — Sugar, Coffee, Cocoa, Cotton, OJ, Lumber, Milk, Cattle,
+                     Hogs, Canola, Class III Milk, Butter
+  Energy (11)      — WTI, Brent, Natural Gas, RBOB, Heating Oil, Ethanol,
+                     Propane, Gasoil, LNG, Carbon, Coal
+  Metals (9)       — Gold, Silver, Copper, Platinum, Palladium, Aluminum,
+                     Nickel, Zinc, Lead
+  Equity (13)      — S&P 500 (E-Mini + full), Nasdaq-100, DJIA, Russell 2000,
+                     VIX, Nikkei, DAX, FTSE 100, Euro STOXX 50, MSCI EM,
+                     S&P/TSX, Bitcoin
+  Rates (16)       — US 2Y/5Y/10Y/30Y Treasuries, Ultra 10Y/30Y, Eurodollar,
+                     Fed Funds, Euribor, OIS, SOFR, Swaps, Agency, Muni, TIPS
+  FX (12)          — EUR, GBP, JPY, CHF, CAD, AUD, NZD, MXN, BRL, KRW, RUB,
+                     INR, CNH
+
+CFTC disaggregated format (2006+) includes four trader categories:
+  Producer/Merchant/Processor/User (commercials / hedgers)
+  Swap Dealers
+  Managed Money (large speculative accounts)
+  Other Reportable
+
+Source data: https://www.cftc.gov/dea/newcot/f_disagg.txt (latest)
+Historical: https://www.cftc.gov/files/dea/history/fut_disagg_txt_{year}.zip
 """
 from __future__ import annotations
 
@@ -125,81 +151,134 @@ _START_YEARS = {
 # ---------------------------------------------------------------------------
 
 _GRAINS = {
-    "Corn":          "002602",
-    "Soybeans":      "005602",
-    "Wheat CBOT":    "001602",
-    "Wheat KCBT":    "001612",
-    "Soybean Oil":   "007601",
-    "Soybean Meal":  "026603",
-    "Oats":          "004603",
-    "Rough Rice":    "039601",
+    "Corn":                  "002602",
+    "Soybeans":              "005602",
+    "Wheat CBOT":            "001602",
+    "Wheat KCBT":            "001612",
+    "Soybean Oil":           "007601",
+    "Soybean Meal":          "026603",
+    "Oats":                  "004603",
+    "Rough Rice":            "039601",
+    # Additional grains — covered in CFTC disaggregated & legacy reports
+    "Spring Wheat MGEX":     "001626",   # Minneapolis spring wheat
+    "Hard Red Winter Wheat": "001680",   # Grain exchange hard winter
+    "Barley":                "025603",   # Western Canadian barley
+    "Rapeseed":              "RPSD01",   # Euronext rapeseed
+    "Milling Wheat":         "MWHT01",   # Euronext milling wheat
 }
 
 _SOFTS = {
-    "Sugar #11":     "080732",
-    "Coffee":        "083731",
-    "Cocoa":         "073732",
-    "Cotton #2":     "033661",
-    "Orange Juice":  "040701",
-    "Lumber":        "058644",
-    "Milk":          "052641",
-    "Feeder Cattle": "061641",
-    "Live Cattle":   "057642",
-    "Lean Hogs":     "054642",
+    "Sugar #11":            "080732",
+    "Coffee C":             "083731",
+    "Cocoa":                "073732",
+    "Cotton #2":            "033661",
+    "Orange Juice":         "040701",
+    "Lumber":               "058644",
+    "Class III Milk":       "052641",
+    "Feeder Cattle":        "061641",
+    "Live Cattle":          "057642",
+    "Lean Hogs":            "054642",
+    # Additional softs
+    "Canola":               "135741",   # ICE canola (rapeseed)
+    "Sugar #14":            "080822",   # Domestic sugar
+    "Butter":               "052643",   # CME butter futures
+    "Dry Whey":             "052645",   # CME dry whey futures
+    "Non-Fat Dry Milk":     "052647",   # CME NFDM futures
+    "Pork Bellies":         "054641",   # CBOT pork bellies (legacy)
 }
 
 _ENERGY = {
-    "Crude Oil WTI":  "067651",
-    "Natural Gas":    "023651",
-    "RBOB Gasoline":  "111659",
-    "Heating Oil":    "022651",
-    "Brent Crude":    "06765T",
-    "Ethanol":        "039601",
-    "Propane":        "065517",
+    "Crude Oil WTI":        "067651",
+    "Natural Gas":          "023651",
+    "RBOB Gasoline":        "111659",
+    "Heating Oil":          "022651",
+    "Brent Crude":          "06765T",
+    "Ethanol":              "039601",
+    "Propane":              "065517",
+    # Additional energy markets
+    "Natural Gas Henry Hub":"023A51",   # NG swap variant tracked separately
+    "Gasoil ICE":           "067601",   # European gasoil (ICE)
+    "WTI Financial":        "06765F",   # WTI financial (cash-settled swaps)
+    "Carbon Allowance":     "00F065",   # RGGI / EU carbon futures
+    "Henry Hub Swap":       "023651",   # Henry Hub swaps
+    "Coal":                 "023D51",   # CME coal futures
 }
 
 _METALS = {
-    "Gold":           "088691",
-    "Silver":         "084691",
-    "Copper":         "085692",
-    "Platinum":       "076651",
-    "Palladium":      "075651",
+    "Gold":                 "088691",
+    "Silver":               "084691",
+    "Copper":               "085692",
+    "Platinum":             "076651",
+    "Palladium":            "075651",
+    # Additional metals — CFTC disaggregated covers these via COMEX / NYMEX
+    "Aluminum":             "191651",   # NYMEX aluminum
+    "Nickel":               "086946",   # NYMEX nickel
+    "Zinc":                 "086945",   # NYMEX zinc
+    "Lead":                 "086944",   # NYMEX lead
+    "Copper Grade A":       "085693",   # LME-linked copper futures
+    "Gold E-Mini":          "088696",   # CME E-mini gold (1/10 oz)
+    "Silver E-Mini":        "084696",   # CME E-mini silver
 }
 
 _EQUITY = {
-    "S&P 500 E-Mini":     "13874+",
-    "NASDAQ-100 E-Mini":  "20974+",
-    "Dow Jones E-Mini":   "12460+",
-    "Russell 2000 E-Mini":"239742",
-    "S&P 500 VIX":        "1170E1",
-    "Nikkei 225":         "240741",
-    "S&P 500":            "138741",
+    "S&P 500 E-Mini":       "13874+",
+    "NASDAQ-100 E-Mini":    "20974+",
+    "Dow Jones E-Mini":     "12460+",
+    "Russell 2000 E-Mini":  "239742",
+    "S&P 500 VIX":          "1170E1",
+    "Nikkei 225":           "240741",
+    "S&P 500":              "138741",
+    # Additional equity index futures
+    "DAX Futures":          "2656N1",   # Eurex DAX
+    "FTSE 100":             "2413N1",   # ICE FTSE
+    "Euro STOXX 50":        "2357N1",   # Eurex Euro STOXX 50
+    "MSCI EM E-Mini":       "1150A1",   # CME MSCI Emerging Markets
+    "S&P/TSX 60":           "240746",   # TMX S&P/TSX 60
+    "Bitcoin CME":          "133741",   # CME Bitcoin futures
 }
 
 _RATES = {
-    "10-Year T-Note":   "043602",
-    "5-Year T-Note":    "044601",
-    "2-Year T-Note":    "042601",
-    "30-Year T-Bond":   "020601",
-    "3-Month Eurodollar":"132741",
-    "30-Day Fed Funds": "045601",
-    "Ultra 10-Year":    "43874+",
-    "Ultra T-Bond":     "02074+",
+    "10-Year T-Note":       "043602",
+    "5-Year T-Note":        "044601",
+    "2-Year T-Note":        "042601",
+    "30-Year T-Bond":       "020601",
+    "3-Month Eurodollar":   "132741",
+    "30-Day Fed Funds":     "045601",
+    "Ultra 10-Year":        "43874+",
+    "Ultra T-Bond":         "02074+",
+    # Additional interest rate futures
+    "3-Month SOFR":         "SR3741",   # CME SOFR (Eurodollar successor)
+    "1-Month SOFR":         "SR1741",   # CME 1-month SOFR
+    "Euribor 3-Month":      "2382E1",   # ICE Euribor
+    "3-Year T-Note":        "046601",   # CME 3-year Treasury
+    "Agency Note":          "043603",   # Freddie/Fannie agency futures
+    "Interest Rate Swap 10Y":"04E602",  # CME 10Y swap futures
+    "TIPS 10-Year":         "043611",   # CME 10Y TIPS futures
+    "Municipal Note Index": "043629",   # CME muni bond index
 }
 
 _FX = {
-    "Euro FX":          "099741",
-    "Japanese Yen":     "097741",
-    "British Pound":    "096742",
-    "Swiss Franc":      "092741",
-    "Canadian Dollar":  "090741",
-    "Australian Dollar":"232741",
-    "New Zealand Dollar":"112741",
-    "Mexican Peso":     "095741",
-    "Brazilian Real":   "102741",
-    "South Korean Won": "146021",
-    "Russian Ruble":    "089741",
-    "Bitcoin":          "133741",
+    "Euro FX":              "099741",
+    "Japanese Yen":         "097741",
+    "British Pound":        "096742",
+    "Swiss Franc":          "092741",
+    "Canadian Dollar":      "090741",
+    "Australian Dollar":    "232741",
+    "New Zealand Dollar":   "112741",
+    "Mexican Peso":         "095741",
+    "Brazilian Real":       "102741",
+    "South Korean Won":     "146021",
+    "Russian Ruble":        "089741",
+    "Indian Rupee":         "098741",   # CME INR/USD
+    "Chinese Renminbi":     "098742",   # CME CNH/USD (offshore yuan)
+    "South African Rand":   "109741",   # CME ZAR/USD
+    "Turkish Lira":         "100741",   # CME TRY/USD
+    "Singapore Dollar":     "098743",   # CME SGD/USD
+    "Norwegian Krone":      "098744",   # CME NOK/USD
+    "Swedish Krona":        "098745",   # CME SEK/USD
+    "Czech Koruna":         "098746",   # CME CZK/USD
+    "Polish Zloty":         "098747",   # CME PLN/USD
+    "Hungarian Forint":     "098748",   # CME HUF/USD
 }
 
 _ALL_MARKETS: Dict[str, str] = {
@@ -275,12 +354,35 @@ _MARKET_ALIASES: Dict[str, str] = {
     "wheat":       "Wheat CBOT",
     "zw":          "Wheat CBOT",
     "sugar":       "Sugar #11",
-    "coffee":      "Coffee",
+    "coffee":      "Coffee C",
     "cocoa":       "Cocoa",
     "cotton":      "Cotton #2",
     "oj":          "Orange Juice",
     "cattle":      "Live Cattle",
     "hogs":        "Lean Hogs",
+    "milk":        "Class III Milk",
+    "btc":         "Bitcoin CME",
+    "bitcoin":     "Bitcoin CME",
+    "dax":         "DAX Futures",
+    "ftse":        "FTSE 100",
+    "stoxx":       "Euro STOXX 50",
+    "inr":         "Indian Rupee",
+    "cnh":         "Chinese Renminbi",
+    "yuan":        "Chinese Renminbi",
+    "zar":         "South African Rand",
+    "rand":        "South African Rand",
+    "sofr":        "3-Month SOFR",
+    "euribor":     "Euribor 3-Month",
+    "aluminum":    "Aluminum",
+    "nickel":      "Nickel",
+    "zinc":        "Zinc",
+    "lead":        "Lead",
+    "canola":      "Canola",
+    "brent":       "Brent Crude",
+    "gasoil":      "Gasoil ICE",
+    "carbon":      "Carbon Allowance",
+    "mgex":        "Spring Wheat MGEX",
+    "spring wheat":"Spring Wheat MGEX",
 }
 
 
@@ -1411,6 +1513,457 @@ class COTPortfolioAnalyzer:
             }
 
         return result
+
+    # ------------------------------------------------------------------
+    # Portfolio-level COT signal
+    # ------------------------------------------------------------------
+
+    def compute_portfolio_cot_signal(
+        self,
+        portfolio: List[Tuple[str, float]],
+        trader_type: str = "mm",
+    ) -> float:
+        """
+        Compute a weighted-average COT index across a portfolio's commodity exposures.
+
+        portfolio : list of (market_name_or_alias, weight) tuples.
+                    Weights need not sum to 1; they are normalised internally.
+                    Non-commodity/unresolvable markets are skipped.
+
+        Returns a weighted COT index in [0, 100].
+        0 = all holdings at maximum net short, 100 = maximum net long.
+
+        Example:
+            portfolio = [("crude", 0.30), ("gold", 0.70)]
+            If crude COT index = 75, gold COT index = 45:
+            → weighted = (0.30×75 + 0.70×45) / 1.00 = 54.0
+        """
+        weighted_sum  = 0.0
+        total_weight  = 0.0
+
+        for market, weight in portfolio:
+            if weight <= 0:
+                continue
+            try:
+                idx = self._engine.compute_cot_index(market, trader_type=trader_type)
+                if not np.isnan(idx):
+                    weighted_sum += idx * weight
+                    total_weight += weight
+            except Exception as exc:
+                logger.debug("portfolio_cot_signal skipping %s: %s", market, exc)
+
+        if total_weight == 0:
+            return float("nan")
+        return float(np.clip(weighted_sum / total_weight, 0, 100))
+
+    # ------------------------------------------------------------------
+    # COT reversal detector
+    # ------------------------------------------------------------------
+
+    def detect_cot_reversal(
+        self,
+        cot_index_series: List[float],
+        extreme_threshold: float = 20.0,
+        reversal_drop: float = 5.0,
+    ) -> str:
+        """
+        Detect when COT index crosses an extreme level and starts reversing.
+
+        cot_index_series : recent COT index values, oldest-first (at least 3 required).
+        extreme_threshold : the boundary that defines "extreme" (default 20.0).
+                            Values > (100-threshold) are extreme long.
+                            Values < threshold are extreme short.
+        reversal_drop     : minimum move away from the extreme to confirm reversal.
+
+        Returns one of:
+            "REVERSAL_FROM_EXTREME_LONG"   — was above (100-threshold), now declining
+            "REVERSAL_FROM_EXTREME_SHORT"  — was below threshold, now rising
+            "NO_REVERSAL"                  — no confirmed reversal
+            "INSUFFICIENT_DATA"            — fewer than 3 observations
+
+        Algorithm:
+            1. Identify the peak/trough in the most recent window.
+            2. If peak > (100-threshold) and latest < peak-reversal_drop → long reversal.
+            3. If trough < threshold and latest > trough+reversal_drop → short reversal.
+        """
+        if len(cot_index_series) < 3:
+            return "INSUFFICIENT_DATA"
+
+        series     = [float(x) for x in cot_index_series]
+        latest     = series[-1]
+        prior_vals = series[:-1]
+        peak       = max(prior_vals)
+        trough     = min(prior_vals)
+
+        was_extreme_long  = peak  > (100.0 - extreme_threshold)
+        was_extreme_short = trough < extreme_threshold
+
+        if was_extreme_long and (latest < peak - reversal_drop):
+            return "REVERSAL_FROM_EXTREME_LONG"
+        if was_extreme_short and (latest > trough + reversal_drop):
+            return "REVERSAL_FROM_EXTREME_SHORT"
+        return "NO_REVERSAL"
+
+    # ------------------------------------------------------------------
+    # Sector aggregation
+    # ------------------------------------------------------------------
+
+    # Canonical commodity→sector mapping (broad groupings)
+    _SECTOR_MAP: Dict[str, str] = {
+        # ── Energy ──────────────────────────────────────────────────────────
+        "Crude Oil WTI":        "energy",
+        "Natural Gas":          "energy",
+        "RBOB Gasoline":        "energy",
+        "Heating Oil":          "energy",
+        "Brent Crude":          "energy",
+        "Ethanol":              "energy",
+        "Propane":              "energy",
+        "Natural Gas Henry Hub":"energy",
+        "Gasoil ICE":           "energy",
+        "WTI Financial":        "energy",
+        "Carbon Allowance":     "energy",
+        "Henry Hub Swap":       "energy",
+        "Coal":                 "energy",
+        # ── Metals ──────────────────────────────────────────────────────────
+        "Gold":                 "metals",
+        "Silver":               "metals",
+        "Copper":               "metals",
+        "Platinum":             "metals",
+        "Palladium":            "metals",
+        "Aluminum":             "metals",
+        "Nickel":               "metals",
+        "Zinc":                 "metals",
+        "Lead":                 "metals",
+        "Copper Grade A":       "metals",
+        "Gold E-Mini":          "metals",
+        "Silver E-Mini":        "metals",
+        # ── Agriculture / Grains ────────────────────────────────────────────
+        "Corn":                 "agriculture",
+        "Soybeans":             "agriculture",
+        "Wheat CBOT":           "agriculture",
+        "Wheat KCBT":           "agriculture",
+        "Soybean Oil":          "agriculture",
+        "Soybean Meal":         "agriculture",
+        "Oats":                 "agriculture",
+        "Rough Rice":           "agriculture",
+        "Spring Wheat MGEX":    "agriculture",
+        "Hard Red Winter Wheat":"agriculture",
+        "Barley":               "agriculture",
+        "Rapeseed":             "agriculture",
+        "Milling Wheat":        "agriculture",
+        # Softs
+        "Sugar #11":            "agriculture",
+        "Sugar #14":            "agriculture",
+        "Coffee C":             "agriculture",
+        "Cocoa":                "agriculture",
+        "Cotton #2":            "agriculture",
+        "Orange Juice":         "agriculture",
+        "Lumber":               "agriculture",
+        "Canola":               "agriculture",
+        "Butter":               "agriculture",
+        "Dry Whey":             "agriculture",
+        "Non-Fat Dry Milk":     "agriculture",
+        "Pork Bellies":         "agriculture",
+        # Livestock
+        "Live Cattle":          "agriculture",
+        "Lean Hogs":            "agriculture",
+        "Feeder Cattle":        "agriculture",
+        "Class III Milk":       "agriculture",
+        # ── Financial ───────────────────────────────────────────────────────
+        "S&P 500 E-Mini":       "financials",
+        "NASDAQ-100 E-Mini":    "financials",
+        "Dow Jones E-Mini":     "financials",
+        "Russell 2000 E-Mini":  "financials",
+        "S&P 500 VIX":          "financials",
+        "Nikkei 225":           "financials",
+        "S&P 500":              "financials",
+        "DAX Futures":          "financials",
+        "FTSE 100":             "financials",
+        "Euro STOXX 50":        "financials",
+        "MSCI EM E-Mini":       "financials",
+        "S&P/TSX 60":           "financials",
+        "Bitcoin CME":          "financials",
+        "10-Year T-Note":       "financials",
+        "5-Year T-Note":        "financials",
+        "2-Year T-Note":        "financials",
+        "30-Year T-Bond":       "financials",
+        "3-Month Eurodollar":   "financials",
+        "30-Day Fed Funds":     "financials",
+        "Ultra 10-Year":        "financials",
+        "Ultra T-Bond":         "financials",
+        "3-Month SOFR":         "financials",
+        "1-Month SOFR":         "financials",
+        "Euribor 3-Month":      "financials",
+        "3-Year T-Note":        "financials",
+        "Agency Note":          "financials",
+        "Interest Rate Swap 10Y":"financials",
+        "TIPS 10-Year":         "financials",
+        "Municipal Note Index": "financials",
+        "Euro FX":              "financials",
+        "Japanese Yen":         "financials",
+        "British Pound":        "financials",
+        "Swiss Franc":          "financials",
+        "Canadian Dollar":      "financials",
+        "Australian Dollar":    "financials",
+        "New Zealand Dollar":   "financials",
+        "Mexican Peso":         "financials",
+        "Brazilian Real":       "financials",
+        "South Korean Won":     "financials",
+        "Russian Ruble":        "financials",
+        "Indian Rupee":         "financials",
+        "Chinese Renminbi":     "financials",
+        "South African Rand":   "financials",
+        "Turkish Lira":         "financials",
+        "Singapore Dollar":     "financials",
+        "Norwegian Krone":      "financials",
+        "Swedish Krona":        "financials",
+        "Czech Koruna":         "financials",
+        "Polish Zloty":         "financials",
+        "Hungarian Forint":     "financials",
+    }
+
+    def aggregate_by_sector(
+        self,
+        markets: Optional[List[str]] = None,
+        trader_type: str = "mm",
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Group commodities/financials by sector and compute sector-level net positioning.
+
+        Sectors produced: "energy", "metals", "agriculture", "financials".
+
+        Returns dict[sector_name → {
+            avg_cot_index: float | None,
+            net_position_sum: float,   # sum of mm_net across markets with data
+            market_count: int,
+            markets: List[str],
+        }]
+
+        markets: if None, uses all markets in _ALL_MARKETS.
+        """
+        if markets is None:
+            markets = self._coverage.list_all_markets()
+
+        sector_data: Dict[str, Dict[str, Any]] = {}
+
+        for mkt in markets:
+            sector = self._SECTOR_MAP.get(mkt)
+            if sector is None:
+                # Attempt alias resolution
+                try:
+                    canonical, _ = self._coverage.resolve_market(mkt)
+                    sector = self._SECTOR_MAP.get(canonical)
+                except Exception:
+                    pass
+            if sector is None:
+                sector = "other"
+
+            if sector not in sector_data:
+                sector_data[sector] = {
+                    "avg_cot_index":   None,
+                    "net_position_sum": 0.0,
+                    "market_count":    0,
+                    "markets":         [],
+                    "_indices":        [],
+                }
+
+            try:
+                idx = self._engine.compute_cot_index(mkt, trader_type=trader_type)
+                if not np.isnan(idx):
+                    sector_data[sector]["_indices"].append(idx)
+                    sector_data[sector]["market_count"] += 1
+                    sector_data[sector]["markets"].append(mkt)
+            except Exception:
+                pass
+
+        # Finalise averages
+        for sec, data in sector_data.items():
+            indices = data.pop("_indices", [])
+            if indices:
+                data["avg_cot_index"] = round(float(np.mean(indices)), 1)
+            else:
+                data["avg_cot_index"] = None
+
+        return sector_data
+
+    # ------------------------------------------------------------------
+    # Historical backtest
+    # ------------------------------------------------------------------
+
+    def backtest_extreme_positioning(
+        self,
+        market: str,
+        cot_history: pd.DataFrame,
+        price_history: pd.Series,
+        extreme_threshold: float = 20.0,
+        price_move_pct: float = 5.0,
+        forward_weeks: int = 4,
+        trader_type: str = "mm",
+    ) -> Dict[str, Any]:
+        """
+        Backtest how often extreme COT positioning (>80 or <20) preceded
+        a price move > price_move_pct% over the following forward_weeks.
+
+        Parameters
+        ----------
+        market          : market name (for display only — filtering done on cot_history)
+        cot_history     : DataFrame with columns [as_of_date, mm_net, open_interest, ...]
+                          (already filtered to the target market)
+        price_history   : pd.Series of weekly close prices, indexed by date.
+        extreme_threshold: COT index level below which "extreme short" applies,
+                           and above (100-threshold) "extreme long" applies.
+        price_move_pct  : required forward price move magnitude to count as "win".
+        forward_weeks   : how many weeks ahead to measure the price move.
+        trader_type     : "mm" (managed money) or "comm" (commercials).
+
+        Returns
+        -------
+        dict with:
+            total_signals       : int
+            long_signals        : int   (COT extreme long — contrarian short)
+            short_signals       : int   (COT extreme short — contrarian long)
+            winning_signals     : int
+            win_rate_pct        : float
+            avg_forward_return_pct : float
+            backtest_market     : str
+            forward_weeks       : int
+            extreme_threshold   : float
+            price_move_threshold_pct : float
+        """
+        if cot_history.empty or price_history.empty:
+            return {
+                "total_signals": 0, "long_signals": 0, "short_signals": 0,
+                "winning_signals": 0, "win_rate_pct": 0.0,
+                "avg_forward_return_pct": 0.0, "backtest_market": market,
+                "forward_weeks": forward_weeks,
+                "extreme_threshold": extreme_threshold,
+                "price_move_threshold_pct": price_move_pct,
+            }
+
+        df = cot_history.copy()
+        if "as_of_date" in df.columns:
+            df["as_of_date"] = pd.to_datetime(df["as_of_date"], errors="coerce")
+            df = df.sort_values("as_of_date").dropna(subset=["as_of_date"])
+
+        net_col = f"{trader_type}_net"
+        if net_col not in df.columns:
+            net_col = "mm_net" if "mm_net" in df.columns else None
+        if net_col is None:
+            return {
+                "total_signals": 0, "long_signals": 0, "short_signals": 0,
+                "winning_signals": 0, "win_rate_pct": 0.0,
+                "avg_forward_return_pct": 0.0, "backtest_market": market,
+                "forward_weeks": forward_weeks,
+                "extreme_threshold": extreme_threshold,
+                "price_move_threshold_pct": price_move_pct,
+            }
+
+        price_idx = price_history.copy()
+        if not isinstance(price_idx.index, pd.DatetimeIndex):
+            price_idx.index = pd.to_datetime(price_idx.index, errors="coerce")
+
+        lookback = 52
+        signals: List[Dict[str, Any]] = []
+        net_series = _safe_num(df[net_col]).values
+
+        for i in range(lookback, len(df)):
+            window  = net_series[i - lookback: i + 1]
+            current = window[-1]
+            mn, mx  = window.min(), window.max()
+            rng     = mx - mn
+
+            if rng == 0:
+                cot_idx_val = 50.0
+            else:
+                cot_idx_val = float(np.clip((current - mn) / rng * 100, 0, 100))
+
+            is_extreme_long  = cot_idx_val > (100.0 - extreme_threshold)
+            is_extreme_short = cot_idx_val < extreme_threshold
+
+            if not (is_extreme_long or is_extreme_short):
+                continue
+
+            signal_date = df.iloc[i]["as_of_date"]
+            fwd_date    = signal_date + timedelta(weeks=forward_weeks)
+
+            # Find nearest price at signal date and forward date
+            try:
+                p_now = price_idx.asof(signal_date)
+                p_fwd = price_idx.asof(fwd_date)
+                if pd.isna(p_now) or pd.isna(p_fwd) or p_now == 0:
+                    continue
+                fwd_return = (p_fwd - p_now) / abs(p_now) * 100
+            except Exception:
+                continue
+
+            # Contrarian signal: extreme long → expected DOWN, extreme short → expected UP
+            if is_extreme_long:
+                win = fwd_return < -price_move_pct
+                direction = "LONG"
+            else:
+                win = fwd_return > price_move_pct
+                direction = "SHORT"
+
+            signals.append({
+                "date":      signal_date,
+                "direction": direction,
+                "cot_index": cot_idx_val,
+                "fwd_return": fwd_return,
+                "win":       win,
+            })
+
+        total     = len(signals)
+        long_sig  = sum(1 for s in signals if s["direction"] == "LONG")
+        short_sig = total - long_sig
+        wins      = sum(1 for s in signals if s["win"])
+        win_rate  = wins / total * 100 if total > 0 else 0.0
+        avg_ret   = float(np.mean([s["fwd_return"] for s in signals])) if signals else 0.0
+
+        return {
+            "total_signals":              total,
+            "long_signals":               long_sig,
+            "short_signals":              short_sig,
+            "winning_signals":            wins,
+            "win_rate_pct":               round(win_rate, 2),
+            "avg_forward_return_pct":     round(avg_ret, 4),
+            "backtest_market":            market,
+            "forward_weeks":              forward_weeks,
+            "extreme_threshold":          extreme_threshold,
+            "price_move_threshold_pct":   price_move_pct,
+        }
+
+    # ------------------------------------------------------------------
+    # Disaggregated CSV parser (proper CFTC format)
+    # ------------------------------------------------------------------
+
+    def parse_disaggregated_report(
+        self,
+        content: str,
+    ) -> pd.DataFrame:
+        """
+        Parse CFTC disaggregated CSV with all trader categories.
+
+        CFTC disaggregated format includes four trader categories:
+            - Producer/Merchant (commercials / hedgers)
+            - Swap Dealers
+            - Managed Money (large speculators)
+            - Other Reportable
+
+        Column mapping applied:
+            Prod_Merc_Positions_Long/Short → comm_long / comm_short
+            Swap_Positions_Long/Short      → swap_long / swap_short
+            M_Money_Positions_Long/Short   → mm_long  / mm_short
+            Other_Rept_Positions_Long/Short→ other_long / other_short
+
+        Computed net fields:
+            mm_net, comm_net, swap_net, other_net, nonrep_net
+
+        Uses COTDataDownloader.parse_cot_csv() internally and returns
+        a DataFrame with the fully normalised disaggregated columns.
+        """
+        downloader = COTDataDownloader()
+        df = downloader.parse_cot_csv(content, report_type="disaggregated")
+        return df
 
     def get_full_dashboard(self) -> pd.DataFrame:
         """Return combined commodity + financial COT dashboard."""

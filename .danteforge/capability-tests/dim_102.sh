@@ -160,5 +160,65 @@ assert env.grade == "B-", f"Score 3.5 should be grade B-: {env.grade}"
 assert env.has_environmental_litigation is True
 print(f"[OK] EnvironmentalScore: ticker={env.ticker} score={env.score} grade={env.grade}")
 
+# ------------------------------------------------------------------
+# Wave-9 additions: compute_esg_momentum, detect_greenwashing_risk,
+# compute_controversy_adjusted_esg
+# ------------------------------------------------------------------
+from sentinel.sfe.esg_ratings_engine import (
+    compute_esg_momentum,
+    detect_greenwashing_risk,
+    compute_controversy_adjusted_esg,
+)
+
+# Test compute_esg_momentum
+momentum = compute_esg_momentum(7.5, 6.0)
+assert momentum["delta"] == 1.5, f"Delta should be 1.5: {momentum['delta']}"
+assert momentum["momentum_signal"] == "positive", \
+    f"Positive delta -> positive signal: {momentum['momentum_signal']}"
+print(f"[OK] compute_esg_momentum: delta={momentum['delta']} signal={momentum['momentum_signal']}")
+
+momentum_neg = compute_esg_momentum(5.0, 7.0)
+assert momentum_neg["delta"] == -2.0, f"Negative delta: {momentum_neg['delta']}"
+assert momentum_neg["momentum_signal"] == "negative"
+print(f"[OK] compute_esg_momentum (negative): delta={momentum_neg['delta']}")
+
+momentum_flat = compute_esg_momentum(6.0, 6.0)
+assert momentum_flat["delta"] == 0.0
+assert momentum_flat["momentum_signal"] == "neutral"
+print(f"[OK] compute_esg_momentum (flat): signal={momentum_flat['momentum_signal']}")
+
+# Test detect_greenwashing_risk
+# gap > 15 pts → greenwashing flag
+gw = detect_greenwashing_risk(75.0, 55.0)
+assert gw["gap"] == 20.0, f"Gap should be 20: {gw['gap']}"
+assert gw["greenwashing_risk"] is True, f"Gap>15 -> greenwashing risk: {gw['greenwashing_risk']}"
+assert gw["risk_level"] == "moderate", f"20pt gap -> moderate: {gw['risk_level']}"
+print(f"[OK] detect_greenwashing_risk: gap={gw['gap']} risk={gw['greenwashing_risk']} level={gw['risk_level']}")
+
+# gap <= 15 pts → no greenwashing
+no_gw = detect_greenwashing_risk(60.0, 55.0)
+assert no_gw["greenwashing_risk"] is False, f"Gap<=15 -> no greenwashing: {no_gw}"
+assert no_gw["risk_level"] in ("low", "none"), f"5pt gap -> low/none: {no_gw['risk_level']}"
+print(f"[OK] detect_greenwashing_risk (safe): gap={no_gw['gap']} risk={no_gw['greenwashing_risk']}")
+
+# Test compute_controversy_adjusted_esg
+# base_score=80, num_controversies=3, penalty=3*0.05=0.15 -> 80*(1-0.15)=68.0
+adjusted = compute_controversy_adjusted_esg(80.0, 3)
+expected_penalty = 3 * 0.05
+expected_score = 80.0 * (1.0 - expected_penalty)
+assert abs(adjusted["controversy_penalty"] - expected_penalty) < 1e-9, \
+    f"Penalty should be {expected_penalty}: {adjusted['controversy_penalty']}"
+assert abs(adjusted["controversy_adjusted"] - expected_score) < 1e-9, \
+    f"Adjusted score should be {expected_score}: {adjusted['controversy_adjusted']}"
+print(f"[OK] compute_controversy_adjusted_esg: 3 controversies -> penalty={adjusted['controversy_penalty']:.2f} adjusted={adjusted['controversy_adjusted']:.2f}")
+
+# Max penalty capped at 0.30: 10 controversies * 0.05 = 0.50 -> capped at 0.30
+capped = compute_controversy_adjusted_esg(100.0, 10)
+assert capped["controversy_penalty"] == 0.30, \
+    f"Penalty capped at 0.30: {capped['controversy_penalty']}"
+assert abs(capped["controversy_adjusted"] - 70.0) < 1e-9, \
+    f"100*(1-0.30)=70: {capped['controversy_adjusted']}"
+print(f"[OK] compute_controversy_adjusted_esg (cap): 10 controversies -> penalty={capped['controversy_penalty']} adjusted={capped['controversy_adjusted']}")
+
 print("\n[PASS] dim_102: ESG ratings")
 PYEOF

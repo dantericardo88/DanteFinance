@@ -1495,6 +1495,233 @@ class CompsEngine:
     # Sector multiples
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Peer premium/discount z-scores
+    # ------------------------------------------------------------------
+
+    def compute_peer_premium_discount(
+        self,
+        ticker: str,
+        peers: Optional[list[str]] = None,
+    ) -> dict[str, Any]:
+        """For each multiple, compute the z-score of target vs. peer median.
+
+        z = (target_multiple - peer_median) / peer_std
+
+        Positive z → trading at a premium; negative → discount.
+        Returns a dict mapping multiple_name → {"target": v, "peer_median": m,
+        "peer_std": s, "z_score": z, "premium_pct": pct}.
+        """
+        ticker_upper = ticker.upper()
+        if peers is None:
+            peers = self.get_peer_tickers(ticker_upper)
+
+        target_mults = self.get_multiples(ticker_upper)
+        target_dict  = target_mults.model_dump()
+
+        multiple_cols = [
+            "ev_revenue_ltm", "ev_ebitda_ltm", "ev_ebit_ltm",
+            "pe_ltm", "p_book", "p_fcf", "p_sales",
+            "net_debt_ebitda", "ebitda_margin", "net_margin",
+            "gross_margin", "rev_growth_yoy", "roic", "roe", "roa",
+        ]
+
+        # Collect peer values per multiple
+        peer_vals: dict[str, list[float]] = {col: [] for col in multiple_cols}
+        for t in peers:
+            try:
+                m = self.get_multiples(t)
+                md = m.model_dump()
+                for col in multiple_cols:
+                    v = md.get(col)
+                    if v is not None and not math.isnan(v):
+                        peer_vals[col].append(v)
+            except Exception:
+                continue
+
+        result: dict[str, Any] = {}
+        for col in multiple_cols:
+            target_val = target_dict.get(col)
+            vals = peer_vals.get(col, [])
+            if target_val is None or len(vals) < 2:
+                result[col] = None
+                continue
+
+            arr = np.array(vals)
+            peer_median = float(np.median(arr))
+            peer_std    = float(np.std(arr, ddof=1))
+
+            if peer_std == 0:
+                z_score = 0.0
+            else:
+                z_score = (target_val - peer_median) / peer_std
+
+            premium_pct = (
+                (target_val - peer_median) / abs(peer_median) * 100
+                if peer_median != 0 else None
+            )
+
+            result[col] = {
+                "target":        round(target_val, 4),
+                "peer_median":   round(peer_median, 4),
+                "peer_std":      round(peer_std, 4),
+                "z_score":       round(z_score, 4),
+                "premium_pct":   round(premium_pct, 2) if premium_pct is not None else None,
+                "peer_n":        len(vals),
+            }
+
+        return {
+            "subject_ticker": ticker_upper,
+            "peer_count":     len(peers),
+            "multiples":      result,
+        }
+
+    # ------------------------------------------------------------------
+    # LBO implied price (back-solve for 25% IRR at 6× exit)
+    # ------------------------------------------------------------------
+
+    def run_lbo_implied_price(
+        self,
+        ticker: str,
+        target_irr: float = 0.25,
+        exit_multiple: float = 6.0,
+        hold_years: int = 5,
+        debt_pct: float = 0.60,
+        interest_rate: float = 0.07,
+        tax_rate: float = 0.25,
+    ) -> dict[str, Any]:
+        """Back-solve: what entry price yields target_irr at exit_multiple × EBITDA?
+
+        Mechanics (simplified LBO):
+          entry_ev   = entry_price_per_share × shares + net_debt
+          debt       = entry_ev × debt_pct
+          equity_in  = entry_ev × (1 − debt_pct)
+
+          EBITDA grows at CAGR (use rev_cagr_2yr or 5% fallback).
+          exit_ev    = exit_ebitda × exit_multiple
+          exit_debt  = debt − cumulative_debt_paydown (estimated as FCF × hold_years × 0.5)
+          exit_equity = max(0, exit_ev − exit_debt)
+
+          IRR satisfies: equity_in × (1 + IRR)^hold_years = exit_equity
+
+          Back-solve for entry_ev such that IRR = target_irr:
+            exit_equity = equity_in × (1 + IRR)^hold_years
+            exit_ev = exit_ebitda × exit_multiple
+            exit_debt = debt − FCF_paydown
+            equity_in = exit_equity / (1 + IRR)^hold_years
+            entry_ev = equity_in / (1 − debt_pct)
+
+          Then: entry_price = (entry_ev − net_debt) / shares
+        """
+        f = self.get_fundamentals(ticker.upper())
+        m = self.get_multiples(ticker.upper())
+
+        if f.ebitda_ltm is None or f.ebitda_ltm <= 0:
+            return {"error": "EBITDA not available", "ticker": ticker.upper()}
+
+        # Growth assumption
+        ebitda_cagr = (m.rev_cagr_2yr or 0.05)
+        exit_ebitda = f.ebitda_ltm * (1 + ebitda_cagr) ** hold_years
+        exit_ev     = exit_ebitda * exit_multiple
+
+        # Debt paydown: estimate FCF available for paydown
+        annual_fcf  = f.fcf_ltm or (f.ebitda_ltm * 0.4)
+        fcf_paydown = annual_fcf * hold_years * 0.5   # assume 50% used for debt paydown
+
+        # Back-solve for entry equity that yields target_irr
+        irr_factor  = (1 + target_irr) ** hold_years      # required equity growth factor
+
+        # exit_equity = exit_ev - exit_debt
+        # entry_equity = exit_equity / irr_factor
+        # entry_ev = entry_equity / (1 - debt_pct)
+        # entry_price = (entry_ev - net_debt) / shares
+
+        # We need to solve iteratively because exit_debt depends on entry_ev
+        # Use fixed-point: start with current EV, iterate 5 times
+        net_debt_val = f.net_debt or 0.0
+        shares       = f.shares_out or 1.0
+
+        entry_ev_est = f.enterprise_value or (f.market_cap or 1e9)
+        for _ in range(10):
+            debt_in     = entry_ev_est * debt_pct
+            equity_in   = entry_ev_est * (1 - debt_pct)
+            exit_debt   = max(0, debt_in - fcf_paydown)
+            exit_equity = max(0, exit_ev - exit_debt)
+            # Required entry_equity for target_irr
+            req_equity_in = exit_equity / irr_factor
+            new_entry_ev  = req_equity_in / (1 - debt_pct)
+            if abs(new_entry_ev - entry_ev_est) < 1e3:
+                entry_ev_est = new_entry_ev
+                break
+            entry_ev_est = new_entry_ev
+
+        implied_price = max(0, (entry_ev_est - net_debt_val) / shares)
+
+        # Sanity metrics
+        actual_irr: Optional[float] = None
+        if equity_in > 0:
+            actual_irr = (exit_equity / equity_in) ** (1 / hold_years) - 1
+
+        return {
+            "ticker":           ticker.upper(),
+            "target_irr":       target_irr,
+            "exit_multiple":    exit_multiple,
+            "hold_years":       hold_years,
+            "debt_pct":         debt_pct,
+            "entry_ev":         round(entry_ev_est, 0),
+            "implied_price":    round(implied_price, 2),
+            "current_price":    f.price,
+            "updown_pct":       round((implied_price / f.price - 1) * 100, 1) if f.price else None,
+            "exit_ebitda":      round(exit_ebitda, 0),
+            "exit_ev":          round(exit_ev, 0),
+            "fcf_paydown":      round(fcf_paydown, 0),
+            "implied_irr_check": round(actual_irr, 4) if actual_irr is not None else None,
+            "ebitda_cagr_used": round(ebitda_cagr, 4),
+        }
+
+    # ------------------------------------------------------------------
+    # EV → Equity bridge
+    # ------------------------------------------------------------------
+
+    def compute_ev_bridge(
+        self,
+        enterprise_value: float,
+        net_debt: float,
+        minority_interest: float = 0.0,
+        preferred_equity: float = 0.0,
+    ) -> dict[str, float]:
+        """Compute the EV → equity bridge.
+
+        equity_value = EV − net_debt − minority_interest − preferred_equity
+
+        All inputs in the same currency units (typically USD).
+        Returns a breakdown dict with each deduction and the final equity value.
+
+        The identity verified to 1e-10:
+            equity_value + net_debt + minority_interest + preferred_equity == enterprise_value
+        """
+        equity_value = enterprise_value - net_debt - minority_interest - preferred_equity
+
+        # Verification — must hold to floating-point precision
+        recon = equity_value + net_debt + minority_interest + preferred_equity
+        residual = abs(recon - enterprise_value)
+        assert residual < 1e-10, (
+            f"EV bridge accounting identity failed: residual={residual:.2e}"
+        )
+
+        return {
+            "enterprise_value":    enterprise_value,
+            "less_net_debt":       net_debt,
+            "less_minority_interest": minority_interest,
+            "less_preferred_equity":  preferred_equity,
+            "equity_value":        equity_value,
+            "bridge_residual":     residual,   # should be ~0
+        }
+
+    # ------------------------------------------------------------------
+    # Sector multiples
+    # ------------------------------------------------------------------
+
     def sector_multiples(self, sic_code: str) -> dict[str, Any]:
         """Aggregate multiples for all companies in a SIC sector."""
         sic_padded = sic_code.zfill(4)

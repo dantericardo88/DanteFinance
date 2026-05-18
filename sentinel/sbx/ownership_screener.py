@@ -25,6 +25,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
 import httpx
+import numpy as np
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -1017,6 +1018,158 @@ class OwnershipScreener:
 # ---------------------------------------------------------------------------
 # Module-level convenience coroutines
 # ---------------------------------------------------------------------------
+
+
+    # ------------------------------------------------------------------
+    # New analytics methods
+    # ------------------------------------------------------------------
+
+    def compute_institutional_momentum(
+        self,
+        quarterly_shares: list[float],
+    ) -> dict:
+        """Institutional momentum — net buying rate and z-score.
+
+        Args:
+            quarterly_shares: List of total institutional share counts per quarter
+                              (oldest first, most recent last).  Minimum 2 entries
+                              required; 8 recommended for z-score stability.
+
+        Returns:
+            {
+              "net_institutional_buying": float  — QoQ change in shares (most recent),
+              "qoq_changes": list[float]         — all quarter-over-quarter deltas,
+              "z_score": float | None            — z-score of most recent QoQ change
+                                                   (None if < 2 data points),
+            }
+        """
+        if len(quarterly_shares) < 2:
+            return {"net_institutional_buying": 0.0, "qoq_changes": [], "z_score": None}
+
+        qoq_changes = [
+            quarterly_shares[i] - quarterly_shares[i - 1]
+            for i in range(1, len(quarterly_shares))
+        ]
+        net_buying = qoq_changes[-1]
+
+        z_score: float | None = None
+        if len(qoq_changes) >= 2:
+            mean = np.mean(qoq_changes)
+            std = np.std(qoq_changes, ddof=1)
+            if std > 0:
+                z_score = float((net_buying - mean) / std)
+            else:
+                z_score = 0.0
+
+        return {
+            "net_institutional_buying": float(net_buying),
+            "qoq_changes": [float(c) for c in qoq_changes],
+            "z_score": round(z_score, 4) if z_score is not None else None,
+        }
+
+    def screen_by_ownership_quality(
+        self,
+        profiles: list["OwnershipProfile"],
+        activist_presence: bool | None = None,
+        min_hedge_fund_concentration: float | None = None,
+    ) -> list["OwnershipProfile"]:
+        """Filter ownership profiles by quality characteristics.
+
+        Quality criteria (OR logic — any satisfied criterion passes):
+          - activist_presence = True  →  one or more 13D filings present
+          - hedge_fund_concentration > threshold  →  top-5 holders are concentrated funds
+
+        Args:
+            profiles: List of OwnershipProfile objects to filter.
+            activist_presence: If True, require at least one activist holder.
+            min_hedge_fund_concentration: Minimum pct of top-5 holders that are
+                                          known hedge funds (0.0–1.0).  Default 0.30.
+
+        Returns:
+            Filtered list of OwnershipProfile objects.
+        """
+        if min_hedge_fund_concentration is None:
+            min_hedge_fund_concentration = 0.30
+
+        # Known hedge fund names (partial match, lowercase)
+        _HEDGE_FUND_KEYWORDS = {
+            "tiger", "coatue", "lone pine", "d1 capital", "viking", "citadel",
+            "pershing", "third point", "elliott", "appaloosa", "greenlight",
+            "soros", "druckenmiller", "baupost",
+        }
+
+        def _is_hedge_fund(name: str) -> bool:
+            name_lower = name.lower()
+            return any(kw in name_lower for kw in _HEDGE_FUND_KEYWORDS)
+
+        passed: list[OwnershipProfile] = []
+        for p in profiles:
+            passes = False
+
+            # Criterion 1: activist presence
+            if activist_presence is True:
+                # Check new positions — proxy for activism if any position flagged
+                new_mgr_names = [c.manager_name for c in p.new_positions_90d]
+                if new_mgr_names:
+                    passes = True
+
+            # Criterion 2: hedge fund concentration in top-5
+            if not passes and p.top_5_holders:
+                hf_count = sum(1 for h in p.top_5_holders if _is_hedge_fund(h.get("manager_name", "")))
+                concentration = hf_count / len(p.top_5_holders)
+                if concentration > min_hedge_fund_concentration:
+                    passes = True
+
+            if passes:
+                passed.append(p)
+
+        return passed
+
+    def compute_float_squeeze_score(
+        self,
+        short_interest: float,
+        float_shares: float,
+    ) -> dict:
+        """Float squeeze potential score.
+
+        float_short_ratio = short_interest / float_shares
+
+        Classification:
+          > 0.30   → extreme squeeze potential
+          > 0.20   → high squeeze potential
+          > 0.10   → elevated short interest
+          <= 0.10  → normal
+
+        Args:
+            short_interest: Number of shares currently sold short.
+            float_shares: Number of freely tradeable shares (float).
+
+        Returns:
+            {
+              "float_short_ratio": float,
+              "squeeze_potential": str  — "extreme" | "high" | "elevated" | "normal",
+              "extreme_flag": bool,
+            }
+        """
+        if float_shares <= 0:
+            return {"float_short_ratio": 0.0, "squeeze_potential": "normal", "extreme_flag": False}
+
+        ratio = short_interest / float_shares
+
+        if ratio > 0.30:
+            potential = "extreme"
+        elif ratio > 0.20:
+            potential = "high"
+        elif ratio > 0.10:
+            potential = "elevated"
+        else:
+            potential = "normal"
+
+        return {
+            "float_short_ratio": round(ratio, 4),
+            "squeeze_potential": potential,
+            "extreme_flag": ratio > 0.20,
+        }
 
 
 async def ownership_profile(ticker: str) -> OwnershipProfile:

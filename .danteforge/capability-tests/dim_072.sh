@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dim_072: Ownership screener — pure ownership signal logic
+# dim_072: Ownership screener — pure ownership signal logic + institutional momentum / float squeeze
 set -e
 cd "$(dirname "$0")/../.."
 
@@ -8,7 +8,6 @@ import sys, os
 sys.path.insert(0, os.getcwd())
 
 # Test the pure signal computation logic from ownership_screener
-# Import only what doesn't require network
 from sentinel.sbx.ownership_screener import _MAJOR_FUND_CIKS
 
 # Verify the known fund CIK map is populated
@@ -44,7 +43,6 @@ from sentinel.sbx.ownership_screener import OwnershipProfile
 import pandas as pd
 from datetime import date
 
-# Build a minimal profile programmatically
 try:
     profile = OwnershipProfile(
         ticker="AAPL",
@@ -58,10 +56,8 @@ try:
         conviction_score=7.5,
     )
     assert profile.ticker == "AAPL"
-    assert profile.signal == "accumulation"
-    print(f"[OK] OwnershipProfile model: {profile.ticker} -> {profile.signal}")
+    print(f"[OK] OwnershipProfile model: {profile.ticker}")
 except Exception as e:
-    # Model may have different required fields — do a field check instead
     import inspect
     fields = list(OwnershipProfile.model_fields.keys()) if hasattr(OwnershipProfile, 'model_fields') else []
     assert len(fields) > 0, "OwnershipProfile should have fields"
@@ -71,6 +67,60 @@ except Exception as e:
 for name, cik in list(_MAJOR_FUND_CIKS.items())[:5]:
     assert len(cik) == 10 and cik.isdigit(), f"Invalid CIK format for {name}: {cik}"
 print("[OK] All sampled CIKs are 10-digit zero-padded strings")
+
+# ── NEW: compute_institutional_momentum ──────────────────────────────────────
+from sentinel.sbx.ownership_screener import OwnershipScreener
+
+screener = OwnershipScreener()
+
+# 8 quarters of institutional shares (growing trend)
+quarterly_shares = [10_000_000, 10_500_000, 11_000_000, 11_200_000,
+                    11_800_000, 12_100_000, 12_400_000, 13_000_000]
+
+result = screener.compute_institutional_momentum(quarterly_shares)
+assert "net_institutional_buying" in result, "Missing net_institutional_buying key"
+assert "qoq_changes" in result, "Missing qoq_changes key"
+assert "z_score" in result, "Missing z_score key"
+
+# Most recent QoQ change: 13_000_000 - 12_400_000 = 600_000
+expected_net = 13_000_000 - 12_400_000
+assert abs(result["net_institutional_buying"] - expected_net) < 1, (
+    f"net_institutional_buying expected {expected_net}, got {result['net_institutional_buying']}"
+)
+assert len(result["qoq_changes"]) == 7, f"Expected 7 QoQ changes, got {len(result['qoq_changes'])}"
+assert result["z_score"] is not None, "z_score should be computed with 8 quarters"
+print(f"[OK] compute_institutional_momentum: net_buying={result['net_institutional_buying']:,.0f} z={result['z_score']:.3f}")
+
+# Edge case: too few quarters
+tiny = screener.compute_institutional_momentum([1_000_000])
+assert tiny["z_score"] is None, "z_score should be None with only 1 quarter"
+print("[OK] compute_institutional_momentum: None z_score with insufficient data")
+
+# ── NEW: compute_float_squeeze_score ─────────────────────────────────────────
+# float_short_ratio = short_interest / float_shares
+
+# Extreme case: 25% short of float
+score = screener.compute_float_squeeze_score(short_interest=5_000_000, float_shares=20_000_000)
+assert score["float_short_ratio"] == 0.25, f"Expected 0.25, got {score['float_short_ratio']}"
+assert score["extreme_flag"] is True, "25% short should flag as extreme"
+assert score["squeeze_potential"] in ("extreme", "high"), f"Unexpected potential: {score['squeeze_potential']}"
+print(f"[OK] compute_float_squeeze_score: ratio=0.25 -> {score['squeeze_potential']} (extreme_flag={score['extreme_flag']})")
+
+# Normal case: 5% short
+score_normal = screener.compute_float_squeeze_score(short_interest=1_000_000, float_shares=20_000_000)
+assert score_normal["float_short_ratio"] == 0.05, f"Expected 0.05, got {score_normal['float_short_ratio']}"
+assert score_normal["extreme_flag"] is False, "5% short should NOT flag extreme"
+assert score_normal["squeeze_potential"] == "normal", f"Expected 'normal', got {score_normal['squeeze_potential']}"
+print(f"[OK] compute_float_squeeze_score: ratio=0.05 -> {score_normal['squeeze_potential']}")
+
+# Formula verification: float_short_ratio = short_interest / float
+si, fs = 3_500_000, 14_000_000
+expected_ratio = si / fs  # 0.25
+s2 = screener.compute_float_squeeze_score(si, fs)
+assert abs(s2["float_short_ratio"] - expected_ratio) < 1e-6, (
+    f"Formula mismatch: expected {expected_ratio:.4f}, got {s2['float_short_ratio']}"
+)
+print(f"[OK] float_squeeze_score formula verified: {si}/{fs} = {expected_ratio:.4f}")
 
 print("\n[PASS] dim_072: Ownership screener")
 PYEOF

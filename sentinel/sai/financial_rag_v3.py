@@ -396,6 +396,30 @@ class PersistentVectorStore:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_vd_ticker ON vec_docs(ticker)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_vd_form ON vec_docs(form_type)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_vd_year ON vec_docs(year)")
+        # FTS5 virtual table for hybrid keyword search
+        try:
+            conn.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS vec_docs_fts
+                USING fts5(doc_id UNINDEXED, content, ticker, section,
+                           content='vec_docs', content_rowid='rowid')
+            """)
+            # Trigger to keep FTS in sync
+            conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS vec_docs_fts_ai
+                AFTER INSERT ON vec_docs BEGIN
+                    INSERT INTO vec_docs_fts(rowid, doc_id, content, ticker, section)
+                    VALUES (new.rowid, new.doc_id, new.content, new.ticker, new.section);
+                END
+            """)
+            conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS vec_docs_fts_ad
+                AFTER DELETE ON vec_docs BEGIN
+                    INSERT INTO vec_docs_fts(vec_docs_fts, rowid, doc_id, content, ticker, section)
+                    VALUES ('delete', old.rowid, old.doc_id, old.content, old.ticker, old.section);
+                END
+            """)
+        except Exception as fts_exc:
+            logger.debug("FTS5 setup note: %s", fts_exc)
         conn.commit()
 
     def _init_sqlite_vec(self) -> None:
@@ -684,6 +708,348 @@ class PersistentVectorStore:
                 (new_content, blob, doc_id),
             )
             conn.commit()
+
+    # ------------------------------------------------------------------
+    # Hybrid search (vector cosine + FTS5 BM25 keyword)
+    # ------------------------------------------------------------------
+
+    def hybrid_search(
+        self,
+        query: str,
+        k: int = 10,
+        filter: Optional[Dict[str, Any]] = None,
+        vector_weight: float = 0.7,
+        keyword_weight: float = 0.3,
+    ) -> List[RetrievedChunk]:
+        """
+        Reciprocal-rank fusion of vector similarity + FTS5 BM25 keyword search.
+        Falls back to pure vector search on non-SQLite backends.
+        """
+        if self._backend == "chromadb":
+            return self.search(query, k, filter)
+
+        # 1. Vector search (top 2k candidates)
+        vector_results = self.search(query, k=k * 2, filter=filter)
+        vector_rank: Dict[str, int] = {r.doc_id: i for i, r in enumerate(vector_results)}
+
+        # 2. FTS5 keyword search
+        fts_rank: Dict[str, int] = {}
+        try:
+            conn = self._get_conn()
+            # Build FTS query: escape special chars, require all words
+            fts_query = " ".join(
+                w for w in re.findall(r"[a-zA-Z0-9]+", query) if len(w) > 2
+            )
+            if fts_query:
+                where_clause = ""
+                params: list = [fts_query]
+                if filter:
+                    extra = []
+                    for col, val in filter.items():
+                        if val is not None and col in ("ticker", "section"):
+                            extra.append(f"AND vd.{col} = ?")
+                            params.append(val)
+                    where_clause = " ".join(extra)
+                rows = conn.execute(
+                    f"""SELECT vd.doc_id FROM vec_docs_fts fts
+                        JOIN vec_docs vd ON vd.rowid = fts.rowid
+                        WHERE vec_docs_fts MATCH ?
+                        {where_clause}
+                        ORDER BY rank
+                        LIMIT ?""",
+                    params + [k * 2],
+                ).fetchall()
+                fts_rank = {row[0]: i for i, row in enumerate(rows)}
+        except Exception as fts_exc:
+            logger.debug("FTS5 search failed (fallback to vector only): %s", fts_exc)
+
+        # 3. Reciprocal Rank Fusion
+        all_doc_ids = set(vector_rank.keys()) | set(fts_rank.keys())
+        rrf_k = 60  # RRF constant
+        scores: Dict[str, float] = {}
+        for doc_id in all_doc_ids:
+            v_rank = vector_rank.get(doc_id, len(vector_rank) + rrf_k)
+            f_rank = fts_rank.get(doc_id, len(fts_rank) + rrf_k)
+            scores[doc_id] = (
+                vector_weight / (rrf_k + v_rank)
+                + keyword_weight / (rrf_k + f_rank)
+            )
+
+        # 4. Map doc_ids back to RetrievedChunk objects, re-ranked by RRF score
+        chunk_map: Dict[str, RetrievedChunk] = {r.doc_id: r for r in vector_results}
+
+        # Fetch any FTS-only results not in vector results
+        fts_only = set(fts_rank.keys()) - set(vector_rank.keys())
+        if fts_only:
+            try:
+                conn = self._get_conn()
+                placeholders = ",".join("?" * len(fts_only))
+                rows = conn.execute(
+                    f"SELECT doc_id, content, ticker, form_type, year, quarter, "
+                    f"section, source_url, file_date FROM vec_docs "
+                    f"WHERE doc_id IN ({placeholders})",
+                    list(fts_only),
+                ).fetchall()
+                for row in rows:
+                    chunk_map[row[0]] = RetrievedChunk(
+                        doc_id=row[0], content=row[1], score=0.0,
+                        ticker=row[2] or "", form_type=row[3] or "",
+                        year=row[4], quarter=row[5], section=row[6],
+                        source_url=row[7], file_date=row[8],
+                    )
+            except Exception:
+                pass
+
+        sorted_ids = sorted(scores.keys(), key=lambda d: scores[d], reverse=True)
+        results: List[RetrievedChunk] = []
+        for rank, doc_id in enumerate(sorted_ids[:k]):
+            if doc_id in chunk_map:
+                chunk = chunk_map[doc_id]
+                chunk.score = scores[doc_id]
+                chunk.rank = rank
+                results.append(chunk)
+        return results
+
+    # ------------------------------------------------------------------
+    # Entity-linked retrieval
+    # ------------------------------------------------------------------
+
+    def entity_linked_search(
+        self,
+        query: str,
+        entity_extractor: "FinancialEntityExtractor",
+        k: int = 10,
+    ) -> List[RetrievedChunk]:
+        """
+        Entity-aware retrieval:
+          1. Extract entities (tickers, companies) from the query.
+          2. For each recognised ticker, run a targeted search filtered by that ticker.
+          3. Merge and de-duplicate results, prioritising entity-matched chunks.
+        """
+        entities = entity_extractor.extract_entities(query)
+
+        # Resolve company names → tickers
+        linked_tickers = list(entities.tickers)
+        for company in entities.companies:
+            ticker = entity_extractor.link_entity_to_ticker(company)
+            if ticker and ticker not in linked_tickers:
+                linked_tickers.append(ticker)
+
+        if not linked_tickers:
+            return self.search(query, k=k)
+
+        all_chunks: List[RetrievedChunk] = []
+        seen_ids: set = set()
+        per_ticker_k = max(3, k // max(len(linked_tickers), 1))
+
+        for ticker in linked_tickers[:5]:  # limit to 5 entities
+            chunks = self.search(query, k=per_ticker_k, filter={"ticker": ticker})
+            for chunk in chunks:
+                if chunk.doc_id not in seen_ids:
+                    chunk.score *= 1.1  # boost entity-matched chunks by 10%
+                    seen_ids.add(chunk.doc_id)
+                    all_chunks.append(chunk)
+
+        # Fill remaining slots with generic search if needed
+        if len(all_chunks) < k:
+            generic = self.search(query, k=k * 2)
+            for chunk in generic:
+                if chunk.doc_id not in seen_ids:
+                    seen_ids.add(chunk.doc_id)
+                    all_chunks.append(chunk)
+
+        all_chunks.sort(key=lambda c: c.score, reverse=True)
+        for rank, chunk in enumerate(all_chunks[:k]):
+            chunk.rank = rank
+        return all_chunks[:k]
+
+
+# ---------------------------------------------------------------------------
+# Standalone TF-IDF index helpers (sklearn-free, pure numpy)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class TFIDFIndex:
+    """Lightweight in-memory TF-IDF index for small corpora."""
+    documents: List[str]
+    doc_ids: List[str]
+    vocab: Dict[str, int]
+    idf: np.ndarray           # (vocab_size,)
+    tfidf_matrix: np.ndarray  # (n_docs, vocab_size)
+
+    # SQLite FTS5 database path (set when build_index persists to SQLite)
+    fts_db_path: Optional[str] = None
+
+
+def build_index(
+    documents: List[str],
+    doc_ids: Optional[List[str]] = None,
+    persist_path: Optional[str] = None,
+) -> TFIDFIndex:
+    """
+    Build a TF-IDF index over a list of document strings.
+
+    Parameters
+    ----------
+    documents  : list of text strings (the corpus)
+    doc_ids    : optional list of IDs; defaults to "doc_{i}"
+    persist_path : if given, also store in SQLite FTS5 at this path
+
+    Returns
+    -------
+    TFIDFIndex ready for use with :func:`query`.
+    """
+    if not documents:
+        empty_vocab: Dict[str, int] = {}
+        empty_idf = np.zeros(0, dtype=np.float32)
+        empty_mat = np.zeros((0, 0), dtype=np.float32)
+        return TFIDFIndex([], [], empty_vocab, empty_idf, empty_mat)
+
+    if doc_ids is None:
+        doc_ids = [f"doc_{i}" for i in range(len(documents))]
+
+    # Tokenise
+    def _tok(text: str) -> List[str]:
+        return re.findall(r"[a-z0-9]+", text.lower())
+
+    tokenised = [_tok(d) for d in documents]
+    n = len(documents)
+
+    # Document frequency
+    df: Counter = Counter()
+    for tokens in tokenised:
+        df.update(set(tokens))
+
+    # Vocabulary (top 16 384 by DF)
+    vocab_tokens = [tok for tok, _ in df.most_common(16384)]
+    vocab: Dict[str, int] = {tok: idx for idx, tok in enumerate(vocab_tokens)}
+    v = len(vocab)
+
+    # IDF
+    idf = np.zeros(v, dtype=np.float32)
+    for tok, idx in vocab.items():
+        idf[idx] = math.log((n + 1) / (df[tok] + 1)) + 1.0
+
+    # TF-IDF matrix
+    tfidf_matrix = np.zeros((n, v), dtype=np.float32)
+    for i, tokens in enumerate(tokenised):
+        tf: Counter = Counter(tokens)
+        total = max(len(tokens), 1)
+        for tok, cnt in tf.items():
+            idx = vocab.get(tok)
+            if idx is not None:
+                tfidf_matrix[i, idx] = (cnt / total) * idf[idx]
+
+    # L2-normalise rows
+    norms = np.linalg.norm(tfidf_matrix, axis=1, keepdims=True)
+    norms = np.where(norms == 0, 1.0, norms)
+    tfidf_matrix /= norms
+
+    fts_db_path: Optional[str] = None
+
+    # Optionally persist to SQLite FTS5
+    if persist_path:
+        fts_db_path = persist_path
+        _SQLITE_VEC_PATH.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(persist_path)
+        try:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS fts_docs (
+                    doc_id TEXT PRIMARY KEY,
+                    content TEXT NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS fts_index
+                USING fts5(doc_id UNINDEXED, content, content='fts_docs', content_rowid='rowid')
+            """)
+            rows = [(did, doc) for did, doc in zip(doc_ids, documents)]
+            conn.executemany(
+                "INSERT OR REPLACE INTO fts_docs (doc_id, content) VALUES (?, ?)", rows
+            )
+            conn.executemany(
+                "INSERT OR REPLACE INTO fts_index (rowid, doc_id, content) "
+                "SELECT rowid, doc_id, content FROM fts_docs WHERE doc_id = ?",
+                [(did,) for did in doc_ids],
+            )
+            conn.commit()
+        except Exception as exc:
+            logger.debug("FTS5 persist failed: %s", exc)
+        finally:
+            conn.close()
+
+    return TFIDFIndex(
+        documents=documents,
+        doc_ids=doc_ids,
+        vocab=vocab,
+        idf=idf,
+        tfidf_matrix=tfidf_matrix,
+        fts_db_path=fts_db_path,
+    )
+
+
+@dataclass
+class Chunk:
+    """A retrieved text chunk from :func:`query`."""
+    doc_id: str
+    content: str
+    score: float
+    rank: int = 0
+
+
+def tfidf_query(
+    index: TFIDFIndex,
+    question: str,
+    top_k: int = 5,
+) -> List[Chunk]:
+    """
+    Cosine-similarity search over a :class:`TFIDFIndex`.
+
+    Parameters
+    ----------
+    index    : TFIDFIndex built by :func:`build_index`
+    question : query string
+    top_k    : number of results to return
+
+    Returns
+    -------
+    List of :class:`Chunk` objects sorted by descending similarity.
+    """
+    if not index.documents or not index.vocab:
+        return []
+
+    # Vectorise the query using the index vocabulary/IDF
+    q_tokens = re.findall(r"[a-z0-9]+", question.lower())
+    q_vec = np.zeros(len(index.vocab), dtype=np.float32)
+    tf: Counter = Counter(q_tokens)
+    total = max(len(q_tokens), 1)
+    for tok, cnt in tf.items():
+        idx = index.vocab.get(tok)
+        if idx is not None:
+            q_vec[idx] = (cnt / total) * index.idf[idx]
+
+    # L2-normalise query
+    q_norm = float(np.linalg.norm(q_vec))
+    if q_norm > 0:
+        q_vec /= q_norm
+
+    # Cosine similarity (dot product since rows are L2-normalised)
+    scores = index.tfidf_matrix @ q_vec  # (n_docs,)
+
+    # Top-k selection
+    top_indices = np.argpartition(scores, -min(top_k, len(scores)))[-min(top_k, len(scores)):]
+    top_indices = top_indices[np.argsort(scores[top_indices])[::-1]]
+
+    results: List[Chunk] = []
+    for rank, idx in enumerate(top_indices):
+        if scores[idx] > 0:
+            results.append(Chunk(
+                doc_id=index.doc_ids[idx],
+                content=index.documents[idx],
+                score=float(scores[idx]),
+                rank=rank,
+            ))
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -1241,16 +1607,53 @@ class LlamaIndexAdapter:
 
     @staticmethod
     def _fallback_pdf_read(path: str) -> str:
-        """Try pdfminer or just read as text."""
+        """Try pdfplumber → pdfminer → raw bytes in priority order."""
+        # 1. pdfplumber: best table and layout-aware extraction
+        try:
+            import pdfplumber  # type: ignore
+            text_parts: list = []
+            with pdfplumber.open(path) as pdf:
+                for page in pdf.pages:
+                    page_text = page.extract_text() or ""
+                    # Also extract tables as TSV if present
+                    for table in page.extract_tables():
+                        for row in table:
+                            row_text = "\t".join(str(cell or "") for cell in row)
+                            if row_text.strip():
+                                text_parts.append(row_text)
+                    if page_text.strip():
+                        text_parts.append(page_text)
+            result = "\n".join(text_parts)
+            if result.strip():
+                logger.info("LlamaIndexAdapter: extracted %d chars via pdfplumber", len(result))
+                return result
+        except ImportError:
+            logger.debug("pdfplumber not available, trying pdfminer")
+        except Exception as exc:
+            logger.debug("pdfplumber failed: %s", exc)
+
+        # 2. pdfminer fallback
         try:
             from pdfminer.high_level import extract_text  # type: ignore
-            return extract_text(path)
+            result = extract_text(path)
+            if result and result.strip():
+                logger.info("LlamaIndexAdapter: extracted %d chars via pdfminer", len(result))
+                return result
         except ImportError:
-            pass
+            logger.debug("pdfminer not available")
+        except Exception as exc:
+            logger.debug("pdfminer failed: %s", exc)
+
+        # 3. Raw bytes last resort — strip PDF binary noise with regex
         try:
             with open(path, "rb") as f:
                 raw = f.read()
-            return raw.decode("utf-8", errors="replace")
+            text = raw.decode("latin-1", errors="replace")
+            # Extract readable ASCII runs from PDF binary
+            readable = re.findall(r"[\x20-\x7E]{6,}", text)
+            result = "\n".join(readable)
+            logger.info("LlamaIndexAdapter: raw-bytes fallback, %d chars", len(result))
+            return result
         except Exception:
             return ""
 

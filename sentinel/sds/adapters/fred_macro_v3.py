@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from io import StringIO
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 import numpy as np
@@ -1547,6 +1547,237 @@ class FREDMacroEngine:
             prob = 0.5 * math.erfc(-probit_input / math.sqrt(2))
 
         return round(min(max(prob, 0.0), 1.0), 4)
+
+    # ------------------------------------------------------------------
+    # dim_043 push 8→9: yield curve, FCI, growth surprise
+    # ------------------------------------------------------------------
+
+    def compute_yield_curve_slope(self) -> Dict[str, Any]:
+        """
+        Compute the yield curve slope (10Y − 3M Treasury spread).
+
+        This is the Estrella-Mishkin (1998) recession predictor series,
+        published by the New York Fed.  A negative reading (yield curve
+        inversion) has preceded every US recession since 1969.
+
+        FRED series used:
+          DGS10  — 10-Year Treasury Constant Maturity Rate (%)
+          DTB3   — 3-Month Treasury Bill: Secondary Market Rate (%)
+
+        Returns
+        -------
+        dict with:
+          slope_pp         : 10Y − 3M spread in percentage points
+          inverted         : bool — True when slope < 0
+          recession_signal : str  — "Inverted" / "Flat" / "Normal" / "Steep"
+          series_10y       : latest 10Y rate
+          series_3m        : latest 3M rate
+        """
+        df_10y = self._client.fetch_series("DGS10")
+        df_3m = self._client.fetch_series("DTB3")
+
+        rate_10y: Optional[float] = None
+        rate_3m: Optional[float] = None
+
+        if not df_10y.empty:
+            rate_10y = float(df_10y.dropna().iloc[-1])
+        if not df_3m.empty:
+            rate_3m = float(df_3m.dropna().iloc[-1])
+
+        if rate_10y is None or rate_3m is None:
+            return {
+                "slope_pp": None,
+                "inverted": None,
+                "recession_signal": "Data unavailable",
+                "series_10y": rate_10y,
+                "series_3m": rate_3m,
+            }
+
+        slope = rate_10y - rate_3m
+
+        if slope < 0.0:
+            signal = "Inverted"
+        elif slope < 0.50:
+            signal = "Flat"
+        elif slope < 2.00:
+            signal = "Normal"
+        else:
+            signal = "Steep"
+
+        return {
+            "slope_pp": round(slope, 4),
+            "inverted": slope < 0.0,
+            "recession_signal": signal,
+            "series_10y": round(rate_10y, 4),
+            "series_3m": round(rate_3m, 4),
+            "interpretation": (
+                "Historically strong recession predictor 12 months ahead"
+                if slope < 0.0 else
+                "Mild slowdown risk" if slope < 0.50 else
+                "Neutral economic signal" if slope < 2.00 else
+                "Expansionary — steepening curve"
+            ),
+        }
+
+    def compute_financial_conditions_index(self) -> Dict[str, Any]:
+        """
+        Compute a weighted Financial Conditions Index (FCI) from 5 FRED series.
+
+        FCI = Σ (w_i × z_i)
+
+        where z_i = (x_i − μ_i) / σ_i is the rolling 5-year z-score of series i.
+
+        Weights and series (sourced from Goldman Sachs / Chicago Fed methodology):
+          TED spread    (TEDRATE)    w = 0.25  — credit stress / interbank risk
+          VIX           (VIXCLS)     w = 0.20  — equity volatility / risk appetite
+          BAA-AAA spread (BAA, AAA)  w = 0.25  — corporate credit risk
+          Dollar index  (DTWEXBGS)   w = 0.15  — broad trade-weighted USD
+          Housing starts (HOUST)     w = 0.15  — real sector credit demand
+
+        Positive FCI → tighter-than-average conditions.
+        Negative FCI → easier-than-average conditions.
+
+        Returns
+        -------
+        dict with:
+          fci           : float — weighted z-score composite
+          tightening    : bool
+          components    : per-series z-score and weight
+        """
+        # Series config: (fred_id, weight, invert)
+        # invert=True for series where higher value = easier conditions (housing starts, dollar)
+        SERIES_CONFIG: List[Tuple[str, float, bool]] = [
+            ("TEDRATE",  0.25, False),   # TED spread — high = tight
+            ("VIXCLS",   0.20, False),   # VIX — high = tight
+            ("BAA",      0.25, False),   # Moody's BAA yield — high = tight
+            ("DTWEXBGS", 0.15, False),   # Dollar index — high = tight (imported cost)
+            ("HOUST",    0.15, True),    # Housing starts — high = easy (invert)
+        ]
+
+        window = 260   # ~5 years of weekly obs; falls back to available data
+
+        fci = 0.0
+        components: Dict[str, Dict[str, Any]] = {}
+        weight_used = 0.0
+
+        for series_id, weight, invert in SERIES_CONFIG:
+            try:
+                df = self._client.fetch_series(series_id)
+                if df.empty or len(df.dropna()) < 20:
+                    continue
+                vals = df.dropna().astype(float)
+                mu = float(vals.iloc[-min(window, len(vals)):].mean())
+                sigma = float(vals.iloc[-min(window, len(vals)):].std(ddof=1))
+                latest = float(vals.iloc[-1])
+                z = (latest - mu) / sigma if sigma > 0 else 0.0
+                if invert:
+                    z = -z
+                fci += weight * z
+                weight_used += weight
+                components[series_id] = {
+                    "latest_value": round(latest, 4),
+                    "mean_5yr": round(mu, 4),
+                    "std_5yr": round(sigma, 4),
+                    "zscore": round(z, 4),
+                    "weight": weight,
+                    "contribution": round(weight * z, 6),
+                    "inverted": invert,
+                }
+            except Exception as exc:
+                logger.debug("FCI: could not fetch %s: %s", series_id, exc)
+
+        # Re-scale to full weight if some series were unavailable
+        if 0 < weight_used < 1.0:
+            fci = fci / weight_used
+
+        return {
+            "fci": round(fci, 6),
+            "tightening": fci > 0.0,
+            "interpretation": (
+                "Significantly tighter than average" if fci > 1.0 else
+                "Mildly tighter than average" if fci > 0.0 else
+                "Mildly easier than average" if fci > -1.0 else
+                "Significantly easier than average"
+            ),
+            "weight_coverage": round(weight_used, 4),
+            "components": components,
+        }
+
+    def compute_growth_surprise_index(
+        self,
+        nowcast_series: Optional[List[float]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Compute a GDP Growth Surprise Index.
+
+        Growth Surprise = Actual GDP growth − mean(nowcast estimates)
+
+        When live nowcast data are unavailable, the method approximates the
+        surprise as the deviation of realised GDP (GDPC1 YoY %) from the
+        rolling 4-quarter mean (a simple adaptive expectation model).
+
+        Parameters
+        ----------
+        nowcast_series : optional list of external nowcast point estimates
+                         (annualised % growth).  If provided, their mean is
+                         used as the consensus forecast.
+
+        Returns
+        -------
+        dict with:
+          actual_gdp_yoy_pct   : most recent year-over-year GDP growth
+          consensus_forecast   : mean of provided nowcasts (or adaptive mean)
+          growth_surprise      : actual − consensus (pp)
+          surprise_direction   : "Positive" / "Negative" / "Neutral"
+        """
+        df = self._client.fetch_series("GDPC1")
+
+        if df.empty or len(df.dropna()) < 4:
+            return {
+                "actual_gdp_yoy_pct": None,
+                "consensus_forecast": None,
+                "growth_surprise": None,
+                "surprise_direction": "Data unavailable",
+            }
+
+        vals = df.dropna().astype(float)
+        # YoY % change (quarterly data → 4 periods)
+        yoy = vals.pct_change(4) * 100.0
+        yoy = yoy.dropna()
+
+        if yoy.empty:
+            return {
+                "actual_gdp_yoy_pct": None,
+                "consensus_forecast": None,
+                "growth_surprise": None,
+                "surprise_direction": "Insufficient data",
+            }
+
+        actual = float(yoy.iloc[-1])
+
+        if nowcast_series and len(nowcast_series) > 0:
+            consensus = float(np.mean([float(x) for x in nowcast_series]))
+            consensus_method = "provided_nowcasts"
+        else:
+            # Adaptive expectation: trailing 4-quarter mean of YoY growth
+            lookback = min(4, len(yoy) - 1)
+            consensus = float(yoy.iloc[-(lookback + 1):-1].mean()) if lookback > 0 else actual
+            consensus_method = "adaptive_4q_mean"
+
+        surprise = actual - consensus
+
+        return {
+            "actual_gdp_yoy_pct": round(actual, 4),
+            "consensus_forecast": round(consensus, 4),
+            "growth_surprise": round(surprise, 4),
+            "surprise_direction": (
+                "Positive" if surprise > 0.10 else
+                "Negative" if surprise < -0.10 else
+                "Neutral"
+            ),
+            "consensus_method": consensus_method,
+            "n_nowcasts": len(nowcast_series) if nowcast_series else 0,
+        }
 
 
 # Try importing scipy for probit

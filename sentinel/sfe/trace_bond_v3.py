@@ -1559,6 +1559,306 @@ class BondScreener:
 
 
 # ---------------------------------------------------------------------------
+# FINRA TRACE live trade feed
+# ---------------------------------------------------------------------------
+
+FINRA_TRACE_URL = "https://api.finra.org/data/group/fixedIncome/name/tradesMid"
+_TRACE_TIMEOUT  = 15
+
+
+class TRACELiveFeed:
+    """
+    Fetch real-time TRACE trade reports from the FINRA public API.
+
+    FINRA Market Data API — no authentication required for public endpoints.
+    Endpoint: https://api.finra.org/data/group/fixedIncome/name/tradesMid
+
+    Each trade record contains:
+        tradeDate, cusip, quantity (par $k), price, yield fields.
+    """
+
+    _BASE_URL = FINRA_TRACE_URL
+    _HEADERS  = {
+        "User-Agent": "SENTINEL financial-terminal/3.0 richard.porras@realempanada.com",
+        "Accept":     "application/json",
+    }
+
+    def __init__(self, timeout: int = _TRACE_TIMEOUT) -> None:
+        self._timeout = timeout
+        self._cache: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
+        self._cache_ttl = 300.0  # 5-minute cache per CUSIP
+
+    def get_recent_trades(
+        self,
+        cusip: str,
+        n: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch the most recent N TRACE trades for a CUSIP.
+
+        Returns a list of dicts with keys:
+            date (str), cusip (str), quantity (float, par $k),
+            price (float), yield_ (float)
+
+        Returns empty list on network error or if CUSIP not found.
+        Results are cached for 5 minutes to avoid rate-limit issues.
+        """
+        now = time.time()
+        if cusip in self._cache:
+            ts, cached_trades = self._cache[cusip]
+            if now - ts < self._cache_ttl:
+                return cached_trades[:n]
+
+        try:
+            params = {
+                "fields":      "tradeDate,cusip,quantity,price,yield",
+                "compareFilters": f'[{{"fieldName":"cusip","fieldValue":"{cusip}","compareType":"EQUAL"}}]',
+                "limit":       str(n),
+                "sortFields":  "tradeDate",
+                "sortOrder":   "DESC",
+            }
+            resp = requests.get(
+                self._BASE_URL,
+                params=params,
+                headers=self._HEADERS,
+                timeout=self._timeout,
+            )
+            resp.raise_for_status()
+            raw = resp.json()
+
+            trades: List[Dict[str, Any]] = []
+            records = raw if isinstance(raw, list) else raw.get("data", raw.get("records", []))
+            for rec in records:
+                try:
+                    trades.append({
+                        "date":     str(rec.get("tradeDate", "")),
+                        "cusip":    str(rec.get("cusip", cusip)),
+                        "quantity": float(rec.get("quantity", 0) or 0),
+                        "price":    float(rec.get("price", 0) or 0),
+                        "yield_":   float(rec.get("yield", rec.get("yield_", 0)) or 0),
+                    })
+                except (TypeError, ValueError):
+                    continue
+
+            self._cache[cusip] = (now, trades)
+            return trades[:n]
+
+        except Exception as exc:
+            logger.debug("TRACE feed error for %s: %s", cusip, exc)
+            return []
+
+    @staticmethod
+    def vwap(trades: List[Dict[str, Any]]) -> Optional[float]:
+        """
+        Compute VWAP from a list of TRACE trade dicts.
+
+        VWAP = sum(quantity * price) / sum(quantity)
+
+        Returns None if trades is empty or total quantity is zero.
+        """
+        if not trades:
+            return None
+        total_qty   = sum(t.get("quantity", 0) for t in trades)
+        total_value = sum(t.get("quantity", 0) * t.get("price", 0) for t in trades)
+        if total_qty == 0:
+            return None
+        return total_value / total_qty
+
+    def is_recent(
+        self,
+        trades: List[Dict[str, Any]],
+        max_hours: float = 24.0,
+    ) -> bool:
+        """
+        Return True if the most recent trade in the list is within max_hours.
+
+        Parses trade date strings in YYYY-MM-DD or ISO-8601 formats.
+        Falls back to False on parse error.
+        """
+        if not trades:
+            return False
+        try:
+            latest_str = trades[0].get("date", "")
+            # Handle YYYY-MM-DD or ISO datetime
+            if "T" in latest_str or " " in latest_str:
+                latest_dt = datetime.fromisoformat(latest_str.replace(" ", "T").rstrip("Z"))
+            else:
+                latest_dt = datetime.strptime(latest_str[:10], "%Y-%m-%d")
+            age_hours = (datetime.utcnow() - latest_dt).total_seconds() / 3600.0
+            return age_hours <= max_hours
+        except Exception:
+            return False
+
+
+# ---------------------------------------------------------------------------
+# Spread analytics enhancements
+# ---------------------------------------------------------------------------
+
+class SpreadAnalytics:
+    """
+    Extended spread and duration analytics for corporate bonds.
+
+    Implements I-spread, asset-swap spread, and running DV01.
+    All methods are pure math — no network calls.
+    """
+
+    @staticmethod
+    def i_spread(ytm_pct: float, swap_rate_pct: float) -> float:
+        """
+        I-spread = YTM minus the interpolated swap rate (basis points).
+
+        The swap rate is typically the on-the-run SOFR swap rate at the
+        bond's maturity tenor.  Use FRED SOFR or a static swap curve.
+
+        Example: YTM 5.5%, swap rate 4.5% → I-spread = 100 bps.
+        """
+        return round((ytm_pct - swap_rate_pct) * 100.0, 2)
+
+    @staticmethod
+    def asset_swap_spread(
+        coupon_pct: float,
+        par_swap_rate_pct: float,
+        price: float = 100.0,
+    ) -> float:
+        """
+        Asset-swap spread (ASW) for a bond priced close to par.
+
+        For an at-par bond the ASW ≈ coupon − par_swap_rate.
+        For off-par bonds a price adjustment is applied:
+            ASW ≈ coupon − par_swap_rate − (price − 100) / duration_approx
+
+        duration_approx is set to 5 years as a simplification when price
+        adjustment is needed.  Use BondMath.modified_duration for precision.
+
+        Returns basis points.
+        """
+        base_asw = (coupon_pct - par_swap_rate_pct) * 100.0
+        # Price adjustment: for off-par bonds amortise price premium/discount
+        if abs(price - 100.0) > 0.01:
+            duration_approx = 5.0
+            price_adj = (price - 100.0) / duration_approx  # in price-pct pts / yr
+            base_asw -= price_adj * 100.0  # convert to bps
+        return round(base_asw, 2)
+
+    @staticmethod
+    def running_dv01(
+        dv01_per_1m: float,
+        face_value: float,
+        position_size: float,
+    ) -> float:
+        """
+        Running DV01 = DV01 per $1M × (face_value × position_size / 1_000_000).
+
+        dv01_per_1m   : DV01 in dollars per $1M notional (from BondMath.dv01)
+        face_value     : face / par value of one bond ($, typically 1000)
+        position_size  : number of bonds held
+
+        Returns total portfolio DV01 in dollars per 1 bp move.
+        """
+        notional = face_value * position_size
+        return round(dv01_per_1m * notional / 1_000_000.0, 4)
+
+    @staticmethod
+    def get_sofr_swap_rate(
+        maturity_years: float,
+        curve: Optional[Dict[str, float]] = None,
+    ) -> float:
+        """
+        Return SOFR swap rate proxy for a given maturity, using the Treasury
+        curve (FRED) as proxy.  A constant 15 bps SOFR-vs-Treasury adjustment
+        is applied to approximate the SOFR swap rate.
+
+        curve: Treasury yield curve {tenor_label: yield_pct} from TreasuryOASService.
+        Falls back to _TSY_FALLBACK if curve is None.
+        """
+        tsy_curve = curve or _TSY_FALLBACK
+        tsy_yield = BondMath.interpolate_treasury_yield(tsy_curve, maturity_years)
+        sofr_adj  = 0.15  # approximate SOFR–Treasury basis
+        return round(tsy_yield + sofr_adj, 4)
+
+
+# ---------------------------------------------------------------------------
+# Bond price consolidator (TRACE + model blend)
+# ---------------------------------------------------------------------------
+
+class BondPriceConsolidator:
+    """
+    Blend FINRA TRACE live trades with the FRED OAS model price.
+
+    Priority rule:
+        If TRACE has a trade within the last 24 hours →
+            use TRACE VWAP as the primary price (with model as fallback).
+        Otherwise →
+            use model price from BondPricer.
+
+    Provides a single consolidated_price() method.
+    """
+
+    def __init__(
+        self,
+        pricer:    Optional[BondPricer]    = None,
+        trace_feed: Optional[TRACELiveFeed] = None,
+        max_trace_age_hours: float = 24.0,
+    ) -> None:
+        self._pricer     = pricer    or BondPricer()
+        self._trace      = trace_feed or TRACELiveFeed()
+        self._max_age    = max_trace_age_hours
+
+    def consolidated_price(
+        self,
+        issuer_ticker: str,
+        bond: Dict[str, Any],
+        n_trace_trades: int = 20,
+    ) -> Dict[str, Any]:
+        """
+        Return consolidated pricing dict for a bond.
+
+        Fields added over BondPricer.price_bond():
+            trace_vwap            : float | None — VWAP from recent TRACE trades
+            trace_trade_count     : int   — number of TRACE trades used
+            price_source          : str   — "TRACE" or "MODEL"
+            consolidated_price    : float — final recommended price
+        """
+        # Get model price baseline
+        model_result = self._pricer.price_bond(issuer_ticker, bond)
+        model_price  = model_result["model_price"]
+
+        cusip  = str(bond.get("cusip", ""))
+        trades = self._trace.get_recent_trades(cusip, n=n_trace_trades) if cusip else []
+        vwap   = TRACELiveFeed.vwap(trades)
+        recent = self._trace.is_recent(trades, max_hours=self._max_age)
+
+        if vwap is not None and recent:
+            price_source = "TRACE"
+            final_price  = vwap
+        else:
+            price_source = "MODEL"
+            final_price  = model_price
+
+        return {
+            **model_result,
+            "trace_vwap":         round(vwap, 4) if vwap is not None else None,
+            "trace_trade_count":  len(trades),
+            "price_source":       price_source,
+            "consolidated_price": round(final_price, 4),
+        }
+
+    def price_issuer(
+        self,
+        issuer_ticker: str,
+        n_trace_trades: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """Consolidated price for all bonds of an issuer."""
+        issuer = ISSUER_REGISTRY.get(issuer_ticker.upper())
+        if not issuer:
+            return []
+        return [
+            self.consolidated_price(issuer_ticker, bond, n_trace_trades)
+            for bond in issuer.get("bonds", [])
+        ]
+
+
+# ---------------------------------------------------------------------------
 # FastAPI router
 # ---------------------------------------------------------------------------
 

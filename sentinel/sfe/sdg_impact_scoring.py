@@ -1858,3 +1858,163 @@ def build_esg_exclusion_list(
         if violators:
             exclusions[sdg_id] = violators
     return exclusions
+
+
+# ---------------------------------------------------------------------------
+# dim_105 wave-9 additions: alignment score, conflict detection, ranking
+# ---------------------------------------------------------------------------
+
+# SIC codes that map to POSITIVE SDG impacts (per SDG_POSITIVE_SIC mapping)
+# Derived from the SIC_SDG_MAP in sdg_impact_v3: SDGs 3,4,6,7,9,11,17 are
+# generally considered "positive" impact sectors
+_POSITIVE_SDG_SIC_CODES: frozenset[str] = frozenset({
+    # SDG 3 Good Health
+    "2830", "2833", "2835", "2836", "3841", "3842", "3845", "8011", "8049",
+    "8051", "8071", "8099",
+    # SDG 4 Quality Education
+    "7372", "8200", "8211", "8221",
+    # SDG 6 Clean Water
+    "4941", "4952",
+    # SDG 7 Clean Energy
+    "4911", "4924", "4931", "4991",
+    # SDG 9 Innovation
+    "3674", "7379", "7374", "8711", "8731", "8742",
+    # SDG 11 Sustainable Cities
+    "15", "16", "17",
+    # SDG 17 Partnerships
+    "86",
+})
+
+# SIC codes known for negative SDG impacts (fossil fuels, tobacco, weapons)
+_NEGATIVE_SDG_SIC_CODES: frozenset[str] = frozenset({
+    "11", "12", "13", "2911", "21", "2100", "3761", "3812",
+})
+
+
+def compute_sdg_alignment_score(
+    sic_revenues: dict[str, float],
+) -> float:
+    """
+    Compute SDG alignment score for a company.
+
+    Formula:
+        alignment_score = (revenue in positive SDG SIC codes / total revenue) * 100
+
+    Parameters
+    ----------
+    sic_revenues : dict mapping SIC code prefix → revenue amount in USD
+                   e.g. {"2836": 500_000_000, "2911": 100_000_000}
+
+    Returns
+    -------
+    float: alignment score 0–100 (% of revenues in positive SDG impact sectors)
+    """
+    total_revenue = sum(sic_revenues.values())
+    if total_revenue <= 0:
+        return 0.0
+
+    positive_revenue = 0.0
+    for sic_code, revenue in sic_revenues.items():
+        # Check 4-digit, 3-digit, 2-digit matches
+        sic_str = str(sic_code).strip()
+        matched = False
+        for length in (4, 3, 2):
+            prefix = sic_str[:length]
+            if prefix in _POSITIVE_SDG_SIC_CODES:
+                matched = True
+                break
+        if matched:
+            positive_revenue += revenue
+
+    alignment_score = (positive_revenue / total_revenue) * 100.0
+    return round(max(0.0, min(100.0, alignment_score)), 2)
+
+
+def detect_sdg_conflicts(
+    positive_sdgs: list[int],
+    negative_sdgs: list[int],
+) -> dict:
+    """
+    Detect SDG conflicts within a company's portfolio.
+
+    A conflict exists when a company has positive impact on one SDG but
+    simultaneously negative impact on a conflicting SDG.
+
+    Key conflict pairs:
+        SDG 7 (Clean Energy) + SDG 15 (Life on Land) — e.g. solar farms on habitat
+        SDG 9 (Innovation)   + SDG 12 (Responsible Consumption) — e-waste
+        SDG 11 (Cities)      + SDG 15 (Life on Land) — urban expansion
+        SDG 2 (Zero Hunger)  + SDG 15 (Life on Land) — agricultural land use
+
+    Parameters
+    ----------
+    positive_sdgs : list of SDG numbers where company has positive impact
+    negative_sdgs : list of SDG numbers where company has negative impact
+
+    Returns
+    -------
+    dict with keys:
+        conflicts_detected : bool
+        conflict_pairs     : list of (positive_sdg, negative_sdg) tuples
+        conflict_count     : number of conflict pairs found
+    """
+    # Known SDG conflict pairs (positive_sdg, negative_sdg)
+    _CONFLICT_PAIRS: list[tuple[int, int]] = [
+        (7, 15),    # Clean Energy harms Life on Land
+        (9, 12),    # Innovation harms Responsible Consumption (e-waste)
+        (11, 15),   # Sustainable Cities harms Life on Land
+        (2, 15),    # Zero Hunger harms Life on Land (agricultural expansion)
+        (13, 9),    # Climate Action may conflict with heavy R&D infrastructure
+        (7, 14),    # Clean Energy (hydropower) harms Life Below Water
+    ]
+
+    positive_set = set(positive_sdgs)
+    negative_set = set(negative_sdgs)
+
+    found_conflicts: list[tuple[int, int]] = []
+    for pos_sdg, neg_sdg in _CONFLICT_PAIRS:
+        if pos_sdg in positive_set and neg_sdg in negative_set:
+            found_conflicts.append((pos_sdg, neg_sdg))
+
+    return {
+        "conflicts_detected": len(found_conflicts) > 0,
+        "conflict_pairs": found_conflicts,
+        "conflict_count": len(found_conflicts),
+    }
+
+
+def rank_by_sdg_impact(
+    companies: list[dict],
+    top_n: int = 10,
+) -> list[dict]:
+    """
+    Rank companies by SDG alignment score and return the top N.
+
+    Parameters
+    ----------
+    companies : list of dicts, each with at minimum:
+                    "ticker"           : str
+                    "sdg_alignment_score": float (0–100)
+                Optional keys included in output:
+                    "sector", "primary_sdg", etc.
+    top_n     : number of top companies to return (default 10)
+
+    Returns
+    -------
+    list of dicts sorted by sdg_alignment_score descending, each with:
+        rank               : 1-based rank
+        ticker             : company ticker
+        sdg_alignment_score: alignment score 0-100
+        (plus any other fields from input dicts)
+    """
+    sorted_companies = sorted(
+        companies,
+        key=lambda c: c.get("sdg_alignment_score", 0.0),
+        reverse=True,
+    )
+    ranked = []
+    for rank, company in enumerate(sorted_companies[:top_n], start=1):
+        entry = dict(company)
+        entry["rank"] = rank
+        ranked.append(entry)
+    return ranked
