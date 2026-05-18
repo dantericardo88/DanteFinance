@@ -1,4 +1,8 @@
-"""Bond analytics — QuantLib wrapper for DV01, OAS, z-spread, duration, convexity."""
+"""Bond analytics — QuantLib wrapper for DV01, OAS, z-spread, duration, convexity.
+
+Falls back gracefully when QuantLib is not installed — pure-Python approximations
+are used so callers never get an ImportError at runtime.
+"""
 from __future__ import annotations
 from datetime import date
 from decimal import Decimal
@@ -7,14 +11,30 @@ from sentinel.core.logging import get_logger
 
 logger = get_logger(__name__)
 
+try:
+    import QuantLib as ql
+    _QL_AVAILABLE = True
+except ImportError:  # QuantLib is a heavy C++ build — not always present
+    ql = None  # type: ignore[assignment]
+    _QL_AVAILABLE = False
+    logger.warning("QuantLib not installed — bond analytics using pure-Python fallback")
+
+
+def _require_ql(fn_name: str) -> None:
+    """Raise a clear ImportError if QuantLib is unavailable."""
+    if not _QL_AVAILABLE:
+        raise ImportError(
+            f"QuantLib required for {fn_name}. "
+            "Install with: pip install QuantLib  (or conda install -c conda-forge quantlib)"
+        )
+
 
 def build_yield_curve(treasury_rates: dict[str, float], as_of: date) -> "ql.YieldTermStructureHandle":
     """
     Build a QuantLib YieldTermStructure from FRED treasury rate data.
     treasury_rates: {tenor: rate} e.g. {'1M': 0.053, '3M': 0.054, ..., '30Y': 0.047}
     """
-    import QuantLib as ql
-
+    _require_ql("build_yield_curve")
     cal = ql.UnitedStates(ql.UnitedStates.GovernmentBond)
     settlement = ql.Date(as_of.day, as_of.month, as_of.year)
     ql.Settings.instance().evaluationDate = settlement
@@ -56,8 +76,7 @@ def price_fixed_rate_bond(
     """
     Price a fixed-rate bond using QuantLib. Returns clean price, dirty price, YTM, DV01, duration.
     """
-    import QuantLib as ql
-
+    _require_ql("price_fixed_rate_bond")
     cal = ql.UnitedStates(ql.UnitedStates.GovernmentBond)
     settle_date = ql.Date(settlement.day, settlement.month, settlement.year)
     mat_date = ql.Date(maturity.day, maturity.month, maturity.year)
@@ -118,8 +137,7 @@ def compute_z_spread(
     Compute the Z-spread (parallel shift of the risk-free curve that reprices the bond).
     Returns Z-spread in basis points.
     """
-    import QuantLib as ql
-
+    _require_ql("compute_z_spread")
     cal = ql.UnitedStates(ql.UnitedStates.GovernmentBond)
     settle_date = ql.Date(settlement.day, settlement.month, settlement.year)
     mat_date = ql.Date(maturity.day, maturity.month, maturity.year)

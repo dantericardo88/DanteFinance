@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+# dim_097: Private company profiles — SIC sector mapping, constants, pure logic
+set -e
+cd "$(dirname "$0")/../.."
+
+python - <<'PYEOF'
+import sys, os
+sys.path.insert(0, os.getcwd())
+import re
+
+from sentinel.sfe.private_company_profiles import (
+    _SIC_SECTORS,
+    _EXEMPTION_LABELS,
+    _HOT_SICS,
+    _REVENUE_MULTIPLES,
+    _TOP_VC_STATES,
+    _REVENUE_MIDPOINTS,
+    _clean_company_name,
+    _strip_ns,
+    _float_or_none,
+    PrivateCompanyProfile,
+    FinancingRound,
+    ExecutiveProfile,
+    SectorTrend,
+)
+
+# Test _SIC_SECTORS mapping
+assert len(_SIC_SECTORS) >= 15, f"Expected >= 15 SIC sectors: {len(_SIC_SECTORS)}"
+assert "7372" in _SIC_SECTORS, "SIC 7372 (Software) should be mapped"
+assert _SIC_SECTORS["7372"] == "Software", f"SIC 7372 should be Software: {_SIC_SECTORS['7372']}"
+assert "3674" in _SIC_SECTORS, "SIC 3674 (Semiconductors) should be mapped"
+assert "2836" in _SIC_SECTORS, "SIC 2836 (BioTech) should be mapped"
+print(f"[OK] _SIC_SECTORS: {len(_SIC_SECTORS)} sectors, 7372=Software 3674=Semiconductors")
+
+# Test _EXEMPTION_LABELS
+assert len(_EXEMPTION_LABELS) >= 8, f"Expected >= 8 exemptions: {len(_EXEMPTION_LABELS)}"
+assert "06b" in _EXEMPTION_LABELS, "Rule 506(b) should be mapped"
+assert "06c" in _EXEMPTION_LABELS, "Rule 506(c) should be mapped"
+assert "3C1" in _EXEMPTION_LABELS, "3(c)(1) should be mapped"
+assert "CF" in _EXEMPTION_LABELS, "Regulation Crowdfunding should be mapped"
+print(f"[OK] _EXEMPTION_LABELS: {len(_EXEMPTION_LABELS)} exemption types")
+
+# Test _HOT_SICS
+assert len(_HOT_SICS) >= 8, f"Expected >= 8 hot SICs: {len(_HOT_SICS)}"
+assert "7372" in _HOT_SICS, "Software SIC should be hot"
+assert "3674" in _HOT_SICS, "Semiconductor SIC should be hot"
+# All hot SICs should be in _SIC_SECTORS
+for sic in _HOT_SICS:
+    assert sic in _SIC_SECTORS, f"Hot SIC {sic} should be in _SIC_SECTORS"
+print(f"[OK] _HOT_SICS: {len(_HOT_SICS)} sectors, all present in _SIC_SECTORS")
+
+# Test _REVENUE_MULTIPLES
+assert "Software" in _REVENUE_MULTIPLES, "Software should have revenue multiples"
+assert "BioTech" in _REVENUE_MULTIPLES, "BioTech should have revenue multiples"
+for sector, mults in _REVENUE_MULTIPLES.items():
+    assert "low" in mults and "mid" in mults and "high" in mults, \
+        f"Sector {sector} should have low/mid/high multiples"
+    assert mults["low"] <= mults["mid"] <= mults["high"], \
+        f"Multiples should be ordered low <= mid <= high for {sector}"
+sw = _REVENUE_MULTIPLES["Software"]
+assert sw["low"] >= 3.0, f"Software low multiple should be substantial: {sw['low']}"
+assert sw["high"] > sw["low"], f"Software high > low: {sw}"
+print(f"[OK] _REVENUE_MULTIPLES: {len(_REVENUE_MULTIPLES)} sectors, Software low={sw['low']}x mid={sw['mid']}x high={sw['high']}x")
+
+# Test _TOP_VC_STATES
+assert len(_TOP_VC_STATES) >= 8, f"Expected >= 8 VC states: {len(_TOP_VC_STATES)}"
+assert "CA" in _TOP_VC_STATES, "California should be a top VC state"
+assert "NY" in _TOP_VC_STATES, "New York should be a top VC state"
+assert "MA" in _TOP_VC_STATES, "Massachusetts should be a top VC state"
+print(f"[OK] _TOP_VC_STATES: {len(_TOP_VC_STATES)} states including CA, NY, MA")
+
+# Test _REVENUE_MIDPOINTS
+assert "No Revenues" in _REVENUE_MIDPOINTS, "Should have 'No Revenues' category"
+assert _REVENUE_MIDPOINTS["No Revenues"] == 0, "No revenues → $0"
+# Verify midpoints are in increasing order
+sorted_keys = sorted(_REVENUE_MIDPOINTS.items(), key=lambda x: x[1])
+# The last entry should be the largest
+assert sorted_keys[-1][1] >= 1_000_000_000, f"Top category should be >= $1B: {sorted_keys[-1]}"
+print(f"[OK] _REVENUE_MIDPOINTS: {len(_REVENUE_MIDPOINTS)} bands, max={sorted_keys[-1][1]:,.0f}")
+
+# Test _clean_company_name
+assert _clean_company_name("Apple Inc.") in ("Apple", "Apple Inc"), \
+    f"Should clean 'Inc.': {_clean_company_name('Apple Inc.')}"
+assert _clean_company_name("TechVentures LLC") in ("TechVentures", "Tech"), \
+    f"Should clean 'LLC': {_clean_company_name('TechVentures LLC')}"
+# Corp should also be cleaned
+clean = _clean_company_name("Acme Corp")
+assert "Corp" not in clean, f"Should clean Corp: '{clean}'"
+print(f"[OK] _clean_company_name: 'Apple Inc.' -> '{_clean_company_name('Apple Inc.')}', 'Acme Corp' -> '{_clean_company_name('Acme Corp')}'")
+
+# Test _strip_ns
+ns_tag = "{http://www.sec.gov/XMLSchema/document}issuerName"
+stripped = _strip_ns(ns_tag)
+assert stripped == "issuerName", f"Should strip namespace: '{stripped}'"
+no_ns_tag = "issuerName"
+assert _strip_ns(no_ns_tag) == "issuerName", "Non-namespaced tag should pass through"
+print(f"[OK] _strip_ns: '{ns_tag}' -> '{stripped}'")
+
+# Test _float_or_none
+assert _float_or_none("1000000") == 1000000.0
+assert _float_or_none("1,000,000") == 1000000.0
+assert _float_or_none("$1,500,000") == 1500000.0
+assert _float_or_none("invalid") is None
+assert _float_or_none("") is None
+assert _float_or_none(None) is None
+print(f"[OK] _float_or_none: '$1,500,000'={_float_or_none('$1,500,000'):,.0f} 'invalid'=None")
+
+# Test PrivateCompanyProfile Pydantic model
+profile = PrivateCompanyProfile(
+    company_name="TechStartup Inc.",
+    clean_name="TechStartup",
+    cik="0001234567",
+    issuer_state="CA",
+    issuer_sic="7372",
+    sector="Software",
+    revenue_range="1-1000000",
+    revenue_estimate=500_000,
+    total_raised=5_000_000,
+    round_count=2,
+    is_hot_sector=True,
+    is_unicorn_candidate=False,
+)
+assert profile.company_name == "TechStartup Inc."
+assert profile.cik == "0001234567"
+assert profile.sector == "Software"
+assert profile.is_hot_sector is True
+assert profile.total_raised == 5_000_000
+print(f"[OK] PrivateCompanyProfile: {profile.company_name} sector={profile.sector} raised=${profile.total_raised:,.0f}")
+
+# Test FinancingRound
+round1 = FinancingRound(
+    accession_number="0001234567-24-000001",
+    filed_date="2024-03-15",
+    total_offering_amount=5_000_000.0,
+    amount_sold=4_200_000.0,
+    federal_exemptions=["06b"],
+    investor_count=12,
+    round_label="Series A",
+)
+assert round1.round_label == "Series A"
+assert round1.amount_sold < round1.total_offering_amount
+assert "06b" in round1.federal_exemptions
+print(f"[OK] FinancingRound: round_label={round1.round_label} amount=${round1.amount_sold:,.0f}")
+
+# Test ExecutiveProfile
+exec1 = ExecutiveProfile(
+    name="Jane Smith",
+    roles=["CEO", "Director"],
+    companies=["TechStartup Inc.", "PrevVenture LLC"],
+    filing_count=5,
+    is_serial_entrepreneur=True,
+    reputation_score=7.5,
+)
+assert exec1.is_serial_entrepreneur is True
+assert 0 <= exec1.reputation_score <= 10
+assert "CEO" in exec1.roles
+print(f"[OK] ExecutiveProfile: {exec1.name} serial_entrepreneur={exec1.is_serial_entrepreneur} score={exec1.reputation_score}")
+
+# Test SIC → sector lookup logic
+def get_sector(sic_code: str) -> str:
+    return _SIC_SECTORS.get(sic_code, "Other")
+
+assert get_sector("7372") == "Software"
+assert get_sector("3674") == "Semiconductors"
+assert get_sector("9999") == "Other"  # unknown SIC
+print(f"[OK] SIC lookup: 7372=Software 3674=Semiconductors 9999=Other")
+
+# Test valuation estimation logic (mirrors PrivateMarketComps)
+def estimate_valuation(revenue: float, sector: str) -> dict:
+    mults = _REVENUE_MULTIPLES.get(sector, _REVENUE_MULTIPLES["Other"])
+    return {
+        "low": revenue * mults["low"],
+        "mid": revenue * mults["mid"],
+        "high": revenue * mults["high"],
+    }
+
+sw_val = estimate_valuation(10_000_000, "Software")
+assert sw_val["low"] < sw_val["mid"] < sw_val["high"]
+assert sw_val["low"] >= 40_000_000, f"Software $10M ARR low valuation: ${sw_val['low']:,.0f}"
+print(f"[OK] Valuation estimate (Software $10M ARR): low=${sw_val['low']:,.0f} mid=${sw_val['mid']:,.0f} high=${sw_val['high']:,.0f}")
+
+print("\n[PASS] dim_097: Private company profiles")
+PYEOF
