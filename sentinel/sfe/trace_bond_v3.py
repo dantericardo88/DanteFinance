@@ -1094,7 +1094,13 @@ class TreasuryOASService:
     Central source of Treasury curve and OAS tier data.
 
     Caches results for the session to avoid repeated FRED calls.
+    Lazy-init: network fetch is deferred until curve(live=True) / oas(live=True)
+    is explicitly called.  The default path returns static _TSY_FALLBACK /
+    _OAS_FALLBACK so the module imports cleanly with zero network activity.
     """
+
+    # Lazy-init guard
+    _LAZY_INIT = True
 
     def __init__(self) -> None:
         self._fred    = FredFetcher()
@@ -1104,13 +1110,32 @@ class TreasuryOASService:
         self._oas_ts:   float = 0.0
         self._ttl = 3600.0   # 1 hour
 
-    def curve(self) -> Dict[str, float]:
+    def curve(self, live: bool = False) -> Dict[str, float]:
+        """Return Treasury par yield curve.
+
+        If *live* is False (default) the static fallback is returned immediately
+        with no network I/O.  Pass live=True to fetch from FRED.
+        """
+        if not live:
+            # Return cached live data if fresh, otherwise static fallback.
+            if self._curve is not None and time.time() - self._curve_ts <= self._ttl:
+                return self._curve
+            return dict(_TSY_FALLBACK)
+        # Live fetch requested
         if self._curve is None or time.time() - self._curve_ts > self._ttl:
             self._curve    = self._fred.get_treasury_curve()
             self._curve_ts = time.time()
         return self._curve
 
-    def oas(self) -> Dict[str, float]:
+    def oas(self, live: bool = False) -> Dict[str, float]:
+        """Return OAS by rating tier (basis points).
+
+        If *live* is False (default) the static fallback is returned immediately.
+        """
+        if not live:
+            if self._oas is not None and time.time() - self._oas_ts <= self._ttl:
+                return self._oas
+            return dict(_OAS_FALLBACK)
         if self._oas is None or time.time() - self._oas_ts > self._ttl:
             self._oas    = self._fred.get_oas_by_tier()
             self._oas_ts = time.time()
@@ -2043,7 +2068,7 @@ def route_yield_matrix():
 @trace_v3_router.get("/treasury-curve")
 def route_treasury_curve():
     """Live FRED Treasury par yield curve."""
-    curve = _TSY_OAS.curve()
+    curve = _TSY_OAS.curve(live=True)
     return {
         "curve":     curve,
         "source":    "FRED",
@@ -2054,7 +2079,7 @@ def route_treasury_curve():
 @trace_v3_router.get("/oas-tiers")
 def route_oas_tiers():
     """Current ICE BofA OAS by rating tier from FRED (basis points)."""
-    oas = _TSY_OAS.oas()
+    oas = _TSY_OAS.oas(live=True)
     return {
         "oas_by_tier": oas,
         "source":      "FRED (BAML OAS indices)",

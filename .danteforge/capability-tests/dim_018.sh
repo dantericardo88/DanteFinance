@@ -1,98 +1,107 @@
 #!/bin/bash
-# dim_018: Analyst estimates consensus — model interfaces and helper functions
+# dim_018: Analyst consensus estimates aggregation
+# Exit 0 = dimension verified  |  Exit 1 = not verified
 set -e
 cd "$(dirname "$0")/../.."
 
 python - <<'PYEOF'
-import sys, os
+import sys, os, math
 sys.path.insert(0, os.getcwd())
 
-from sentinel.sfe.analyst_estimates import (
-    RecommendationGrade, QuarterlyEstimate, AnalystEstimates,
-    AnalystTickerSummary, AnalystSentimentScreen,
-    _consensus_label, _classify_action,
+import numpy as np
+
+from sentinel.sai.analyst_consensus_v3 import (
+    AnalystEstimate, ConsensusSnapshot, ConsensusAnalytics,
+    EPSRevisionTracker, AnalystTracker,
+    consensus_target, buy_sell_ratio, eps_revision_signal, upside_to_target,
 )
 
-# Test 1: _consensus_label pure computation
-assert _consensus_label(1.2) == "Strong Buy"
-assert _consensus_label(1.8) == "Buy"
-assert _consensus_label(2.8) == "Hold"
-assert _consensus_label(3.8) == "Sell"
-assert _consensus_label(4.8) == "Strong Sell"
-assert _consensus_label(None) == "N/A"
-print("[OK] _consensus_label: 1.2->Strong Buy, 2.8->Hold, 4.8->Strong Sell, None->N/A")
+# ---- Build 6 analyst estimates: 3 Buy, 2 Hold, 1 Sell --------------------
+estimates = [
+    AnalystEstimate("a1", "GS",  "Buy",          120.0, 4.50, 5.10, "2025-01-01"),
+    AnalystEstimate("a2", "MS",  "Buy",          125.0, 4.60, 5.20, "2025-01-01"),
+    AnalystEstimate("a3", "JPM", "Buy",          130.0, 4.55, 5.15, "2025-01-01"),
+    AnalystEstimate("a4", "WF",  "Hold",         100.0, 4.20, 4.80, "2025-01-01"),
+    AnalystEstimate("a5", "DB",  "Hold",         105.0, 4.30, 4.90, "2025-01-01"),
+    AnalystEstimate("a6", "UBS", "Sell",          85.0, 3.80, 4.20, "2025-01-01"),
+]
 
-# Test 2: _classify_action pure computation
-assert _classify_action("Upgraded", "Buy", "Hold") == "upgrade"
-assert _classify_action("Downgraded", "Hold", "Buy") == "downgrade"
-assert _classify_action("Initiates Coverage", "Buy", "") == "initiated"
-assert _classify_action("Reiterated", "Buy", "Buy") == "reiterated"
-# Grade-based inference
-assert _classify_action("maintains", "Strong Buy", "Sell") == "upgrade"
-assert _classify_action("maintains", "Underweight", "Buy") == "downgrade"
-print("[OK] _classify_action: upgrade/downgrade/initiated/reiterated all work")
+snap = ConsensusSnapshot(ticker="XYZ", current_price=110.0, estimates=estimates)
 
-# Test 3: QuarterlyEstimate model
-qe = QuarterlyEstimate(
-    period="0q",
-    avg_estimate=2.85,
-    low_estimate=2.50,
-    high_estimate=3.20,
-    number_of_analysts=28
-)
-assert qe.period == "0q"
-assert qe.number_of_analysts == 28
-print(f"[OK] QuarterlyEstimate: period={qe.period}, avg_est={qe.avg_estimate}, n_analysts={qe.number_of_analysts}")
+# ---- Test 1: n_analysts = 6 -----------------------------------------------
+assert snap.n_analysts == 6, f"Expected 6 analysts, got {snap.n_analysts}"
+print(f"[OK] n_analysts={snap.n_analysts}")
 
-# Test 4: RecommendationGrade model
-rg = RecommendationGrade(
-    firm="Goldman Sachs",
-    to_grade="Buy",
-    from_grade="Hold",
-    action="upgrade",
-    date="2024-03-15"
-)
-assert rg.action == "upgrade"
-print(f"[OK] RecommendationGrade: {rg.firm} {rg.action} to {rg.to_grade}")
+# ---- Test 2: mean_target ≈ 110.83 ----------------------------------------
+mean_t = snap.mean_target
+targets = [120, 125, 130, 100, 105, 85]
+expected_mean = sum(targets) / len(targets)
+assert abs(mean_t - expected_mean) < 0.5, f"mean_target {mean_t:.2f} != {expected_mean:.2f}"
+print(f"[OK] mean_target={mean_t:.2f}")
 
-# Test 5: AnalystEstimates model — consensus label from rec_mean
-consensus = _consensus_label(2.3)
-ae = AnalystEstimates(
-    ticker="AAPL",
-    current_price=185.0,
-    target_mean=210.0,
-    target_median=208.0,
-    target_high=250.0,
-    target_low=160.0,
-    price_upside_pct=(210.0 - 185.0) / 185.0 * 100,
-    num_analysts=42,
-    recommendation_mean=2.3,
-    consensus_label=consensus,
-    analyst_dispersion=(250.0 - 160.0) / 210.0 * 100,
-    recent_grades=[rg],
-    upgrades_90d=5,
-    downgrades_90d=1,
-    eps_estimates=[qe],
-    revenue_estimates=[],
-    as_of="2024-03-15",
-    warnings=[]
-)
-assert ae.consensus_label == "Buy"
-assert abs(ae.price_upside_pct - (210-185)/185*100) < 1e-3
-assert ae.upgrades_90d == 5
-print(f"[OK] AnalystEstimates: {ae.ticker} consensus={ae.consensus_label}, upside={ae.price_upside_pct:.1f}%")
+# ---- Test 3: upside % is finite -------------------------------------------
+upside = snap.upside_pct
+assert math.isfinite(upside), f"upside_pct should be finite, got {upside}"
+print(f"[OK] upside_pct={upside:.2f}%")
 
-# Test 6: AnalystTickerSummary
-ats = AnalystTickerSummary(
-    ticker="MSFT",
-    upside_pct=18.5,
-    consensus="Buy",
-    num_analysts=45,
-    target_mean=450.0,
-    current_price=380.0
-)
-assert ats.upside_pct == 18.5
-print(f"[OK] AnalystTickerSummary: {ats.ticker} upside={ats.upside_pct}%")
+# ---- Test 4: buy_pct = 50% (3 buys out of 6) ----------------------------
+bp = snap.buy_pct
+assert abs(bp - 50.0) < 0.1, f"buy_pct {bp:.1f} should be 50.0%"
+print(f"[OK] buy_pct={bp:.1f}%")
 
-print("[PASS]")
+# ---- Test 5: consensus_score in (2.5, 4.0) --------------------------------
+# Scores: Buy=4, Buy=4, Buy=4, Hold=3, Hold=3, Sell=1 => mean=(4+4+4+3+3+1)/6=19/6≈3.17
+cs = snap.consensus_score
+assert 2.5 < cs < 4.0, f"consensus_score {cs:.2f} not in (2.5, 4.0)"
+print(f"[OK] consensus_score={cs:.3f} in (2.5, 4.0)")
+
+# ---- Test 6: recommendation distribution contains Buy/Hold/Sell ----------
+ca = ConsensusAnalytics(snap)
+rec_dist = ca.recommendation_distribution()
+assert rec_dist.get("Buy", 0) == 3, f"Expected 3 Buy, got {rec_dist.get('Buy',0)}"
+assert rec_dist.get("Hold", 0) == 2, f"Expected 2 Hold, got {rec_dist.get('Hold',0)}"
+assert rec_dist.get("Sell", 0) == 1, f"Expected 1 Sell, got {rec_dist.get('Sell',0)}"
+print(f"[OK] recommendation_distribution: {rec_dist}")
+
+# ---- Test 7: eps_consensus_cy finite -------------------------------------
+eps_cy = snap.eps_consensus_cy
+assert math.isfinite(eps_cy), f"eps_consensus_cy should be finite"
+print(f"[OK] eps_consensus_cy={eps_cy:.3f}")
+
+# ---- Test 8: target dispersion_cv > 0 ------------------------------------
+td = ca.target_distribution()
+cv = td["dispersion_cv"]
+assert cv > 0, f"dispersion_cv {cv:.4f} should be > 0"
+print(f"[OK] dispersion_cv={cv:.4f}")
+
+# ---- Test 9: revision_trend same snapshot → all zeros -------------------
+rev = ca.revision_trend(snap)
+assert rev["n_upgrades"] == 0
+assert rev["n_downgrades"] == 0
+assert abs(rev["eps_revision_pct"]) < 1e-9
+assert abs(rev["target_revision_pct"]) < 1e-9
+print(f"[OK] revision_trend same snapshot: n_upgrades={rev['n_upgrades']}, n_downgrades={rev['n_downgrades']}")
+
+# ---- Test 10: EPSRevisionTracker.revision_ratio = 0.667 -----------------
+tracker = EPSRevisionTracker()
+old_eps = [4.0, 4.5, 4.2, 4.8, 5.0, 4.3]
+new_eps = [4.2, 4.6, 4.1, 4.9, 4.8, 4.5]  # 4 up, 2 down
+ratio = tracker.revision_ratio(old_eps, new_eps)
+assert abs(ratio - 4/6) < 1e-6, f"revision_ratio {ratio:.4f} != {4/6:.4f}"
+print(f"[OK] revision_ratio={ratio:.4f} (4 up / 6 total = {4/6:.4f})")
+
+# ---- Test 11: AnalystTracker accuracy in [0, 1] --------------------------
+at = AnalystTracker()
+forecasts = np.array([4.0, 4.5, 5.0, 4.2])
+actuals   = np.array([4.1, 4.3, 4.9, 4.4])
+acc = at.accuracy(forecasts, actuals)
+assert 0.0 <= acc <= 1.0, f"accuracy {acc:.4f} not in [0, 1]"
+print(f"[OK] analyst accuracy={acc:.4f}")
+
+# ---- Test 12: upside_to_target convenience function ----------------------
+u = upside_to_target(current_price=110.0, mean_target=mean_t)
+assert math.isfinite(u), f"upside_to_target should be finite"
+print(f"[OK] upside_to_target={u:.2f}%")
+
+print("[PASS] dim_018: Analyst consensus aggregation")
 PYEOF

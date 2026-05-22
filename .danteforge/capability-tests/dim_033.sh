@@ -2,7 +2,7 @@
 # dim_033: edgar_search_v3 — EDGAR full-text search / NLP pipeline
 set -e
 cd "$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
-python - <<'PYEOF'
+timeout 30 python - <<'PYEOF'
 import sys, os
 sys.path.insert(0, os.getcwd())
 

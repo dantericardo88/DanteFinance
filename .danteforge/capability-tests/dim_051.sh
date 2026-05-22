@@ -133,22 +133,38 @@ with tempfile.TemporaryDirectory() as tmpdir:
     # Monkey-patch the module's DB path for isolation
     import sentinel.sai.financial_rag_v3 as _rag_mod
     orig_path = _rag_mod._SQLITE_VEC_PATH
-    _rag_mod._SQLITE_VEC_PATH = type('P', (), {'parent': type('D', (), {'mkdir': staticmethod(lambda **kw: None)})(), '__str__': lambda s: db_path_override})()
-
-    _store_engine = EmbeddingEngine(dim=64)  # small for speed
-    _store_engine._build_vocab_and_idf(corpus)
-
-    from sentinel.sai.financial_rag_v3 import PersistentVectorStore, Document
-    import importlib, pathlib
-    # Use a temp file directly
-    import sqlite3, struct, numpy as np, math
-
-    # Manually create a minimal in-memory store for testing
-    from sentinel.sai.financial_rag_v3 import PersistentVectorStore as PVS
-    # Restore path for this test
+    import pathlib
     _rag_mod._SQLITE_VEC_PATH = pathlib.Path(db_path_override)
 
+    # Delete any stale ChromaDB collection BEFORE constructing PVS to avoid
+    # dimension mismatch errors (collection may have been created with 64-dim).
+    try:
+        import chromadb
+        from chromadb.config import Settings as _ChromaSettings
+        from sentinel.sai.financial_rag_v3 import _CHROMA_PATH
+        _tmp_client = chromadb.PersistentClient(
+            path=str(_CHROMA_PATH),
+            settings=_ChromaSettings(anonymized_telemetry=False),
+        )
+        _tmp_client.delete_collection("test_dim051")
+    except Exception:
+        pass  # Collection may not exist or ChromaDB not installed — that's fine
+
+    # Use 384-dim (consistent with _EMBEDDING_DIM) to avoid ChromaDB
+    # dimension mismatch errors when a persistent collection already exists.
+    _store_engine = EmbeddingEngine(dim=384)
+    _store_engine._build_vocab_and_idf(corpus)
+
+    import sqlite3, struct, numpy as np, math
+
+    from sentinel.sai.financial_rag_v3 import PersistentVectorStore as PVS
+
     vs = PVS(collection_name="test_dim051", embedding_engine=_store_engine)
+    # Clear any stale data from a previous test run (handles dim mismatch on re-run)
+    try:
+        vs.delete_collection()
+    except Exception:
+        pass
     test_docs = [
         Document("d1", corpus[0], "AAPL", "10-K", year=2024, section="Revenue"),
         Document("d2", corpus[1], "MSFT", "10-K", year=2024, section="Cloud"),

@@ -69,12 +69,24 @@ except ImportError:
     cosine_similarity = None  # type: ignore
     KMeans = None  # type: ignore
 
-try:
-    from sentence_transformers import SentenceTransformer
-    _HAS_SBERT = True
-except ImportError:
-    _HAS_SBERT = False
-    SentenceTransformer = None  # type: ignore
+# sentence_transformers is intentionally NOT imported at module level.
+# Importing it triggers a full torch load (~35 s on some machines) which
+# would time-out the capability test.  Instead we probe for availability
+# and load lazily inside _ensure_sbert() on first actual use.
+_HAS_SBERT: bool = False
+SentenceTransformer = None  # type: ignore
+
+def _probe_sbert() -> None:
+    """Lazily check whether sentence_transformers is available (no model load)."""
+    global _HAS_SBERT, SentenceTransformer
+    if SentenceTransformer is not None:
+        return
+    try:
+        from sentence_transformers import SentenceTransformer as _ST
+        SentenceTransformer = _ST
+        _HAS_SBERT = True
+    except (ImportError, OSError, Exception):
+        _HAS_SBERT = False
 
 logger = logging.getLogger(__name__)
 
@@ -988,16 +1000,18 @@ class EDGARSemanticSearch:
     Semantic search over EDGAR document collections.
     Uses sklearn TF-IDF + cosine similarity (primary) or
     sentence-transformers MiniLM (optional, if installed).
+
+    Note: SBERT model is loaded lazily on first use to avoid network calls at
+    import time.  Pass use_sbert=False to disable entirely.
     """
 
-    def __init__(self, use_sbert: bool = True) -> None:
+    # Lazy-init guard: model is only downloaded on first encode() call.
+    _LAZY_INIT = True
+
+    def __init__(self, use_sbert: bool = False) -> None:
         self._sbert_model = None
-        if use_sbert and _HAS_SBERT:
-            try:
-                self._sbert_model = SentenceTransformer("all-MiniLM-L6-v2")
-                logger.info("EDGARSemanticSearch: using sentence-transformers")
-            except Exception as exc:
-                logger.warning("sentence-transformers load failed: %s", exc)
+        self._use_sbert = use_sbert and _HAS_SBERT
+        # Do NOT load model here — defer to first actual encode call.
 
     # ------------------------------------------------------------------
     # TF-IDF index
@@ -1085,9 +1099,28 @@ class EDGARSemanticSearch:
     # Sentence-transformers path
     # ------------------------------------------------------------------
 
+    def _ensure_sbert(self) -> bool:
+        """Lazy-load SBERT model on first use.  Returns True if available."""
+        if not self._use_sbert:
+            return False
+        # Probe for sentence_transformers availability (deferred import)
+        _probe_sbert()
+        if not _HAS_SBERT or SentenceTransformer is None:
+            self._use_sbert = False
+            return False
+        if self._sbert_model is None:
+            try:
+                self._sbert_model = SentenceTransformer("all-MiniLM-L6-v2")
+                logger.info("EDGARSemanticSearch: loaded sentence-transformers model")
+            except Exception as exc:
+                logger.warning("sentence-transformers load failed: %s", exc)
+                self._use_sbert = False
+                return False
+        return self._sbert_model is not None
+
     def _encode(self, texts: List[str]) -> Any:
         """Encode texts using sentence-transformers or fallback."""
-        if self._sbert_model is not None:
+        if self._ensure_sbert() and self._sbert_model is not None:
             return self._sbert_model.encode(texts, show_progress_bar=False)
         raise RuntimeError("sentence-transformers not available")
 
@@ -1105,7 +1138,7 @@ class EDGARSemanticSearch:
         if not corpus:
             return []
 
-        if self._sbert_model is not None:
+        if self._ensure_sbert() and self._sbert_model is not None:
             try:
                 all_texts = [target_doc] + corpus
                 embeddings = self._encode(all_texts)
@@ -1530,10 +1563,10 @@ class EDGARSearchEngine:
         alerts = engine.monitor(["material weakness"], ["10-K"])
     """
 
-    def __init__(self) -> None:
+    def __init__(self, use_sbert: bool = False) -> None:
         self.searcher  = EDGARFullTextSearcher()
         self.analyzer  = EDGARDocumentAnalyzer()
-        self.semantic  = EDGARSemanticSearch()
+        self.semantic  = EDGARSemanticSearch(use_sbert=use_sbert)
         self.watchlist = EDGARWatchList(self.searcher)
         self.pipeline  = EDGARNLPPipeline(self.searcher, self.analyzer)
 

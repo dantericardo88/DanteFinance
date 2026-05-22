@@ -2,7 +2,7 @@
 # dim_036: trace_bond_v3 — FINRA TRACE live feed + bond price consolidator
 set -e
 cd "$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
-PYTHONIOENCODING=utf-8 python - <<'PYEOF'
+PYTHONIOENCODING=utf-8 timeout 30 python - <<'PYEOF'
 import sys, os
 sys.path.insert(0, os.getcwd())
 
