@@ -1,0 +1,2133 @@
+{
+  "version": "1.0",
+  "last_updated": "2026-05-21",
+  "total_repos": 236,
+  "passes_run": 10,
+  "plateau_reached": true,
+  "repos": [
+    {
+      "name": "Invisiwind",
+      "path": "X:\\Projects\\OSSHarvest\\Invisiwind",
+      "github_url": "https://github.com/search?q=Invisiwind",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "agentbench",
+      "path": "X:\\Projects\\OSSHarvest\\agentbench",
+      "github_url": "https://github.com/search?q=agentbench",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "agentdojo",
+      "path": "X:\\Projects\\OSSHarvest\\agentdojo",
+      "github_url": "https://github.com/search?q=agentdojo",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "agentlabs",
+      "path": "X:\\Projects\\OSSHarvest\\agentlabs",
+      "github_url": "https://github.com/search?q=agentlabs",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "agentless",
+      "path": "X:\\Projects\\OSSHarvest\\agentless",
+      "github_url": "https://github.com/search?q=agentless",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "agentops",
+      "path": "X:\\Projects\\OSSHarvest\\agentops",
+      "github_url": "https://github.com/search?q=agentops",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "agentscope",
+      "path": "X:\\Projects\\OSSHarvest\\agentscope",
+      "github_url": "https://github.com/search?q=agentscope",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "agno",
+      "path": "X:\\Projects\\OSSHarvest\\agno",
+      "github_url": "https://github.com/search?q=agno",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "ai-commits",
+      "path": "X:\\Projects\\OSSHarvest\\ai-commits",
+      "github_url": "https://github.com/search?q=ai-commits",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "aider",
+      "path": "X:\\Projects\\OSSHarvest\\aider",
+      "github_url": "https://github.com/search?q=aider",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "aider-composer",
+      "path": "X:\\Projects\\OSSHarvest\\aider-composer",
+      "github_url": "https://github.com/search?q=aider-composer",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "aider-swe-bench",
+      "path": "X:\\Projects\\OSSHarvest\\aider-swe-bench",
+      "github_url": "https://github.com/search?q=aider-swe-bench",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "aioprometheus",
+      "path": "X:\\Projects\\OSSHarvest\\aioprometheus",
+      "github_url": "https://github.com/search?q=aioprometheus",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "alphalens-reloaded",
+      "path": "X:\\Projects\\OSSHarvest\\alphalens-reloaded",
+      "github_url": "https://github.com/search?q=alphalens-reloaded",
+      "license": "Apache-2.0",
+      "blocked": false,
+      "category": "quantitative_signals",
+      "harvested": true
+    },
+    {
+      "name": "amass",
+      "path": "X:\\Projects\\OSSHarvest\\amass",
+      "github_url": "https://github.com/search?q=amass",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "amplify-cli",
+      "path": "X:\\Projects\\OSSHarvest\\amplify-cli",
+      "github_url": "https://github.com/search?q=amplify-cli",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "arch",
+      "path": "X:\\Projects\\OSSHarvest\\arch",
+      "github_url": "https://github.com/search?q=arch",
+      "license": "BSD",
+      "blocked": false,
+      "category": "derivatives_quantitative",
+      "harvested": true
+    },
+    {
+      "name": "atomic-red-team",
+      "path": "X:\\Projects\\OSSHarvest\\atomic-red-team",
+      "github_url": "https://github.com/search?q=atomic-red-team",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "authentik",
+      "path": "X:\\Projects\\OSSHarvest\\authentik",
+      "github_url": "https://github.com/search?q=authentik",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "auto-code-rover",
+      "path": "X:\\Projects\\OSSHarvest\\auto-code-rover",
+      "github_url": "https://github.com/search?q=auto-code-rover",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "autogen",
+      "path": "X:\\Projects\\OSSHarvest\\autogen",
+      "github_url": "https://github.com/search?q=autogen",
+      "license": "MIT",
+      "blocked": false,
+      "category": "agentic_autonomous",
+      "harvested": true
+    },
+    {
+      "name": "awesome-claude-code",
+      "path": "X:\\Projects\\OSSHarvest\\awesome-claude-code",
+      "github_url": "https://github.com/search?q=awesome-claude-code",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "backtesting-py",
+      "path": "X:\\Projects\\OSSHarvest\\backtesting-py",
+      "github_url": "https://github.com/search?q=backtesting-py",
+      "license": "AGPL-3.0",
+      "blocked": true,
+      "category": "backtesting",
+      "harvested": true
+    },
+    {
+      "name": "bmad-method",
+      "path": "X:\\Projects\\OSSHarvest\\bmad-method",
+      "github_url": "https://github.com/search?q=bmad-method",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "bolt-diy",
+      "path": "X:\\Projects\\OSSHarvest\\bolt-diy",
+      "github_url": "https://github.com/search?q=bolt-diy",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "browser-use",
+      "path": "X:\\Projects\\OSSHarvest\\browser-use",
+      "github_url": "https://github.com/search?q=browser-use",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "c2pa",
+      "path": "X:\\Projects\\OSSHarvest\\c2pa",
+      "github_url": "https://github.com/search?q=c2pa",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "camel",
+      "path": "X:\\Projects\\OSSHarvest\\camel",
+      "github_url": "https://github.com/search?q=camel",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "changesets",
+      "path": "X:\\Projects\\OSSHarvest\\changesets",
+      "github_url": "https://github.com/search?q=changesets",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "chef-inspec",
+      "path": "X:\\Projects\\OSSHarvest\\chef-inspec",
+      "github_url": "https://github.com/search?q=chef-inspec",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "cilium",
+      "path": "X:\\Projects\\OSSHarvest\\cilium",
+      "github_url": "https://github.com/search?q=cilium",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "claude-engineer",
+      "path": "X:\\Projects\\OSSHarvest\\claude-engineer",
+      "github_url": "https://github.com/search?q=claude-engineer",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "cli",
+      "path": "X:\\Projects\\OSSHarvest\\cli",
+      "github_url": "https://github.com/search?q=cli",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "cline",
+      "path": "X:\\Projects\\OSSHarvest\\cline",
+      "github_url": "https://github.com/search?q=cline",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "code-review-gpt",
+      "path": "X:\\Projects\\OSSHarvest\\code-review-gpt",
+      "github_url": "https://github.com/search?q=code-review-gpt",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "codex",
+      "path": "X:\\Projects\\OSSHarvest\\codex",
+      "github_url": "https://github.com/search?q=codex",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "cody",
+      "path": "X:\\Projects\\OSSHarvest\\cody",
+      "github_url": "https://github.com/search?q=cody",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "command",
+      "path": "X:\\Projects\\OSSHarvest\\command",
+      "github_url": "https://github.com/search?q=command",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "commander",
+      "path": "X:\\Projects\\OSSHarvest\\commander",
+      "github_url": "https://github.com/search?q=commander",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "commander-js",
+      "path": "X:\\Projects\\OSSHarvest\\commander-js",
+      "github_url": "https://github.com/search?q=commander-js",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "composio",
+      "path": "X:\\Projects\\OSSHarvest\\composio",
+      "github_url": "https://github.com/search?q=composio",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "continue",
+      "path": "X:\\Projects\\OSSHarvest\\continue",
+      "github_url": "https://github.com/search?q=continue",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "copilotkit",
+      "path": "X:\\Projects\\OSSHarvest\\copilotkit",
+      "github_url": "https://github.com/search?q=copilotkit",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "cosign",
+      "path": "X:\\Projects\\OSSHarvest\\cosign",
+      "github_url": "https://github.com/search?q=cosign",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "crawl4ai",
+      "path": "X:\\Projects\\OSSHarvest\\crawl4ai",
+      "github_url": "https://github.com/search?q=crawl4ai",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "crawlee-python",
+      "path": "X:\\Projects\\OSSHarvest\\crawlee-python",
+      "github_url": "https://github.com/search?q=crawlee-python",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "crewai",
+      "path": "X:\\Projects\\OSSHarvest\\crewai",
+      "github_url": "https://github.com/search?q=crewai",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "crowdsec",
+      "path": "X:\\Projects\\OSSHarvest\\crowdsec",
+      "github_url": "https://github.com/search?q=crowdsec",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "crush",
+      "path": "X:\\Projects\\OSSHarvest\\crush",
+      "github_url": "https://github.com/search?q=crush",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "cursor-tools",
+      "path": "X:\\Projects\\OSSHarvest\\cursor-tools",
+      "github_url": "https://github.com/search?q=cursor-tools",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "cvxpy",
+      "path": "X:\\Projects\\OSSHarvest\\cvxpy",
+      "github_url": "https://github.com/search?q=cvxpy",
+      "license": "Apache-2.0",
+      "blocked": false,
+      "category": "portfolio_advanced",
+      "harvested": true
+    },
+    {
+      "name": "cyclonedx-cli",
+      "path": "X:\\Projects\\OSSHarvest\\cyclonedx-cli",
+      "github_url": "https://github.com/search?q=cyclonedx-cli",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "dedupe",
+      "path": "X:\\Projects\\OSSHarvest\\dedupe",
+      "github_url": "https://github.com/search?q=dedupe",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "deepteam",
+      "path": "X:\\Projects\\OSSHarvest\\deepteam",
+      "github_url": "https://github.com/search?q=deepteam",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "deno",
+      "path": "X:\\Projects\\OSSHarvest\\deno",
+      "github_url": "https://github.com/search?q=deno",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "dependency-track",
+      "path": "X:\\Projects\\OSSHarvest\\dependency-track",
+      "github_url": "https://github.com/search?q=dependency-track",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "devika",
+      "path": "X:\\Projects\\OSSHarvest\\devika",
+      "github_url": "https://github.com/search?q=devika",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "dotprompt",
+      "path": "X:\\Projects\\OSSHarvest\\dotprompt",
+      "github_url": "https://github.com/search?q=dotprompt",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "dspy",
+      "path": "X:\\Projects\\OSSHarvest\\dspy",
+      "github_url": "https://github.com/search?q=dspy",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "dvc",
+      "path": "X:\\Projects\\OSSHarvest\\dvc",
+      "github_url": "https://github.com/search?q=dvc",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "dyad",
+      "path": "X:\\Projects\\OSSHarvest\\dyad",
+      "github_url": "https://github.com/search?q=dyad",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "e2b",
+      "path": "X:\\Projects\\OSSHarvest\\e2b",
+      "github_url": "https://github.com/search?q=e2b",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "empyrical",
+      "path": "X:\\Projects\\OSSHarvest\\empyrical",
+      "github_url": "https://github.com/search?q=empyrical",
+      "license": "Apache-2.0",
+      "blocked": false,
+      "category": "portfolio_risk",
+      "harvested": true
+    },
+    {
+      "name": "expo",
+      "path": "X:\\Projects\\OSSHarvest\\expo",
+      "github_url": "https://github.com/search?q=expo",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "fabric",
+      "path": "X:\\Projects\\OSSHarvest\\fabric",
+      "github_url": "https://github.com/search?q=fabric",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "falco",
+      "path": "X:\\Projects\\OSSHarvest\\falco",
+      "github_url": "https://github.com/search?q=falco",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "fingpt",
+      "path": "X:\\Projects\\OSSHarvest\\fingpt",
+      "github_url": "https://github.com/search?q=fingpt",
+      "license": "Apache-2.0",
+      "blocked": false,
+      "category": "ai_nlp",
+      "harvested": true
+    },
+    {
+      "name": "finrl",
+      "path": "X:\\Projects\\OSSHarvest\\finrl",
+      "github_url": "https://github.com/search?q=finrl",
+      "license": "MIT",
+      "blocked": false,
+      "category": "quantitative_signals",
+      "harvested": true
+    },
+    {
+      "name": "fleet",
+      "path": "X:\\Projects\\OSSHarvest\\fleet",
+      "github_url": "https://github.com/search?q=fleet",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "garak",
+      "path": "X:\\Projects\\OSSHarvest\\garak",
+      "github_url": "https://github.com/search?q=garak",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "gcsfs",
+      "path": "X:\\Projects\\OSSHarvest\\gcsfs",
+      "github_url": "https://github.com/search?q=gcsfs",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "gemini-cli",
+      "path": "X:\\Projects\\OSSHarvest\\gemini-cli",
+      "github_url": "https://github.com/search?q=gemini-cli",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "geopandas",
+      "path": "X:\\Projects\\OSSHarvest\\geopandas",
+      "github_url": "https://github.com/search?q=geopandas",
+      "license": "BSD",
+      "blocked": false,
+      "category": "real_estate_commodities",
+      "harvested": true
+    },
+    {
+      "name": "gitleaks",
+      "path": "X:\\Projects\\OSSHarvest\\gitleaks",
+      "github_url": "https://github.com/search?q=gitleaks",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "gluegun",
+      "path": "X:\\Projects\\OSSHarvest\\gluegun",
+      "github_url": "https://github.com/search?q=gluegun",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "goose",
+      "path": "X:\\Projects\\OSSHarvest\\goose",
+      "github_url": "https://github.com/search?q=goose",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "goose-aaif",
+      "path": "X:\\Projects\\OSSHarvest\\goose-aaif",
+      "github_url": "https://github.com/search?q=goose-aaif",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "gptlint",
+      "path": "X:\\Projects\\OSSHarvest\\gptlint",
+      "github_url": "https://github.com/search?q=gptlint",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "grok-cli",
+      "path": "X:\\Projects\\OSSHarvest\\grok-cli",
+      "github_url": "https://github.com/search?q=grok-cli",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "grype",
+      "path": "X:\\Projects\\OSSHarvest\\grype",
+      "github_url": "https://github.com/search?q=grype",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "guac",
+      "path": "X:\\Projects\\OSSHarvest\\guac",
+      "github_url": "https://github.com/search?q=guac",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "guidance",
+      "path": "X:\\Projects\\OSSHarvest\\guidance",
+      "github_url": "https://github.com/search?q=guidance",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "haystack",
+      "path": "X:\\Projects\\OSSHarvest\\haystack",
+      "github_url": "https://github.com/search?q=haystack",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "headscale",
+      "path": "X:\\Projects\\OSSHarvest\\headscale",
+      "github_url": "https://github.com/search?q=headscale",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "helicone",
+      "path": "X:\\Projects\\OSSHarvest\\helicone",
+      "github_url": "https://github.com/search?q=helicone",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "hmmlearn",
+      "path": "X:\\Projects\\OSSHarvest\\hmmlearn",
+      "github_url": "https://github.com/search?q=hmmlearn",
+      "license": "BSD",
+      "blocked": false,
+      "category": "derivatives_quantitative",
+      "harvested": true
+    },
+    {
+      "name": "human-eval",
+      "path": "X:\\Projects\\OSSHarvest\\human-eval",
+      "github_url": "https://github.com/search?q=human-eval",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "humanlayer",
+      "path": "X:\\Projects\\OSSHarvest\\humanlayer",
+      "github_url": "https://github.com/search?q=humanlayer",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "in-toto",
+      "path": "X:\\Projects\\OSSHarvest\\in-toto",
+      "github_url": "https://github.com/search?q=in-toto",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "inspect-ai",
+      "path": "X:\\Projects\\OSSHarvest\\inspect-ai",
+      "github_url": "https://github.com/search?q=inspect-ai",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "instructor",
+      "path": "X:\\Projects\\OSSHarvest\\instructor",
+      "github_url": "https://github.com/search?q=instructor",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "jaeger",
+      "path": "X:\\Projects\\OSSHarvest\\jaeger",
+      "github_url": "https://github.com/search?q=jaeger",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "keycloak",
+      "path": "X:\\Projects\\OSSHarvest\\keycloak",
+      "github_url": "https://github.com/search?q=keycloak",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "kilo-code",
+      "path": "X:\\Projects\\OSSHarvest\\kilo-code",
+      "github_url": "https://github.com/search?q=kilo-code",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "kilocode",
+      "path": "X:\\Projects\\OSSHarvest\\kilocode",
+      "github_url": "https://github.com/search?q=kilocode",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "kyverno",
+      "path": "X:\\Projects\\OSSHarvest\\kyverno",
+      "github_url": "https://github.com/search?q=kyverno",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "langchain",
+      "path": "X:\\Projects\\OSSHarvest\\langchain",
+      "github_url": "https://github.com/search?q=langchain",
+      "license": "MIT",
+      "blocked": false,
+      "category": "agentic_autonomous",
+      "harvested": true
+    },
+    {
+      "name": "langgraph",
+      "path": "X:\\Projects\\OSSHarvest\\langgraph",
+      "github_url": "https://github.com/search?q=langgraph",
+      "license": "MIT",
+      "blocked": false,
+      "category": "agentic_autonomous",
+      "harvested": true
+    },
+    {
+      "name": "letta",
+      "path": "X:\\Projects\\OSSHarvest\\letta",
+      "github_url": "https://github.com/search?q=letta",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "lightgbm",
+      "path": "X:\\Projects\\OSSHarvest\\lightgbm",
+      "github_url": "https://github.com/search?q=lightgbm",
+      "license": "MIT",
+      "blocked": false,
+      "category": "quantitative_signals",
+      "harvested": true
+    },
+    {
+      "name": "litellm",
+      "path": "X:\\Projects\\OSSHarvest\\litellm",
+      "github_url": "https://github.com/search?q=litellm",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "llamafirewall",
+      "path": "X:\\Projects\\OSSHarvest\\llamafirewall",
+      "github_url": "https://github.com/search?q=llamafirewall",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "llamaindex",
+      "path": "X:\\Projects\\OSSHarvest\\llamaindex",
+      "github_url": "https://github.com/search?q=llamaindex",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "marquez",
+      "path": "X:\\Projects\\OSSHarvest\\marquez",
+      "github_url": "https://github.com/search?q=marquez",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "marvin",
+      "path": "X:\\Projects\\OSSHarvest\\marvin",
+      "github_url": "https://github.com/search?q=marvin",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "memray",
+      "path": "X:\\Projects\\OSSHarvest\\memray",
+      "github_url": "https://github.com/search?q=memray",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "metagpt",
+      "path": "X:\\Projects\\OSSHarvest\\metagpt",
+      "github_url": "https://github.com/search?q=metagpt",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "mitre-caldera",
+      "path": "X:\\Projects\\OSSHarvest\\mitre-caldera",
+      "github_url": "https://github.com/search?q=mitre-caldera",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "mlfinlab",
+      "path": "X:\\Projects\\OSSHarvest\\mlfinlab",
+      "github_url": "https://github.com/search?q=mlfinlab",
+      "license": "BSD",
+      "blocked": false,
+      "category": "market_microstructure",
+      "harvested": true
+    },
+    {
+      "name": "mlflow",
+      "path": "X:\\Projects\\OSSHarvest\\mlflow",
+      "github_url": "https://github.com/search?q=mlflow",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "moatless-tools",
+      "path": "X:\\Projects\\OSSHarvest\\moatless-tools",
+      "github_url": "https://github.com/search?q=moatless-tools",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "moleculer-cli",
+      "path": "X:\\Projects\\OSSHarvest\\moleculer-cli",
+      "github_url": "https://github.com/search?q=moleculer-cli",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "moondream",
+      "path": "X:\\Projects\\OSSHarvest\\moondream",
+      "github_url": "https://github.com/search?q=moondream",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "nemo-guardrails",
+      "path": "X:\\Projects\\OSSHarvest\\nemo-guardrails",
+      "github_url": "https://github.com/search?q=nemo-guardrails",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "networkx",
+      "path": "X:\\Projects\\OSSHarvest\\networkx",
+      "github_url": "https://github.com/search?q=networkx",
+      "license": "BSD",
+      "blocked": false,
+      "category": "corporate_intelligence",
+      "harvested": true
+    },
+    {
+      "name": "node",
+      "path": "X:\\Projects\\OSSHarvest\\node",
+      "github_url": "https://github.com/search?q=node",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "node-mongodb-native",
+      "path": "X:\\Projects\\OSSHarvest\\node-mongodb-native",
+      "github_url": "https://github.com/search?q=node-mongodb-native",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "npx",
+      "path": "X:\\Projects\\OSSHarvest\\npx",
+      "github_url": "https://github.com/search?q=npx",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "nuclei",
+      "path": "X:\\Projects\\OSSHarvest\\nuclei",
+      "github_url": "https://github.com/search?q=nuclei",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "opa",
+      "path": "X:\\Projects\\OSSHarvest\\opa",
+      "github_url": "https://github.com/search?q=opa",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "open-swe",
+      "path": "X:\\Projects\\OSSHarvest\\open-swe",
+      "github_url": "https://github.com/search?q=open-swe",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "openagents",
+      "path": "X:\\Projects\\OSSHarvest\\openagents",
+      "github_url": "https://github.com/search?q=openagents",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "openai-cookbook",
+      "path": "X:\\Projects\\OSSHarvest\\openai-cookbook",
+      "github_url": "https://github.com/search?q=openai-cookbook",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "openbao",
+      "path": "X:\\Projects\\OSSHarvest\\openbao",
+      "github_url": "https://github.com/search?q=openbao",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "openbb",
+      "path": "X:\\Projects\\OSSHarvest\\openbb",
+      "github_url": "https://github.com/search?q=openbb",
+      "license": "MIT",
+      "blocked": false,
+      "category": "terminal_ux",
+      "harvested": true
+    },
+    {
+      "name": "openclaude",
+      "path": "X:\\Projects\\OSSHarvest\\openclaude",
+      "github_url": "https://github.com/search?q=openclaude",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "openclaudia",
+      "path": "X:\\Projects\\OSSHarvest\\openclaudia",
+      "github_url": "https://github.com/search?q=openclaudia",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "openclaw",
+      "path": "X:\\Projects\\OSSHarvest\\openclaw",
+      "github_url": "https://github.com/search?q=openclaw",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "opencode",
+      "path": "X:\\Projects\\OSSHarvest\\opencode",
+      "github_url": "https://github.com/search?q=opencode",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "opencti",
+      "path": "X:\\Projects\\OSSHarvest\\opencti",
+      "github_url": "https://github.com/search?q=opencti",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "openctx",
+      "path": "X:\\Projects\\OSSHarvest\\openctx",
+      "github_url": "https://github.com/search?q=openctx",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "openfang",
+      "path": "X:\\Projects\\OSSHarvest\\openfang",
+      "github_url": "https://github.com/search?q=openfang",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "openfga",
+      "path": "X:\\Projects\\OSSHarvest\\openfga",
+      "github_url": "https://github.com/search?q=openfga",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "openhands",
+      "path": "X:\\Projects\\OSSHarvest\\openhands",
+      "github_url": "https://github.com/search?q=openhands",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "openlineage",
+      "path": "X:\\Projects\\OSSHarvest\\openlineage",
+      "github_url": "https://github.com/search?q=openlineage",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "openrewrite",
+      "path": "X:\\Projects\\OSSHarvest\\openrewrite",
+      "github_url": "https://github.com/search?q=openrewrite",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "opensearch",
+      "path": "X:\\Projects\\OSSHarvest\\opensearch",
+      "github_url": "https://github.com/search?q=opensearch",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "openssf-scorecard",
+      "path": "X:\\Projects\\OSSHarvest\\openssf-scorecard",
+      "github_url": "https://github.com/search?q=openssf-scorecard",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "opentelemetry",
+      "path": "X:\\Projects\\OSSHarvest\\opentelemetry",
+      "github_url": "https://github.com/search?q=opentelemetry",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "opentelemetry-collector",
+      "path": "X:\\Projects\\OSSHarvest\\opentelemetry-collector",
+      "github_url": "https://github.com/search?q=opentelemetry-collector",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "opnsense",
+      "path": "X:\\Projects\\OSSHarvest\\opnsense",
+      "github_url": "https://github.com/search?q=opnsense",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "ory-hydra",
+      "path": "X:\\Projects\\OSSHarvest\\ory-hydra",
+      "github_url": "https://github.com/search?q=ory-hydra",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "ory-kratos",
+      "path": "X:\\Projects\\OSSHarvest\\ory-kratos",
+      "github_url": "https://github.com/search?q=ory-kratos",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "osquery",
+      "path": "X:\\Projects\\OSSHarvest\\osquery",
+      "github_url": "https://github.com/search?q=osquery",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "osv-scanner",
+      "path": "X:\\Projects\\OSSHarvest\\osv-scanner",
+      "github_url": "https://github.com/search?q=osv-scanner",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "outlines",
+      "path": "X:\\Projects\\OSSHarvest\\outlines",
+      "github_url": "https://github.com/search?q=outlines",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "oww_rs",
+      "path": "X:\\Projects\\OSSHarvest\\oww_rs",
+      "github_url": "https://github.com/search?q=oww_rs",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "phidata",
+      "path": "X:\\Projects\\OSSHarvest\\phidata",
+      "github_url": "https://github.com/search?q=phidata",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "plandex",
+      "path": "X:\\Projects\\OSSHarvest\\plandex",
+      "github_url": "https://github.com/search?q=plandex",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "playwright",
+      "path": "X:\\Projects\\OSSHarvest\\playwright",
+      "github_url": "https://github.com/search?q=playwright",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "portkey-gateway",
+      "path": "X:\\Projects\\OSSHarvest\\portkey-gateway",
+      "github_url": "https://github.com/search?q=portkey-gateway",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "posthog",
+      "path": "X:\\Projects\\OSSHarvest\\posthog",
+      "github_url": "https://github.com/search?q=posthog",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "potpie",
+      "path": "X:\\Projects\\OSSHarvest\\potpie",
+      "github_url": "https://github.com/search?q=potpie",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "pr-agent",
+      "path": "X:\\Projects\\OSSHarvest\\pr-agent",
+      "github_url": "https://github.com/search?q=pr-agent",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "presidio",
+      "path": "X:\\Projects\\OSSHarvest\\presidio",
+      "github_url": "https://github.com/search?q=presidio",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "prisma",
+      "path": "X:\\Projects\\OSSHarvest\\prisma",
+      "github_url": "https://github.com/search?q=prisma",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "prometheus-client",
+      "path": "X:\\Projects\\OSSHarvest\\prometheus-client",
+      "github_url": "https://github.com/search?q=prometheus-client",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "promptbase",
+      "path": "X:\\Projects\\OSSHarvest\\promptbase",
+      "github_url": "https://github.com/search?q=promptbase",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "promptfoo",
+      "path": "X:\\Projects\\OSSHarvest\\promptfoo",
+      "github_url": "https://github.com/search?q=promptfoo",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "prowler",
+      "path": "X:\\Projects\\OSSHarvest\\prowler",
+      "github_url": "https://github.com/search?q=prowler",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "pulumi",
+      "path": "X:\\Projects\\OSSHarvest\\pulumi",
+      "github_url": "https://github.com/search?q=pulumi",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "py_vollib",
+      "path": "X:\\Projects\\OSSHarvest\\py_vollib",
+      "github_url": "https://github.com/search?q=py_vollib",
+      "license": "MIT",
+      "blocked": false,
+      "category": "derivatives_quantitative",
+      "harvested": true
+    },
+    {
+      "name": "py_vollib_vectorized",
+      "path": "X:\\Projects\\OSSHarvest\\py_vollib_vectorized",
+      "github_url": "https://github.com/search?q=py_vollib_vectorized",
+      "license": "MIT",
+      "blocked": false,
+      "category": "derivatives_quantitative",
+      "harvested": true
+    },
+    {
+      "name": "pydantic-ai",
+      "path": "X:\\Projects\\OSSHarvest\\pydantic-ai",
+      "github_url": "https://github.com/search?q=pydantic-ai",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "pydanticai",
+      "path": "X:\\Projects\\OSSHarvest\\pydanticai",
+      "github_url": "https://github.com/search?q=pydanticai",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "pyfolio",
+      "path": "X:\\Projects\\OSSHarvest\\pyfolio",
+      "github_url": "https://github.com/search?q=pyfolio",
+      "license": "Apache-2.0",
+      "blocked": false,
+      "category": "portfolio_risk",
+      "harvested": true
+    },
+    {
+      "name": "pyportfolioopt",
+      "path": "X:\\Projects\\OSSHarvest\\pyportfolioopt",
+      "github_url": "https://github.com/search?q=pyportfolioopt",
+      "license": "MIT",
+      "blocked": false,
+      "category": "portfolio_risk",
+      "harvested": true
+    },
+    {
+      "name": "pyrit",
+      "path": "X:\\Projects\\OSSHarvest\\pyrit",
+      "github_url": "https://github.com/search?q=pyrit",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "pysabr",
+      "path": "X:\\Projects\\OSSHarvest\\pysabr",
+      "github_url": "https://github.com/search?q=pysabr",
+      "license": "MIT",
+      "blocked": false,
+      "category": "derivatives_quantitative",
+      "harvested": true
+    },
+    {
+      "name": "python-tuf",
+      "path": "X:\\Projects\\OSSHarvest\\python-tuf",
+      "github_url": "https://github.com/search?q=python-tuf",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "qlib",
+      "path": "X:\\Projects\\OSSHarvest\\qlib",
+      "github_url": "https://github.com/search?q=qlib",
+      "license": "MIT",
+      "blocked": false,
+      "category": "quantitative_signals",
+      "harvested": true
+    },
+    {
+      "name": "rasterio",
+      "path": "X:\\Projects\\OSSHarvest\\rasterio",
+      "github_url": "https://github.com/search?q=rasterio",
+      "license": "BSD",
+      "blocked": false,
+      "category": "real_estate_commodities",
+      "harvested": true
+    },
+    {
+      "name": "rateslib",
+      "path": "X:\\Projects\\OSSHarvest\\rateslib",
+      "github_url": "https://github.com/search?q=rateslib",
+      "license": "Apache-2.0",
+      "blocked": false,
+      "category": "fixed_income",
+      "harvested": true
+    },
+    {
+      "name": "ratify",
+      "path": "X:\\Projects\\OSSHarvest\\ratify",
+      "github_url": "https://github.com/search?q=ratify",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "re-gent",
+      "path": "X:\\Projects\\OSSHarvest\\re-gent",
+      "github_url": "https://github.com/search?q=re-gent",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "refact",
+      "path": "X:\\Projects\\OSSHarvest\\refact",
+      "github_url": "https://github.com/search?q=refact",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "reme",
+      "path": "X:\\Projects\\OSSHarvest\\reme",
+      "github_url": "https://github.com/search?q=reme",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "repomix",
+      "path": "X:\\Projects\\OSSHarvest\\repomix",
+      "github_url": "https://github.com/search?q=repomix",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "restic",
+      "path": "X:\\Projects\\OSSHarvest\\restic",
+      "github_url": "https://github.com/search?q=restic",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "restler",
+      "path": "X:\\Projects\\OSSHarvest\\restler",
+      "github_url": "https://github.com/search?q=restler",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "riskfolio-lib",
+      "path": "X:\\Projects\\OSSHarvest\\riskfolio-lib",
+      "github_url": "https://github.com/search?q=riskfolio-lib",
+      "license": "BSD",
+      "blocked": false,
+      "category": "portfolio_risk",
+      "harvested": true
+    },
+    {
+      "name": "roo-code",
+      "path": "X:\\Projects\\OSSHarvest\\roo-code",
+      "github_url": "https://github.com/search?q=roo-code",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "rush",
+      "path": "X:\\Projects\\OSSHarvest\\rush",
+      "github_url": "https://github.com/search?q=rush",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "rustlings",
+      "path": "X:\\Projects\\OSSHarvest\\rustlings",
+      "github_url": "https://github.com/search?q=rustlings",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "s3fs",
+      "path": "X:\\Projects\\OSSHarvest\\s3fs",
+      "github_url": "https://github.com/search?q=s3fs",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "schemathesis",
+      "path": "X:\\Projects\\OSSHarvest\\schemathesis",
+      "github_url": "https://github.com/search?q=schemathesis",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "scikit-optimize",
+      "path": "X:\\Projects\\OSSHarvest\\scikit-optimize",
+      "github_url": "https://github.com/search?q=scikit-optimize",
+      "license": "BSD",
+      "blocked": false,
+      "category": "quantitative_signals",
+      "harvested": true
+    },
+    {
+      "name": "scorecard",
+      "path": "X:\\Projects\\OSSHarvest\\scorecard",
+      "github_url": "https://github.com/search?q=scorecard",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "scrapy",
+      "path": "X:\\Projects\\OSSHarvest\\scrapy",
+      "github_url": "https://github.com/search?q=scrapy",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "screenshot-to-code",
+      "path": "X:\\Projects\\OSSHarvest\\screenshot-to-code",
+      "github_url": "https://github.com/search?q=screenshot-to-code",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "semantic-kernel",
+      "path": "X:\\Projects\\OSSHarvest\\semantic-kernel",
+      "github_url": "https://github.com/search?q=semantic-kernel",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "sigstore-rekor",
+      "path": "X:\\Projects\\OSSHarvest\\sigstore-rekor",
+      "github_url": "https://github.com/search?q=sigstore-rekor",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "skyvern",
+      "path": "X:\\Projects\\OSSHarvest\\skyvern",
+      "github_url": "https://github.com/search?q=skyvern",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "slsa-verifier",
+      "path": "X:\\Projects\\OSSHarvest\\slsa-verifier",
+      "github_url": "https://github.com/search?q=slsa-verifier",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "smart-open",
+      "path": "X:\\Projects\\OSSHarvest\\smart-open",
+      "github_url": "https://github.com/search?q=smart-open",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "smolagents",
+      "path": "X:\\Projects\\OSSHarvest\\smolagents",
+      "github_url": "https://github.com/search?q=smolagents",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "spacy",
+      "path": "X:\\Projects\\OSSHarvest\\spacy",
+      "github_url": "https://github.com/search?q=spacy",
+      "license": "MIT",
+      "blocked": false,
+      "category": "corporate_intelligence",
+      "harvested": true
+    },
+    {
+      "name": "spec-kit",
+      "path": "X:\\Projects\\OSSHarvest\\spec-kit",
+      "github_url": "https://github.com/search?q=spec-kit",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "spec-kitty",
+      "path": "X:\\Projects\\OSSHarvest\\spec-kitty",
+      "github_url": "https://github.com/search?q=spec-kitty",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "specpulse",
+      "path": "X:\\Projects\\OSSHarvest\\specpulse",
+      "github_url": "https://github.com/search?q=specpulse",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "spire",
+      "path": "X:\\Projects\\OSSHarvest\\spire",
+      "github_url": "https://github.com/search?q=spire",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "splink",
+      "path": "X:\\Projects\\OSSHarvest\\splink",
+      "github_url": "https://github.com/search?q=splink",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "stagehand",
+      "path": "X:\\Projects\\OSSHarvest\\stagehand",
+      "github_url": "https://github.com/search?q=stagehand",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "statsmodels",
+      "path": "X:\\Projects\\OSSHarvest\\statsmodels",
+      "github_url": "https://github.com/search?q=statsmodels",
+      "license": "BSD",
+      "blocked": false,
+      "category": "macro_economics",
+      "harvested": true
+    },
+    {
+      "name": "superagent",
+      "path": "X:\\Projects\\OSSHarvest\\superagent",
+      "github_url": "https://github.com/search?q=superagent",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "swe-agent",
+      "path": "X:\\Projects\\OSSHarvest\\swe-agent",
+      "github_url": "https://github.com/search?q=swe-agent",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "swe-bench-eval",
+      "path": "X:\\Projects\\OSSHarvest\\swe-bench-eval",
+      "github_url": "https://github.com/search?q=swe-bench-eval",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "sweep",
+      "path": "X:\\Projects\\OSSHarvest\\sweep",
+      "github_url": "https://github.com/search?q=sweep",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "syft",
+      "path": "X:\\Projects\\OSSHarvest\\syft",
+      "github_url": "https://github.com/search?q=syft",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "ta-indicators",
+      "path": "X:\\Projects\\OSSHarvest\\ta-indicators",
+      "github_url": "https://github.com/search?q=ta-indicators",
+      "license": "MIT",
+      "blocked": false,
+      "category": "screening",
+      "harvested": true
+    },
+    {
+      "name": "ta-lib",
+      "path": "X:\\Projects\\OSSHarvest\\ta-lib",
+      "github_url": "https://github.com/search?q=ta-lib",
+      "license": "LGPL",
+      "blocked": false,
+      "category": "screening",
+      "harvested": true
+    },
+    {
+      "name": "tabby",
+      "path": "X:\\Projects\\OSSHarvest\\tabby",
+      "github_url": "https://github.com/search?q=tabby",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "taskweaver",
+      "path": "X:\\Projects\\OSSHarvest\\taskweaver",
+      "github_url": "https://github.com/search?q=taskweaver",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "tessera",
+      "path": "X:\\Projects\\OSSHarvest\\tessera",
+      "github_url": "https://github.com/search?q=tessera",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "tetragon",
+      "path": "X:\\Projects\\OSSHarvest\\tetragon",
+      "github_url": "https://github.com/search?q=tetragon",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "the-primeagen-nvim",
+      "path": "X:\\Projects\\OSSHarvest\\the-primeagen-nvim",
+      "github_url": "https://github.com/search?q=the-primeagen-nvim",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "titan-temp",
+      "path": "X:\\Projects\\OSSHarvest\\titan-temp",
+      "github_url": "https://github.com/search?q=titan-temp",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "tokio",
+      "path": "X:\\Projects\\OSSHarvest\\tokio",
+      "github_url": "https://github.com/search?q=tokio",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "toolkit",
+      "path": "X:\\Projects\\OSSHarvest\\toolkit",
+      "github_url": "https://github.com/search?q=toolkit",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "transformers",
+      "path": "X:\\Projects\\OSSHarvest\\transformers",
+      "github_url": "https://github.com/search?q=transformers",
+      "license": "Apache-2.0",
+      "blocked": false,
+      "category": "ai_nlp",
+      "harvested": true
+    },
+    {
+      "name": "trillian",
+      "path": "X:\\Projects\\OSSHarvest\\trillian",
+      "github_url": "https://github.com/search?q=trillian",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "trivy",
+      "path": "X:\\Projects\\OSSHarvest\\trivy",
+      "github_url": "https://github.com/search?q=trivy",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "trycua-cua",
+      "path": "X:\\Projects\\OSSHarvest\\trycua-cua",
+      "github_url": "https://github.com/search?q=trycua-cua",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "twilio-cli",
+      "path": "X:\\Projects\\OSSHarvest\\twilio-cli",
+      "github_url": "https://github.com/search?q=twilio-cli",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "ufo",
+      "path": "X:\\Projects\\OSSHarvest\\ufo",
+      "github_url": "https://github.com/search?q=ufo",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "ui-tars",
+      "path": "X:\\Projects\\OSSHarvest\\ui-tars",
+      "github_url": "https://github.com/search?q=ui-tars",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "vexp-swe-bench",
+      "path": "X:\\Projects\\OSSHarvest\\vexp-swe-bench",
+      "github_url": "https://github.com/search?q=vexp-swe-bench",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "vscode",
+      "path": "X:\\Projects\\OSSHarvest\\vscode",
+      "github_url": "https://github.com/search?q=vscode",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "windsurf-cursorrules",
+      "path": "X:\\Projects\\OSSHarvest\\windsurf-cursorrules",
+      "github_url": "https://github.com/search?q=windsurf-cursorrules",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "xarray",
+      "path": "X:\\Projects\\OSSHarvest\\xarray",
+      "github_url": "https://github.com/search?q=xarray",
+      "license": "Apache-2.0",
+      "blocked": false,
+      "category": "quantitative_signals",
+      "harvested": true
+    },
+    {
+      "name": "xgboost",
+      "path": "X:\\Projects\\OSSHarvest\\xgboost",
+      "github_url": "https://github.com/search?q=xgboost",
+      "license": "Apache-2.0",
+      "blocked": false,
+      "category": "quantitative_signals",
+      "harvested": true
+    },
+    {
+      "name": "yargs",
+      "path": "X:\\Projects\\OSSHarvest\\yargs",
+      "github_url": "https://github.com/search?q=yargs",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "zap",
+      "path": "X:\\Projects\\OSSHarvest\\zap",
+      "github_url": "https://github.com/search?q=zap",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "zeek",
+      "path": "X:\\Projects\\OSSHarvest\\zeek",
+      "github_url": "https://github.com/search?q=zeek",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "zingg",
+      "path": "X:\\Projects\\OSSHarvest\\zingg",
+      "github_url": "https://github.com/search?q=zingg",
+      "license": "unknown",
+      "blocked": false,
+      "category": "general",
+      "harvested": true
+    },
+    {
+      "name": "zipline-reloaded",
+      "path": "X:\\Projects\\OSSHarvest\\zipline-reloaded",
+      "github_url": "https://github.com/search?q=zipline-reloaded",
+      "license": "Apache-2.0",
+      "blocked": false,
+      "category": "backtesting",
+      "harvested": true
+    }
+  ]
+}
