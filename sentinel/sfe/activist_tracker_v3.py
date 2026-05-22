@@ -97,6 +97,10 @@ _RATE_DELAY  = 0.12   # 120 ms — SEC ~10 req/s limit
 
 _DEFAULT_DB  = Path(__file__).parent.parent / "data" / "activist.db"
 
+# Cache for live EDGAR 13D/13G target lookups (24h TTL)
+_ACTIVIST_TARGETS_CACHE = Path(".sentinel") / "cache" / "activist_targets.json"
+_ACTIVIST_CAMPAIGNS_CACHE = Path(".sentinel") / "cache" / "activist_campaigns.json"
+
 # ---------------------------------------------------------------------------
 # Enumerations
 # ---------------------------------------------------------------------------
@@ -1630,16 +1634,30 @@ class ActivistScreener:
     def find_vulnerable_companies(
         self,
         cik_list: Optional[list[str]] = None,
+        top_n: int = 25,
+        days_back: int = 30,
     ) -> list[VulnerableTarget]:
         """Screen companies; returns ranked list of vulnerable targets.
 
-        Without specific XBRL data, uses available EDGAR metadata.
-        With a cik_list, enriches with basic financial signals via SEC API.
+        Behavior:
+        - If *cik_list* is provided, score each CIK using SEC submission metadata
+          and 13D history (existing behavior).
+        - If *cik_list* is None, query EDGAR EFTS for companies that were
+          recently targeted by SC 13D / SC 13G filings in the last *days_back*
+          days, then score those targets with the same heuristics.
+
+        No hardcoded illustrative list is used. All targets are sourced from
+        live EDGAR filings.
+
+        Results are truncated to *top_n* by descending vulnerability_score.
         """
         if cik_list:
-            return self._screen_from_cik_list(cik_list)
-        # Without a universe, return a notional model set
-        return self._get_model_vulnerable_targets()
+            ranked = self._screen_from_cik_list(cik_list)
+        else:
+            target_ciks = self._get_recent_13d_target_ciks(days_back=days_back)
+            ranked = self._screen_from_cik_list(target_ciks) if target_ciks else []
+        # Truncate to top_n by score (already sorted desc by _screen_from_cik_list)
+        return ranked[: max(0, int(top_n))]
 
     def screen_for_activist_interest(
         self, universe: list[str]
@@ -1767,31 +1785,297 @@ class ActivistScreener:
 
         return sorted(targets, key=lambda t: t.vulnerability_score, reverse=True)
 
-    def _get_model_vulnerable_targets(self) -> list[VulnerableTarget]:
-        """Return a hardcoded illustrative list with known vulnerability characteristics."""
-        illustrative = [
-            VulnerableTarget(
-                ticker="DIS", company_name="Walt Disney Company",
-                vulnerability_score=7.5,
-                signals=["Conglomerate discount", "Poor streaming unit margins",
-                         "Activist history (Third Point, Trian, Nelson Peltz)"],
-                market_cap_est=160e9, sector="Media & Entertainment", cik="0001001039",
-            ),
-            VulnerableTarget(
-                ticker="PFE", company_name="Pfizer Inc",
-                vulnerability_score=6.8,
-                signals=["COVID revenue cliff", "Pipeline concerns", "Below-peer margins"],
-                market_cap_est=155e9, sector="Pharmaceuticals", cik="0000078003",
-            ),
-            VulnerableTarget(
-                ticker="INTC", company_name="Intel Corporation",
-                vulnerability_score=6.5,
-                signals=["Below-book valuation pressure", "Market share loss",
-                         "High capex vs returns"],
-                market_cap_est=95e9, sector="Semiconductors", cik="0000050863",
-            ),
-        ]
-        return illustrative
+    def _get_recent_13d_target_ciks(self, days_back: int = 30) -> list[str]:
+        """Query EDGAR EFTS for unique target CIKs from recent 13D/13G filings.
+
+        Uses the on-disk cache file ``.sentinel/cache/activist_targets.json``
+        with a 24h TTL to avoid re-hitting EDGAR within a single trading day.
+
+        Returns a deduplicated list of target CIKs (zero-padded, 10 chars).
+        """
+        cache_path = _ACTIVIST_TARGETS_CACHE
+        cache_ttl  = 24 * 3600  # 24 hours
+
+        # Cache lookup
+        try:
+            if cache_path.exists():
+                mtime = cache_path.stat().st_mtime
+                if (time.time() - mtime) < cache_ttl:
+                    cached = json.loads(cache_path.read_text(encoding="utf-8"))
+                    if cached.get("days_back") == days_back and isinstance(cached.get("ciks"), list):
+                        logger.info("activist_targets: cache hit (%d CIKs, age=%ds)",
+                                    len(cached["ciks"]), int(time.time() - mtime))
+                        return cached["ciks"]
+        except Exception as exc:
+            logger.debug("activist_targets cache read failed: %s", exc)
+
+        # Live query — fetch recent campaigns from EDGAR
+        try:
+            campaigns = get_active_campaigns_from_edgar(days_back=days_back)
+        except Exception as exc:
+            logger.warning("EDGAR campaigns fetch failed: %s", exc)
+            campaigns = []
+
+        # Extract unique target CIKs preserving order
+        seen: set[str] = set()
+        ciks: list[str] = []
+        for c in campaigns:
+            cik = (c.get("target_cik") or "").strip()
+            if not cik:
+                continue
+            cik = cik.zfill(10)
+            if cik in seen:
+                continue
+            seen.add(cik)
+            ciks.append(cik)
+
+        # Persist cache (best-effort)
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(
+                json.dumps({
+                    "fetched_at": datetime.utcnow().isoformat() + "Z",
+                    "days_back":  days_back,
+                    "ciks":       ciks,
+                    "count":      len(ciks),
+                }, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            logger.debug("activist_targets cache write failed: %s", exc)
+
+        logger.info("activist_targets: fetched %d unique target CIKs from EDGAR (%dd lookback)",
+                    len(ciks), days_back)
+        return ciks
+
+
+# ---------------------------------------------------------------------------
+# Module-level EDGAR campaign query
+# ---------------------------------------------------------------------------
+
+def get_active_campaigns_from_edgar(
+    days_back: int = 30,
+    forms: Optional[list[str]] = None,
+    max_hits: int = 200,
+    use_cache: bool = True,
+) -> list[dict]:
+    """Return recently filed activist campaigns from live EDGAR EFTS search.
+
+    Queries the public EDGAR full-text search index at
+    ``https://efts.sec.gov/LATEST/search-index`` for SC 13D / SC 13D/A /
+    SC 13G / SC 13G/A filings in the last *days_back* days and returns a list
+    of dicts with the schema::
+
+        {
+          "target_ticker": str,
+          "target_cik":    str,    # 10-digit zero-padded
+          "target_name":   str,
+          "filer_name":    str,
+          "filer_cik":     str,
+          "filing_date":   str,    # ISO YYYY-MM-DD
+          "form_type":     str,
+          "accession":     str,
+          "url":           str,    # link to filing index page
+        }
+
+    No hardcoded data. Pure EDGAR query. On HTTP/parse failure, returns ``[]``.
+
+    Results are cached to ``.sentinel/cache/activist_campaigns.json`` with a
+    24h TTL (keyed on ``days_back``) unless ``use_cache=False``.
+    """
+    if forms is None:
+        forms = ["SC 13D", "SC 13D/A", "SC 13G", "SC 13G/A"]
+
+    cache_path = _ACTIVIST_CAMPAIGNS_CACHE
+    cache_ttl  = 24 * 3600
+
+    # Cache lookup
+    if use_cache:
+        try:
+            if cache_path.exists():
+                mtime = cache_path.stat().st_mtime
+                if (time.time() - mtime) < cache_ttl:
+                    cached = json.loads(cache_path.read_text(encoding="utf-8"))
+                    if (cached.get("days_back") == days_back and
+                            isinstance(cached.get("campaigns"), list)):
+                        logger.info(
+                            "activist_campaigns: cache hit (%d rows, age=%ds)",
+                            len(cached["campaigns"]), int(time.time() - mtime),
+                        )
+                        return cached["campaigns"]
+        except Exception as exc:
+            logger.debug("activist_campaigns cache read failed: %s", exc)
+
+    end_dt   = datetime.utcnow().date()
+    start_dt = end_dt - timedelta(days=max(1, int(days_back)))
+
+    params: dict = {
+        "q":         '"SCHEDULE 13D"',
+        "forms":     ",".join(forms),
+        "dateRange": "custom",
+        "startdt":   str(start_dt),
+        "enddt":     str(end_dt),
+    }
+
+    campaigns: list[dict] = []
+    from_offset = 0
+    page_step   = 10
+
+    try:
+        while len(campaigns) < max_hits:
+            params["from"] = str(from_offset)
+            r    = _get(_EFTS_SEARCH, params=params)
+            data = r.json()
+            hits = data.get("hits", {}).get("hits", [])
+            total = data.get("hits", {}).get("total", {}).get("value", 0)
+
+            if not hits:
+                break
+
+            for h in hits:
+                src = h.get("_source", {}) or {}
+                # EFTS schema: display_names is a list of "<name>  (<ticker>) (CIK <cik>)"
+                # adsh is the accession number, file_date is filing date.
+                display_names = src.get("display_names", []) or []
+                ciks          = src.get("ciks", []) or []
+                adsh          = src.get("adsh", "") or h.get("_id", "")
+                form_type     = src.get("form", forms[0])
+                file_date     = src.get("file_date", "")
+                xsl           = src.get("xsl", "") or ""
+
+                # Target is typically the FIRST display_name/CIK on a 13D
+                # (issuer of the securities). Filer is one of the others.
+                target_name = ""
+                target_cik  = ""
+                target_ticker = ""
+                if display_names:
+                    target_name, target_ticker = _split_display_name(display_names[0])
+                if ciks:
+                    target_cik = str(ciks[0]).zfill(10)
+
+                filer_name = ""
+                filer_cik  = ""
+                if len(display_names) > 1:
+                    filer_name, _ = _split_display_name(display_names[1])
+                if len(ciks) > 1:
+                    filer_cik = str(ciks[1]).zfill(10)
+
+                # Build EDGAR filing URL (index page)
+                acc_clean = _normalize_accession(adsh)
+                cik_plain = target_cik.lstrip("0") or (str(ciks[0]).lstrip("0") if ciks else "")
+                url = (
+                    f"{_ARCHIVES}/{cik_plain}/{acc_clean}/{adsh}-index.htm"
+                    if (cik_plain and adsh) else ""
+                )
+
+                campaigns.append({
+                    "target_ticker": target_ticker,
+                    "target_cik":    target_cik,
+                    "target_name":   target_name,
+                    "filer_name":    filer_name,
+                    "filer_cik":     filer_cik,
+                    "filing_date":   file_date,
+                    "form_type":     form_type,
+                    "accession":     adsh,
+                    "url":           url,
+                })
+
+            from_offset += len(hits)
+            if from_offset >= total or from_offset >= max_hits:
+                break
+            # Page step (EFTS default page = 10)
+            params["from"] = str(from_offset)
+            if len(hits) < page_step:
+                break
+    except Exception as exc:
+        logger.warning("get_active_campaigns_from_edgar EFTS query failed: %s", exc)
+
+    # Persist cache (best-effort)
+    if use_cache:
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(
+                json.dumps({
+                    "fetched_at": datetime.utcnow().isoformat() + "Z",
+                    "days_back":  days_back,
+                    "count":      len(campaigns),
+                    "campaigns":  campaigns,
+                }, indent=2, default=str),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            logger.debug("activist_campaigns cache write failed: %s", exc)
+
+    logger.info(
+        "get_active_campaigns_from_edgar: %d filings (forms=%s, lookback=%dd)",
+        len(campaigns), ",".join(forms), days_back,
+    )
+    return campaigns
+
+
+def _split_display_name(raw: str) -> tuple[str, str]:
+    """Parse an EDGAR display_name string.
+
+    EDGAR formats entries like::
+        "WALT DISNEY CO  (DIS) (CIK 0001744489)"
+
+    Returns ``(name, ticker)`` where ticker is "" if not present.
+    """
+    if not raw:
+        return ("", "")
+    s = str(raw).strip()
+    # Strip trailing " (CIK ...)" segment
+    s = re.sub(r"\s*\(CIK[^\)]*\)\s*$", "", s)
+    # Extract ticker in parentheses at end, e.g. " (DIS)"
+    m = re.search(r"\(([A-Z0-9.\-]{1,8})\)\s*$", s)
+    ticker = ""
+    if m:
+        ticker = m.group(1).upper()
+        s = s[: m.start()].rstrip()
+    return (s.strip(), ticker)
+
+
+# ---------------------------------------------------------------------------
+# ActivistTracker — high-level facade used by capability tests
+# ---------------------------------------------------------------------------
+
+class ActivistTracker:
+    """High-level activist intelligence facade.
+
+    Composes the lower-level pieces (parser, registry, screener) and exposes
+    a stable surface for downstream consumers + capability tests.
+    """
+
+    def __init__(
+        self,
+        parser: Optional[EDGAR13DParser] = None,
+        registry: Optional["ActivistRegistry"] = None,
+        screener: Optional[ActivistScreener] = None,
+        db: Optional["ActivistDatabase"] = None,
+    ):
+        self._parser   = parser or EDGAR13DParser()
+        # Late binding — these classes are defined later in the module.
+        self._registry = registry if registry is not None else (
+            ActivistRegistry() if "ActivistRegistry" in globals() else None
+        )
+        self._db       = db
+        self._screener = screener or ActivistScreener(parser=self._parser, db=self._db)
+
+    # ── Delegate the public capability used by the dim_027 test ────────────
+    def find_vulnerable_companies(
+        self,
+        cik_list: Optional[list[str]] = None,
+        top_n: int = 25,
+        days_back: int = 30,
+    ) -> list[VulnerableTarget]:
+        return self._screener.find_vulnerable_companies(
+            cik_list = cik_list,
+            top_n    = top_n,
+            days_back= days_back,
+        )
+
+    def get_active_campaigns(self, days_back: int = 30) -> list[dict]:
+        return get_active_campaigns_from_edgar(days_back=days_back)
 
 
 # ---------------------------------------------------------------------------

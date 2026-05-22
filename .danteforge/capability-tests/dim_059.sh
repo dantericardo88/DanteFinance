@@ -1,7 +1,7 @@
 #!/bin/bash
 # dim_059: MCP Server v3 — ToolRegistry, static method dispatch, AND real SENTINEL module invocations
 set -e
-cd /c/Projects/DanteFinance
+cd "$(dirname "$0")/../.."
 
 python - <<'PYEOF'
 import sys, os
@@ -100,11 +100,17 @@ assert hasattr(MCPToolHandler, 'get_stock_quote')
 assert callable(MCPToolHandler.get_stock_quote)
 print("[OK] MCPToolHandler.get_stock_quote is a callable static method")
 
-# 11. SentinelMCPServer registers >= 70 tools across 8 categories
+# 11. SentinelMCPServer registers >= 124 tools across 13 categories (Wave 36)
 server = SentinelMCPServer()
-assert server.registry.count >= 70, f"Expected >= 70 tools, got {server.registry.count}"
+assert server.registry.count >= 124, f"Expected >= 124 tools, got {server.registry.count}"
 cats = server.registry.categories()
-expected_cats = {"market_data", "fundamental", "technical", "sec_regulatory", "portfolio_risk", "backtesting", "ai_nlp", "alternative_data"}
+expected_cats = {
+    # Original 8
+    "market_data", "fundamental", "technical", "sec_regulatory",
+    "portfolio_risk", "backtesting", "ai_nlp", "alternative_data",
+    # Wave 36 — Expanded agentic surface
+    "advanced_analytics", "alt_data", "macro", "crypto_onchain", "private_markets",
+}
 assert expected_cats.issubset(set(cats)), f"Missing categories: {expected_cats - set(cats)}"
 print(f"[OK] SentinelMCPServer has {server.registry.count} tools in {len(cats)} categories: {cats}")
 
@@ -114,6 +120,70 @@ for t in new_tools:
     td = server.registry.get_tool(t)
     assert td is not None, f"Tool '{t}' not registered"
 print(f"[OK] New v3 tools registered: {new_tools}")
+
+# 12b. Wave-36 expanded tools (50 new): verify every one is registered
+wave36_tools = [
+    # Advanced analytics (10)
+    "get_brinson_attribution", "get_factor_loading", "get_kelly_size", "get_risk_parity",
+    "get_monte_carlo_var", "get_overfitting_score", "get_walk_forward_results",
+    "get_paper_trading_pnl", "get_strategy_promotion_status", "get_factor_decay_curve",
+    # Alt-data (10)
+    "get_social_sentiment_v3", "get_news_pipeline_signal", "get_congress_clusters",
+    "get_insider_clusters", "get_short_squeeze_score", "get_options_skew",
+    "get_vol_term_structure", "get_fear_greed_v2", "get_labor_market_tightness",
+    "get_central_bank_tone",
+    # Macro (10)
+    "get_country_macro", "get_central_bank_speech_score", "get_treasury_auction_schedule",
+    "get_cot_market_position", "get_fred_series", "get_econ_calendar_today",
+    "get_yield_spread_recession_prob", "get_inflation_regime",
+    "get_global_pmi_dashboard", "get_credit_spreads_dashboard",
+    # Crypto / onchain (10)
+    "get_dex_pool_metrics", "get_lp_returns_attribution", "get_impermanent_loss_risk",
+    "get_rugpull_risk_score", "get_mvrv_zone", "get_nvt_signal",
+    "get_btc_whale_alerts", "get_eth_mempool_pressure", "get_btc_network_health",
+    "get_stablecoin_health",
+    # Private markets + corporate (10)
+    "get_form_d_filing", "get_ria_profile_v2", "get_nport_holdings",
+    "get_berkus_valuation", "get_scorecard_valuation", "get_vc_method_valuation",
+    "get_fund_metrics", "get_lbo_valuation", "get_activist_campaigns_live",
+    "get_ipo_pop_prediction",
+]
+assert len(wave36_tools) == 50, f"Wave 36 should list 50 tools, found {len(wave36_tools)}"
+for tname in wave36_tools:
+    td = server.registry.get_tool(tname)
+    assert td is not None, f"Wave-36 tool '{tname}' not registered"
+print(f"[OK] Wave 36: all {len(wave36_tools)} expanded agentic tools registered")
+
+# 12c. Real-invocation spot-checks on Wave-36 handlers (offline-safe)
+print("\n[REAL Wave36] Spot-checking Wave-36 handlers against real SENTINEL modules...")
+
+r = MCPToolHandler.get_kelly_size(0.55, 0.10, 0.07)
+assert r.get("source") == "sentinel.spm.position_sizing_v3", f"Bad source: {r}"
+assert "full_kelly" in r and 0.0 < r["full_kelly"] < 1.0, r
+print(f"[OK] get_kelly_size -> {r['source']} (full_kelly={r['full_kelly']})")
+
+r = MCPToolHandler.get_berkus_valuation(sound_idea=500_000, prototype=400_000, mgmt_quality=300_000)
+assert r.get("source") == "sentinel.sfe.private_company_profiles", f"Bad source: {r}"
+assert r["valuation"]["mid"] > 0, r
+print(f"[OK] get_berkus_valuation -> {r['source']} (mid=${r['valuation']['mid']:,.0f})")
+
+r = MCPToolHandler.get_vc_method_valuation(
+    projected_exit_revenue=100_000_000, projected_exit_multiple=5.0,
+    years_to_exit=5, investment_amount=2_000_000,
+)
+assert r.get("source") == "sentinel.sfe.private_company_profiles", f"Bad source: {r}"
+assert r["valuation"]["post_money"] > 0, r
+print(f"[OK] get_vc_method_valuation -> {r['source']} (post_money=${r['valuation']['post_money']:,.0f})")
+
+r = MCPToolHandler.get_brinson_attribution({"AAPL": 0.6, "MSFT": 0.4})
+assert r.get("source") == "sentinel.spm.attribution_v3", f"Bad source: {r}"
+assert "attribution" in r, r
+print(f"[OK] get_brinson_attribution -> {r['source']}")
+
+r = MCPToolHandler.get_impermanent_loss_risk("ETH", "USDC", vol_a=0.8, vol_b=0.01, correlation=0.0)
+assert r.get("source") == "sentinel.sfe.defi_analytics_v3", f"Bad source: {r}"
+assert "implied_il_30d" in r, r
+print(f"[OK] get_impermanent_loss_risk -> {r['source']} (il_30d={r['implied_il_30d']})")
 
 # -----------------------------------------------------------------------
 # REAL INVOCATION TESTS — call into actual SENTINEL modules (no mocks)
@@ -167,5 +237,5 @@ assert r.get("source") == "sentinel.spm.portfolio_risk_v3", f"Expected v3 source
 assert "report" in r, f"Missing report key: {list(r.keys())}"
 print(f"[OK] Risk report returned with keys={list(r['report'].keys())[:5]}... — source={r['source']}")
 
-print("\n[PASS] dim_059: MCP Server v3 — ToolRegistry, dispatch, and 5 real SENTINEL module invocations all verified")
+print(f"\n[PASS] dim_059: MCP Server v3 — ToolRegistry, dispatch, {server.registry.count}+ tools across {len(cats)} categories, and 10 real SENTINEL module invocations all verified")
 PYEOF

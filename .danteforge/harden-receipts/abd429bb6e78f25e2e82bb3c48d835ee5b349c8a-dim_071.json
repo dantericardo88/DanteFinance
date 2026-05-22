@@ -1,0 +1,73 @@
+{
+  "dimensionId": "dim_071",
+  "allowed": true,
+  "scoreCap": 10,
+  "checks": [
+    {
+      "check": "orphan-audit",
+      "passed": true,
+      "durationMs": 0,
+      "findings": [],
+      "scoreCap": 6,
+      "skipped": true,
+      "skipReason": "no capability_callsite declared (run `danteforge harden migrate`)"
+    },
+    {
+      "check": "claim-auditor",
+      "passed": true,
+      "durationMs": 0,
+      "findings": [],
+      "scoreCap": 7,
+      "skipped": true,
+      "skipReason": "no capability_callsite declared"
+    },
+    {
+      "check": "hardcoded-fallback",
+      "passed": true,
+      "durationMs": 0,
+      "findings": [],
+      "scoreCap": 6.5,
+      "skipped": true,
+      "skipReason": "no capability_callsite declared"
+    },
+    {
+      "check": "import-resolves",
+      "passed": true,
+      "durationMs": 0,
+      "findings": [],
+      "scoreCap": 4,
+      "skipped": true,
+      "skipReason": "no capability_callsite declared"
+    },
+    {
+      "check": "functional-diff",
+      "passed": true,
+      "durationMs": 0,
+      "findings": [],
+      "scoreCap": 5.5,
+      "skipped": true,
+      "skipReason": "capability_test.command has no {{INPUT}} placeholder for two-input probe"
+    },
+    {
+      "check": "primary-not-parallel",
+      "passed": true,
+      "durationMs": 0,
+      "findings": [],
+      "scoreCap": 5.5,
+      "skipped": true,
+      "skipReason": "no capability_callsite declared"
+    },
+    {
+      "check": "recency-check",
+      "passed": true,
+      "durationMs": 0,
+      "findings": [],
+      "scoreCap": 7,
+      "skipped": true,
+      "skipReason": "no capability_callsite declared"
+    }
+  ],
+  "evidencePath": "C:\\Projects\\DanteFinance\\.danteforge\\harden-receipts\\abd429bb6e78f25e2e82bb3c48d835ee5b349c8a-dim_071.json",
+  "ranAt": "2026-05-19T13:11:24.876Z",
+  "reason": "All 0 applicable checks passed"
+}

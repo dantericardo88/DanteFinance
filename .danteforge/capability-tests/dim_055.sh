@@ -1,7 +1,7 @@
 #!/bin/bash
 # dim_055: Document Summarizer v3 — extractive TF-IDF, text_density, key_numbers, sentiment_arc
 set -e
-cd /c/Projects/DanteFinance
+cd "$(dirname "$0")/../.."
 
 python - <<'PYEOF'
 import sys, os

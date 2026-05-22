@@ -1,7 +1,7 @@
 #!/bin/bash
 # dim_067: Strategy promotion v3 — FSM states, criteria, StrategyRegistry
 set -e
-cd /c/Projects/DanteFinance
+cd "$(dirname "$0")/../.."
 
 python - <<'PYEOF'
 import sys, os

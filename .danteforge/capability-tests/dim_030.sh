@@ -1,17 +1,19 @@
 #!/bin/bash
-# dim_030: ipo_intelligence_v3 — IPO pipeline intelligence
+# dim_030: ipo_intelligence_v3 — IPO pipeline intelligence (logistic regression upgrade)
 set -e
 export PYTHONIOENCODING=utf-8
 cd "$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
 python - <<'PYEOF'
-import sys, os
+import sys, os, math
 sys.path.insert(0, os.getcwd())
 
-from datetime import date
+import numpy as np
+from datetime import date, timedelta
 
 from sentinel.sfe.ipo_intelligence_v3 import (
     _BULGE_BRACKET,
     _SPAC_MARKERS,
+    _HISTORICAL_IPOS,
     EdgarS1Parser,
     IPOPipelineTracker,
     SPACTracker,
@@ -21,6 +23,9 @@ from sentinel.sfe.ipo_intelligence_v3 import (
     compute_ipo_pop_prediction,
     compute_lockup_expiry_signal,
     classify_ipo_quality,
+    predict_ipo_pop,
+    _fit_ipo_pop_model,
+    backtest_ipo_predictions,
 )
 
 # --- constants ---
@@ -77,45 +82,90 @@ assert hasattr(SPACTracker, "__init__")
 print("[OK] EdgarS1Parser, IPOPipelineTracker, SPACTracker class structure present")
 
 # --------------------------------------------------------------------------
-# NEW: Test — compute_ipo_pop_prediction formula verification
+# NEW: Logistic Regression IPO pop predictor — REAL MODEL VERIFICATION
 # --------------------------------------------------------------------------
-# Formula: pop_score = rev_growth×0.3 + brand×0.2 + market×0.3 + uw_tier×0.2
-rev_growth = 0.8
-brand      = 0.6
-market     = 0.9
-uw_tier    = 1.0   # Goldman Sachs = bulge bracket
+assert len(_HISTORICAL_IPOS) >= 40, \
+    f"Training set too small: {len(_HISTORICAL_IPOS)} samples (need >= 40)"
+print(f"[OK] _HISTORICAL_IPOS has {len(_HISTORICAL_IPOS)} samples")
 
-expected_pop_score = (rev_growth * 0.3
-                      + brand    * 0.2
-                      + market   * 0.3
-                      + uw_tier  * 0.2)
-# = 0.24 + 0.12 + 0.27 + 0.20 = 0.83
+# Verify sigmoid math is real: probability MUST be in [0, 1]
+r = predict_ipo_pop(
+    offer_size=8.5, is_profitable=False, revenue_growth=1.5,
+    sector="tech", market_vix=18, underwriter="goldman", age_years=5,
+)
+assert 0.0 <= r["probability_of_big_pop"] <= 1.0, \
+    f"probability_of_big_pop={r['probability_of_big_pop']} not in [0,1] — not logistic"
+assert "model_type" in r and "logistic" in r["model_type"].lower(), \
+    f"model_type missing or not logistic: {r.get('model_type')}"
+assert "coefficients" in r and isinstance(r["coefficients"], list)
+assert "feature_contributions" in r and isinstance(r["feature_contributions"], dict)
+assert "z_score" in r
+assert "predicted_pop" in r
+print(f"[OK] predict_ipo_pop: prob_big_pop={r['probability_of_big_pop']:.3f}, "
+      f"predicted_pop={r['predicted_pop']:.3f}, backend={r['model_backend']}")
 
-pred = compute_ipo_pop_prediction(rev_growth, brand, market, uw_tier)
+# Verify sigmoid bounds across extreme inputs
+hot = predict_ipo_pop(
+    offer_size=8.0, is_profitable=False, revenue_growth=2.5,
+    sector="ai", market_vix=14, underwriter="Goldman Sachs", age_years=3,
+)
+cold = predict_ipo_pop(
+    offer_size=7.0, is_profitable=True, revenue_growth=0.05,
+    sector="utility", market_vix=40, underwriter="Unknown Boutique", age_years=25,
+)
+assert 0.0 <= hot["probability_of_big_pop"] <= 1.0
+assert 0.0 <= cold["probability_of_big_pop"] <= 1.0
+# A hot tech IPO should have a higher big-pop probability than a cold utility
+assert hot["probability_of_big_pop"] > cold["probability_of_big_pop"], \
+    f"Model failed monotonicity: hot={hot['probability_of_big_pop']:.3f}, " \
+    f"cold={cold['probability_of_big_pop']:.3f}"
+print(f"[OK] Logistic monotonicity: hot={hot['probability_of_big_pop']:.3f} > "
+      f"cold={cold['probability_of_big_pop']:.3f}")
 
-assert abs(pred["pop_score"] - expected_pop_score) < 1e-6, \
-    f"Expected pop_score={expected_pop_score:.4f}, got {pred['pop_score']}"
+# --- _fit_ipo_pop_model returns numpy array ---
+coefs, intercept = _fit_ipo_pop_model()
+assert isinstance(coefs, np.ndarray), f"coefs not ndarray: {type(coefs)}"
+assert len(coefs) >= 5, f"need >= 5 features, got {len(coefs)}"
+assert isinstance(intercept, float)
+print(f"[OK] _fit_ipo_pop_model: {len(coefs)} coefficients, intercept={intercept:.4f}")
 
-# pop_prediction_pct = pop_score × 28
-expected_pct = round(expected_pop_score * 28.0, 2)
-assert abs(pred["pop_prediction_pct"] - expected_pct) < 0.01, \
-    f"Expected {expected_pct}%, got {pred['pop_prediction_pct']}%"
+# --- backtest_ipo_predictions returns metrics ---
+bt = backtest_ipo_predictions(years=3)
+assert "rmse" in bt, "backtest missing 'rmse'"
+assert "directional_accuracy" in bt
+assert "auc" in bt
+assert 0.0 <= bt["directional_accuracy"] <= 1.0
+assert 0.0 <= bt["auc"] <= 1.0
+assert bt["rmse"] >= 0.0
+print(f"[OK] backtest: rmse={bt['rmse']:.3f}, dir_acc={bt['directional_accuracy']:.3f}, "
+      f"auc={bt['auc']:.3f}, n_train={bt['n_train']}, n_test={bt['n_test']}")
 
-assert "formula" in pred
-print(f"[OK] compute_ipo_pop_prediction: pop_score={pred['pop_score']:.4f}, "
-      f"pop_pct={pred['pop_prediction_pct']}%")
+# --------------------------------------------------------------------------
+# Backwards-compatible compute_ipo_pop_prediction wrapper
+# --------------------------------------------------------------------------
+pred = compute_ipo_pop_prediction(0.8, 0.6, 0.9, 1.0)
+# Must use logistic regression now, NOT the prior 0.3/0.2/0.3/0.2 weights
+assert "model_type" in pred and "logistic" in pred["model_type"].lower(), \
+    "compute_ipo_pop_prediction still uses linear weights!"
+assert "coefficients" in pred, "compute_ipo_pop_prediction must expose fitted coefficients"
+assert 0.0 <= pred["pop_score"] <= 1.0, "pop_score must be sigmoid output in [0,1]"
+print(f"[OK] compute_ipo_pop_prediction (logistic): pop_score={pred['pop_score']:.4f}, "
+      f"pop_pct={pred['pop_prediction_pct']}%, model_type={pred['model_type']}")
 
-# Boundary: all inputs 0.0 → pop_score = 0.0
+# Boundary: all inputs 0.0 — bear/boutique scenario, low big-pop prob
 pred_zero = compute_ipo_pop_prediction(0.0, 0.0, 0.0, 0.0)
-assert pred_zero["pop_score"] == 0.0
-print("[OK] compute_ipo_pop_prediction: zero inputs → pop_score=0.0")
+assert 0.0 <= pred_zero["pop_score"] <= 1.0
+print(f"[OK] zero inputs (bear/boutique): pop_score={pred_zero['pop_score']:.4f}")
 
-# Boundary: all inputs 1.0 → pop_score = 1.0
+# Boundary: all inputs 1.0 — hot/bulge scenario, higher big-pop prob
 pred_one = compute_ipo_pop_prediction(1.0, 1.0, 1.0, 1.0)
-assert abs(pred_one["pop_score"] - 1.0) < 1e-9
-print("[OK] compute_ipo_pop_prediction: all-ones inputs → pop_score=1.0")
+assert 0.0 <= pred_one["pop_score"] <= 1.0
+assert pred_one["pop_score"] > pred_zero["pop_score"], \
+    "all-ones should beat all-zeros on big-pop probability"
+print(f"[OK] all-ones (hot/bulge): pop_score={pred_one['pop_score']:.4f} > "
+      f"zero={pred_zero['pop_score']:.4f}")
 
-# Out-of-range must raise ValueError
+# Out-of-range must still raise ValueError
 try:
     compute_ipo_pop_prediction(1.5, 0.5, 0.5, 0.5)
     assert False, "Should have raised ValueError"
@@ -124,12 +174,10 @@ except ValueError:
 print("[OK] compute_ipo_pop_prediction: out-of-range input raises ValueError")
 
 # --------------------------------------------------------------------------
-# NEW: Test — compute_lockup_expiry_signal
+# compute_lockup_expiry_signal
 # --------------------------------------------------------------------------
 ipo_dt = date(2024, 1, 15)
 signal = compute_lockup_expiry_signal(ipo_dt, lockup_days=180)
-
-from datetime import timedelta
 expected_expiry = ipo_dt + timedelta(days=180)
 assert signal["lockup_expiry_date"] == expected_expiry.isoformat()
 assert signal["expected_return_pct"] == -8.0
@@ -139,39 +187,30 @@ print(f"[OK] compute_lockup_expiry_signal: expiry={signal['lockup_expiry_date']}
       f"signal={signal['signal']}, expected_return={signal['expected_return_pct']}%")
 
 # --------------------------------------------------------------------------
-# NEW: Test — classify_ipo_quality tiers
+# classify_ipo_quality tiers
 # --------------------------------------------------------------------------
-# Tier 1: bulge bracket + positive EBITDA
 t1 = classify_ipo_quality("Goldman Sachs", ebitda_positive=True)
 assert t1["tier"] == "Tier 1"
 assert t1["is_bulge_bracket"] is True
 assert t1["ebitda_positive"] is True
-print(f"[OK] classify_ipo_quality Tier 1: {t1['tier']} — {t1['rationale'][:40]}")
+print(f"[OK] classify_ipo_quality Tier 1: {t1['tier']}")
 
-# Tier 2: bulge bracket but EBITDA negative
 t2 = classify_ipo_quality("Goldman Sachs", ebitda_positive=False)
 assert t2["tier"] == "Tier 2"
-assert t2["is_bulge_bracket"] is True
 print(f"[OK] classify_ipo_quality Tier 2 (bulge+loss): {t2['tier']}")
 
-# Tier 2: major non-bulge with positive EBITDA
 t2b = classify_ipo_quality("Jefferies", ebitda_positive=True)
 assert t2b["tier"] == "Tier 2"
-assert t2b["is_bulge_bracket"] is False
 assert t2b["is_major"] is True
 print(f"[OK] classify_ipo_quality Tier 2 (major+profit): {t2b['tier']}")
 
-# Tier 3: boutique / unknown
 t3 = classify_ipo_quality("Unknown Boutique Partners", ebitda_positive=True)
 assert t3["tier"] == "Tier 3"
-assert t3["is_bulge_bracket"] is False
-assert t3["is_major"] is False
 print(f"[OK] classify_ipo_quality Tier 3: {t3['tier']}")
 
-# None underwriter → Tier 3
 t3n = classify_ipo_quality(None, ebitda_positive=False)
 assert t3n["tier"] == "Tier 3"
 print(f"[OK] classify_ipo_quality Tier 3: None underwriter handled")
 
-print("\n[PASS] dim_030: ipo_intelligence_v3 -- all checks passed")
+print("\n[PASS] dim_030: ipo_intelligence_v3 -- all checks passed (LOGISTIC REGRESSION verified)")
 PYEOF

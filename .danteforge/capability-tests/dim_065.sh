@@ -1,7 +1,7 @@
 #!/bin/bash
 # dim_065: Live trading execution v3 — class structure, enums, pure helpers
 set -e
-cd /c/Projects/DanteFinance
+cd "$(dirname "$0")/../.."
 
 python - <<'PYEOF'
 import sys, os

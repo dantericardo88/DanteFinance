@@ -2,7 +2,7 @@
 # dim_060: Research Agent v3 — tool registry, real SENTINEL module wiring,
 #          confidence scoring from source agreement, ReportBuilder
 set -e
-cd /c/Projects/DanteFinance
+cd "$(dirname "$0")/../.."
 
 python - <<'PYEOF'
 import sys, os

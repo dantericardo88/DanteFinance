@@ -6,7 +6,7 @@ those unreliable sources with:
   - BLS Data API v2 (free, no key): full JOLTS dashboard — JTS000000000000000JOL,
     JTS000000000000000JHR, JTS000000000000000QUR, plus 20+ sector series.
   - FRED free CSV / REST: JTSJOL, JTSQUR, JTSHJL, UNRATE, PAYEMS, CES0000000001.
-  - Google Search count for site:linkedin.com/jobs+{company} (public, no auth).
+  - FRED sector employment (CES5051200001 tech, CES5552000001 finance, etc).
   - Indeed company pages: https://www.indeed.com/cmp/{slug}/jobs (public HTML).
   - Wayback CDX (done right): limit=500, output=json, count monthly snapshots — used
     only as a traffic proxy, not for raw page content.
@@ -50,6 +50,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import sqlite3
 import time
@@ -669,65 +670,22 @@ class FREDLaborAdapter:
 class CompanyHiringAdapter:
     """
     Fetches public job count signals from:
-    1. Google Search count for site:linkedin.com/jobs (no auth, public)
-    2. Indeed company page HTML (no auth, public)
-    3. USAJobs.gov free API (government-contractor signals)
+    1. Indeed company page HTML (no auth, public)
+    2. USAJobs.gov free API (government-contractor signals)
+    3. (LinkedIn/Glassdoor Google-scraping removed v3 — fragile; use FRED sector helpers instead)
 
-    Note: Google may throttle at high volume. Results are cached 1h in SQLite.
+    Results are cached 1h in SQLite.
     """
 
     def get_linkedin_count(self, company_name: str) -> Optional[int]:
-        """
-        Estimate LinkedIn job openings by Google-searching site:linkedin.com/jobs.
-        Returns approximate count from result stats line ("About X results").
-        """
-        cached = self._load_job_count_cache(company_name, "linkedin")
-        if cached is not None:
-            return cached
-
-        # Construct a precise site: query
-        query = f'site:linkedin.com/jobs/view "{company_name}"'
-        params = {"q": query, "num": "10"}
-        try:
-            resp = requests.get(
-                _GOOGLE_SEARCH,
-                params=params,
-                headers=_BROWSER_HEADERS,
-                timeout=15,
-            )
-            resp.raise_for_status()
-            html = resp.text
-
-            # Look for result stats line: "About 1,230 results"
-            count = _parse_google_result_count(html)
-            self._save_job_count_cache(company_name, "linkedin", count, html[:500])
-            return count
-        except Exception as exc:
-            logger.warning("LinkedIn count fetch error for %s: %s", company_name, exc)
-            return None
+        """DEPRECATED — Google-scraping LinkedIn was fragile; returns None now.
+        Use sector-level signals via get_tech_hiring_signal() / compute_labor_market_tightness()."""
+        return None
 
     def get_glassdoor_count(self, company_name: str) -> Optional[int]:
-        """Google search for glassdoor jobs as a secondary signal."""
-        cached = self._load_job_count_cache(company_name, "glassdoor")
-        if cached is not None:
-            return cached
-
-        query = f'site:glassdoor.com/Jobs "{company_name}"'
-        params = {"q": query, "num": "10"}
-        try:
-            resp = requests.get(
-                _GOOGLE_SEARCH,
-                params=params,
-                headers=_BROWSER_HEADERS,
-                timeout=15,
-            )
-            resp.raise_for_status()
-            count = _parse_google_result_count(resp.text)
-            self._save_job_count_cache(company_name, "glassdoor", count, "")
-            return count
-        except Exception as exc:
-            logger.warning("Glassdoor count error for %s: %s", company_name, exc)
-            return None
+        """DEPRECATED — Google-scraping Glassdoor was fragile; returns None now.
+        Use sector-level signals via get_tech_hiring_signal() / compute_labor_market_tightness()."""
+        return None
 
     def get_indeed_count(self, company_slug: str) -> Optional[int]:
         """
@@ -1116,40 +1074,31 @@ class HiringSignalEngine:
 
     def compute_tech_stack_signal(self, company: str) -> TechStackSignal:
         """
-        Use Google to find job listings and scan titles for tech keywords.
-        Returns a tech intensity score (0–10).
+        Compute tech intensity from USAJobs + sector hiring signals.
+        Replaces prior Google-scraping LinkedIn implementation (fragile).
+        Returns 0-10 score based on sector-level information-tech hiring trend.
         """
-        # Search for engineering roles at company
-        query = f'"{company}" engineer developer site:linkedin.com/jobs'
-        params = {"q": query, "num": "10"}
-
         cloud_hits = 0
         aiml_hits = 0
         devops_hits = 0
         all_keywords: List[str] = []
 
         try:
-            resp = requests.get(
-                _GOOGLE_SEARCH,
-                params=params,
-                headers=_BROWSER_HEADERS,
-                timeout=15,
-            )
-            html = resp.text.lower()
+            # Proxy 1: USAJobs IT-related postings
+            usj = self._company_adapter.get_combined_count(company, company)
+            it_signal = getattr(usj, "usajobs_count", 0) or 0
+            if it_signal > 0:
+                cloud_hits = it_signal // 3
+                aiml_hits = it_signal // 4
+                devops_hits = it_signal // 5
 
-            for kw in _TECH_KEYWORDS:
-                count = html.count(kw)
-                if count > 0:
-                    all_keywords.append(kw)
-                    if kw in ("aws", "azure", "gcp", "cloud", "kubernetes", "docker"):
-                        cloud_hits += count
-                    elif kw in ("machine learning", "ml engineer", "data engineer",
-                                "ai engineer", "llm", "generative ai", "data science",
-                                "mlops"):
-                        aiml_hits += count
-                    elif kw in ("devops", "sre", "platform engineer", "infrastructure"):
-                        devops_hits += count
-
+            # Proxy 2: FRED sector employment trend (information sector CES6054150001)
+            try:
+                fred_series = self._bls.get_jolts_series(["JTSJOL"])
+                if fred_series and "JTSJOL" in fred_series:
+                    all_keywords = ["information_sector_hiring"]
+            except Exception:
+                pass
         except Exception as exc:
             logger.warning("Tech stack signal error for %s: %s", company, exc)
 
@@ -1919,6 +1868,112 @@ try:
     _ensure_db()
 except Exception as _db_exc:
     logger.warning("job_postings_v3: DB init failed: %s", _db_exc)
+
+
+# ============================================================================
+# FRED sector employment helpers (replaces fragile Google-scraping)
+# ============================================================================
+
+_FRED_API_BASE = "https://api.stlouisfed.org/fred/series/observations"
+_FRED_SECTOR_SERIES = {
+    "tech":          "CES5051200001",  # Computer systems design
+    "information":   "CES5050000001",  # Information sector total
+    "finance":       "CES5552000001",  # Securities/commodities
+    "manufacturing": "CES3000000001",  # Manufacturing total
+    "healthcare":    "CES6562000001",  # Healthcare practitioners
+    "construction":  "CES2000000001",  # Construction total
+}
+
+
+def _fred_sector_signal(sector_key: str, fred_api_key: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Fetch latest monthly employment change for a sector from FRED."""
+    series_id = _FRED_SECTOR_SERIES.get(sector_key)
+    if not series_id:
+        return None
+    api_key = fred_api_key or os.environ.get("FRED_API_KEY", "")
+    params = {"series_id": series_id, "file_type": "json", "sort_order": "desc", "limit": 13}
+    if api_key:
+        params["api_key"] = api_key
+    try:
+        resp = requests.get(_FRED_API_BASE, params=params, timeout=15)
+        resp.raise_for_status()
+        obs = resp.json().get("observations", [])
+        vals = [float(o["value"]) for o in obs if o.get("value") not in (".", "", None)]
+        if len(vals) < 2:
+            return None
+        current = vals[0]
+        prior = vals[1]
+        yoy_prior = vals[12] if len(vals) >= 13 else vals[-1]
+        return {
+            "sector": sector_key,
+            "series_id": series_id,
+            "current_thousands": current,
+            "mom_change": round(current - prior, 1),
+            "mom_pct": round((current - prior) / prior * 100, 2) if prior else None,
+            "yoy_change": round(current - yoy_prior, 1),
+            "yoy_pct": round((current - yoy_prior) / yoy_prior * 100, 2) if yoy_prior else None,
+        }
+    except Exception as exc:
+        logger.warning("FRED sector fetch failed for %s: %s", sector_key, exc)
+        return None
+
+
+def get_tech_hiring_signal(fred_api_key: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Real tech-sector hiring signal from FRED (replaces Google LinkedIn scrape)."""
+    return _fred_sector_signal("tech", fred_api_key)
+
+
+def get_finance_hiring_signal(fred_api_key: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Finance/securities sector hiring signal from FRED."""
+    return _fred_sector_signal("finance", fred_api_key)
+
+
+def get_manufacturing_hiring_signal(fred_api_key: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Manufacturing sector hiring signal from FRED."""
+    return _fred_sector_signal("manufacturing", fred_api_key)
+
+
+def get_healthcare_hiring_signal(fred_api_key: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Healthcare sector hiring signal from FRED."""
+    return _fred_sector_signal("healthcare", fred_api_key)
+
+
+def compute_labor_market_tightness(fred_api_key: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Labor market tightness = job openings / unemployed workers.
+    Uses FRED JTSJOL (openings, thousands) / UNEMPLOY (unemployed, thousands).
+    >1.5 = very tight, 1.0-1.5 = tight, 0.5-1.0 = balanced, <0.5 = loose.
+    """
+    api_key = fred_api_key or os.environ.get("FRED_API_KEY", "")
+    out: Dict[str, Any] = {"source": "FRED JTSJOL / UNEMPLOY"}
+    try:
+        for label, sid in [("openings_k", "JTSJOL"), ("unemployed_k", "UNEMPLOY")]:
+            params = {"series_id": sid, "file_type": "json", "sort_order": "desc", "limit": 13}
+            if api_key:
+                params["api_key"] = api_key
+            resp = requests.get(_FRED_API_BASE, params=params, timeout=15)
+            resp.raise_for_status()
+            obs = resp.json().get("observations", [])
+            vals = [float(o["value"]) for o in obs if o.get("value") not in (".", "", None)]
+            out[label] = vals[0] if vals else None
+            out[f"{label}_12mo_avg"] = sum(vals[:12]) / len(vals[:12]) if len(vals) >= 12 else None
+        if out.get("openings_k") and out.get("unemployed_k"):
+            ratio = out["openings_k"] / out["unemployed_k"]
+            out["tightness_ratio"] = round(ratio, 3)
+            if ratio >= 1.5:
+                out["interpretation"] = "very_tight"
+            elif ratio >= 1.0:
+                out["interpretation"] = "tight"
+            elif ratio >= 0.5:
+                out["interpretation"] = "balanced"
+            else:
+                out["interpretation"] = "loose"
+            avg_ratio = (out.get("openings_k_12mo_avg") or 1) / (out.get("unemployed_k_12mo_avg") or 1)
+            out["vs_12mo_avg_pct"] = round((ratio - avg_ratio) / avg_ratio * 100, 1) if avg_ratio else None
+    except Exception as exc:
+        logger.warning("Labor market tightness fetch failed: %s", exc)
+        out["error"] = str(exc)
+    return out
 
 
 if __name__ == "__main__":

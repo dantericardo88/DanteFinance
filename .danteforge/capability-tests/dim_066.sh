@@ -2,7 +2,7 @@
 # dim_066: Paper trading v3 — Portfolio, PaperBroker, PerformanceAnalytics pure math
 # Enhanced: bid/ask spread, market impact, order lifecycle, P&L attribution
 set -e
-cd /c/Projects/DanteFinance
+cd "$(dirname "$0")/../.."
 
 python - <<'PYEOF'
 import sys, os

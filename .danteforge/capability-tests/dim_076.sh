@@ -137,5 +137,88 @@ print(f"[OK] generate_screener_explanation: '{explanation}'")
 assert "dividend" in explanation.lower(), f"Explanation missing dividend: {explanation}"
 print("[OK] generate_screener_explanation: includes PE, dividend, limit")
 
+# ── NEW: recursive-descent grammar parser (nl_grammar) ───────────────────────
+from sentinel.sai.nl_grammar import (
+    NLGrammarParser, parse_screener_query, is_complex_query,
+    Comparison, BoolExpr,
+)
+gparser = NLGrammarParser()
+
+# Simple comparison + field-alias normalisation
+r = gparser.parse("pe < 20")
+assert isinstance(r, Comparison), f"Expected Comparison, got {type(r)}"
+assert r.field == "price_to_earnings", f"pe should alias -> price_to_earnings, got {r.field}"
+assert r.op == "<", f"op should be <, got {r.op}"
+assert r.value == 20.0, f"value should be 20.0, got {r.value}"
+print(f"[OK] NLGrammarParser.parse('pe < 20'): {r}")
+
+# AND composition with percent-suffix value
+r = parse_screener_query("pe < 20 AND roe > 15%")
+assert "and" in r, f"AND key missing: {r}"
+assert len(r["and"]) == 2, f"AND should have 2 children: {r}"
+# 15% should be coerced to 0.15
+roe_dict = r["and"][1]
+assert "return_on_equity" in roe_dict
+assert roe_dict["return_on_equity"][">"] == 0.15, f"15% -> 0.15: {roe_dict}"
+print(f"[OK] parse_screener_query('pe < 20 AND roe > 15%'): {r}")
+
+# Nested parens with OR and NOT and dollar/B suffix
+r = parse_screener_query("(pe < 20 OR mcap > 1b) AND NOT sector = energy")
+assert "and" in r, f"Top-level AND missing: {r}"
+assert any("or" in str(c) for c in r["and"]), f"OR branch missing: {r}"
+assert any("not" in str(c) for c in r["and"]), f"NOT branch missing: {r}"
+print(f"[OK] nested (OR + NOT + suffix): {r}")
+
+# BETWEEN
+r = parse_screener_query("pe BETWEEN 10 AND 20")
+assert "between" in str(r), f"BETWEEN missing: {r}"
+assert r["price_to_earnings"]["between"] == [10.0, 20.0], f"BETWEEN values: {r}"
+print(f"[OK] parse_screener_query('pe BETWEEN 10 AND 20'): {r}")
+
+# IN clause
+r = parse_screener_query("sector IN (tech, energy, finance)")
+assert "in" in str(r), f"IN missing: {r}"
+assert len(r["sector"]["in"]) == 3, f"IN list length: {r}"
+print(f"[OK] parse_screener_query('sector IN (tech, energy, finance)'): {r}")
+
+# Multi-char operators
+r = gparser.parse("market_cap >= 5b")
+assert r.op == ">=", f"Expected >=, got {r.op}"
+assert r.value == 5e9, f"Expected 5e9, got {r.value}"
+print(f"[OK] multi-char op >= with 5b suffix: value={r.value}")
+
+r = gparser.parse("eps != 0")
+assert r.op == "!=", f"Expected !=, got {r.op}"
+print(f"[OK] != operator: {r}")
+
+# is_complex_query routing predicate
+assert is_complex_query("pe < 20 AND roe > 15%"), "AND query should be complex"
+assert is_complex_query("(pe < 20)"), "parenthesised should be complex"
+assert is_complex_query("pe BETWEEN 10 AND 20"), "BETWEEN should be complex"
+assert not is_complex_query("profitable tech companies"), \
+    "plain English should NOT be complex"
+print("[OK] is_complex_query routing predicate works")
+
+# End-to-end: complex query routes through grammar in QueryParser.parse
+sq = parser.parse("pe < 20 AND roe > 15%")
+assert isinstance(sq, ScreenerQuery), "Complex query still returns ScreenerQuery"
+metrics_seen = {f.metric for f in sq.filters}
+assert "pe_ratio" in metrics_seen, f"pe_ratio missing from complex parse: {metrics_seen}"
+assert "roe" in metrics_seen, f"roe missing from complex parse: {metrics_seen}"
+print(f"[OK] QueryParser.parse routes complex query through grammar: {sq.filters}")
+
+# Error handling
+try:
+    gparser.parse("pe <")
+    raise AssertionError("Should have raised SyntaxError on incomplete query")
+except SyntaxError:
+    print("[OK] SyntaxError raised on malformed query")
+
+try:
+    gparser.parse("(pe < 20")
+    raise AssertionError("Should have raised SyntaxError on unmatched paren")
+except SyntaxError:
+    print("[OK] SyntaxError raised on unmatched paren")
+
 print("\n[PASS] dim_076: NL screener")
 PYEOF

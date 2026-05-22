@@ -1,7 +1,7 @@
 #!/bin/bash
 # dim_052: FinBERT sentiment v3 — LM lexicon + 5 stub fixes verified (no network)
 set -e
-cd /c/Projects/DanteFinance
+cd "$(dirname "$0")/../.."
 
 python - <<'PYEOF'
 import sys, os

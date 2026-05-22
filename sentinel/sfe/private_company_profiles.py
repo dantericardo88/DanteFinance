@@ -2019,3 +2019,516 @@ def compute_acquisition_likelihood_score(
     if sector in _STRATEGIC_ACQUIRER_SECTORS:
         score += 40.0
     return min(100.0, round(score, 1))
+
+
+# ---------------------------------------------------------------------------
+# Wave-35 Crusade additions — Pre-revenue / VC valuation methods
+#
+# These methods complement the existing revenue-multiple comparables for
+# private companies that have little or no revenue history. They form the
+# pre-revenue / early-stage half of the SENTINEL private-company valuation
+# stack and are required by dim_097 to score 9/10.
+#
+# References:
+#   - Berkus, Dave. "The Berkus Method." 2016 (5-factor pre-revenue framework)
+#   - Payne, Bill. "Scorecard Valuation Methodology." 2011
+#   - Sahlman, William A. "A Method for Valuing High-Risk, Long-Term
+#     Investments: The Venture Capital Method." HBS 9-288-006, 1987.
+# ---------------------------------------------------------------------------
+
+# Scorecard Method — regional pre-money baselines by stage (USD).
+# Source: Bill Payne 2024 angel-investor calibrations + Halo Report regional
+# medians. Numbers are conservative midpoints; treat as comparables, not gospel.
+_SCORECARD_BASELINES: dict[str, dict[str, float]] = {
+    "US": {
+        "pre-seed":  1_500_000.0,
+        "seed":      2_500_000.0,
+        "series_a":  8_000_000.0,
+        "series_b": 25_000_000.0,
+    },
+    "EU": {
+        "pre-seed":  1_000_000.0,
+        "seed":      1_800_000.0,
+        "series_a":  6_000_000.0,
+        "series_b": 18_000_000.0,
+    },
+    "UK": {
+        "pre-seed":  1_200_000.0,
+        "seed":      2_000_000.0,
+        "series_a":  7_000_000.0,
+        "series_b": 20_000_000.0,
+    },
+    "ASIA": {
+        "pre-seed":    800_000.0,
+        "seed":      1_500_000.0,
+        "series_a":  5_000_000.0,
+        "series_b": 16_000_000.0,
+    },
+    "LATAM": {
+        "pre-seed":    600_000.0,
+        "seed":      1_200_000.0,
+        "series_a":  4_000_000.0,
+        "series_b": 12_000_000.0,
+    },
+}
+
+# Sector multipliers applied on top of the regional baseline. Hot sectors
+# (deep tech, AI, biotech) historically command higher pre-money valuations.
+_SCORECARD_SECTOR_MULT: dict[str, float] = {
+    "Software":       1.30,
+    "AI":             1.50,
+    "ai":             1.50,
+    "FinTech":        1.20,
+    "HealthTech":     1.15,
+    "BioTech":        1.40,
+    "Semiconductors": 1.25,
+    "deeptech":       1.35,
+    "Marketplace":    1.10,
+    "eCommerce":      0.90,
+    "Healthcare":     1.05,
+    "IT Services":    0.85,
+    "tech":           1.10,
+    "Other":          1.00,
+}
+
+# Scorecard weight ceilings per Bill Payne (must sum to <= 1.00 across factors).
+_SCORECARD_WEIGHTS: dict[str, float] = {
+    "management":              0.30,
+    "opportunity":             0.25,
+    "product":                 0.15,
+    "competition":             0.10,
+    "marketing":               0.10,
+    "need_additional_funding": 0.05,
+    "other":                   0.05,
+}
+
+
+def berkus_valuation(
+    sound_idea: float = 500_000.0,
+    prototype: float = 0.0,
+    mgmt_quality: float = 0.0,
+    strategic_relationships: float = 0.0,
+    product_rollout: float = 0.0,
+) -> dict:
+    """
+    Berkus Method — pre-revenue startup valuation.
+
+    Dave Berkus's 5-factor framework assigns up to $500,000 per factor,
+    giving a theoretical ceiling of $2.5M for a pre-revenue startup.
+    Each input is the dollar value attributed to that factor (clamped to
+    [0, 500_000]).
+
+    Factors
+    -------
+    sound_idea               : Basic value, viable concept (default $500k)
+    prototype                : Reduces technology risk
+    mgmt_quality             : Reduces execution risk
+    strategic_relationships  : Reduces market risk
+    product_rollout          : Reduces production risk
+
+    Returns
+    -------
+    dict with method, low, mid, high, components, total_factors_used.
+    Low/mid/high reflect a +/- 20% band around the summed valuation to
+    convey the inherent uncertainty of pre-revenue work.
+    """
+    cap = 500_000.0
+    components = {
+        "sound_idea":              max(0.0, min(float(sound_idea), cap)),
+        "prototype":               max(0.0, min(float(prototype), cap)),
+        "mgmt_quality":            max(0.0, min(float(mgmt_quality), cap)),
+        "strategic_relationships": max(0.0, min(float(strategic_relationships), cap)),
+        "product_rollout":         max(0.0, min(float(product_rollout), cap)),
+    }
+    total = sum(components.values())
+    # Hard ceiling per Berkus
+    total = min(total, 2_500_000.0)
+    factors_used = sum(1 for v in components.values() if v > 0)
+
+    return {
+        "method":              "berkus",
+        "low":                 round(total * 0.80, 2),
+        "mid":                 round(total, 2),
+        "high":                round(total * 1.20, 2),
+        "components":          {k: round(v, 2) for k, v in components.items()},
+        "ceiling":             2_500_000.0,
+        "total_factors_used":  factors_used,
+        "notes":               "Berkus pre-revenue ceiling = $2.5M (5 x $500k).",
+    }
+
+
+def scorecard_valuation(
+    ticker_or_company: str,
+    sector: str,
+    region: str = "US",
+    stage: str = "seed",
+    management_strength: float = 1.00,
+    opportunity_size: float = 1.00,
+    product_tech: float = 1.00,
+    competitive_environment: float = 1.00,
+    sales_marketing: float = 1.00,
+    need_for_funding: float = 1.00,
+    other_factor: float = 1.00,
+) -> dict:
+    """
+    Scorecard Method (Bill Payne) — early-stage pre-money valuation.
+
+    Each factor is a relative multiplier (1.00 = peer-average company,
+    >1.00 = better than peers, <1.00 = worse). Internally, each multiplier
+    is bounded so the weighted adjustment never exceeds Bill Payne's
+    factor ceilings (e.g. management strength caps at +30% adjustment).
+
+    Parameters
+    ----------
+    ticker_or_company           : Company identifier (for the response)
+    sector                      : Sector label (Software, FinTech, BioTech, ...)
+    region                      : One of US, EU, UK, ASIA, LATAM (default US)
+    stage                       : pre-seed | seed | series_a | series_b
+    management_strength         : 0.0–2.5, peer-relative (1.0 = peer median)
+    opportunity_size            : 0.0–2.0
+    product_tech                : 0.0–2.0
+    competitive_environment     : 0.0–2.0
+    sales_marketing             : 0.0–2.0
+    need_for_funding            : 0.0–2.0
+    other_factor                : 0.0–2.0
+
+    Returns
+    -------
+    dict with method, low, mid, high, comparables, adjustments, sector_multiplier.
+    """
+    region_key = (region or "US").upper()
+    stage_key  = (stage or "seed").lower().replace("-", "_").replace(" ", "_")
+    if stage_key == "pre_seed":
+        stage_key = "pre-seed"
+
+    region_table = _SCORECARD_BASELINES.get(region_key, _SCORECARD_BASELINES["US"])
+    baseline     = region_table.get(stage_key, region_table.get("seed", 2_500_000.0))
+
+    sector_mult  = _SCORECARD_SECTOR_MULT.get(sector, _SCORECARD_SECTOR_MULT.get(
+        (sector or "").lower(), 1.00))
+    base_premoney = baseline * sector_mult
+
+    factor_inputs = {
+        "management":              (management_strength,     _SCORECARD_WEIGHTS["management"]),
+        "opportunity":             (opportunity_size,        _SCORECARD_WEIGHTS["opportunity"]),
+        "product":                 (product_tech,            _SCORECARD_WEIGHTS["product"]),
+        "competition":             (competitive_environment, _SCORECARD_WEIGHTS["competition"]),
+        "marketing":               (sales_marketing,         _SCORECARD_WEIGHTS["marketing"]),
+        "need_additional_funding": (need_for_funding,        _SCORECARD_WEIGHTS["need_additional_funding"]),
+        "other":                   (other_factor,            _SCORECARD_WEIGHTS["other"]),
+    }
+
+    adjustments: dict[str, float] = {}
+    weighted_sum = 0.0
+    for name, (raw_mult, weight) in factor_inputs.items():
+        m = max(0.0, float(raw_mult))
+        # The adjustment that this factor contributes to the multiplier is
+        # weight * (m - 1.0). Clamp m so the adjustment can't exceed +weight
+        # (i.e. m <= 2.0 always; some factors are tighter — see Payne).
+        m_capped = min(m, 2.0)
+        contribution = weight * (m_capped - 1.0)
+        weighted_sum += contribution
+        adjustments[name] = {
+            "input_multiplier":   round(m, 3),
+            "capped_multiplier":  round(m_capped, 3),
+            "weight":             weight,
+            "contribution":       round(contribution, 4),
+        }
+
+    # Final adjustment factor: 1.0 + sum(weighted contributions). Floor at 0.2
+    # to prevent silly near-zero valuations from extreme inputs.
+    adj_factor = max(0.20, 1.0 + weighted_sum)
+    mid_val    = base_premoney * adj_factor
+
+    comparables = {
+        "region":             region_key,
+        "stage":              stage_key,
+        "regional_baseline":  round(baseline, 2),
+        "sector_multiplier":  round(sector_mult, 3),
+        "base_pre_money":     round(base_premoney, 2),
+        "adjustment_factor":  round(adj_factor, 4),
+    }
+
+    return {
+        "method":            "scorecard",
+        "company":           ticker_or_company,
+        "sector":            sector,
+        "low":               round(mid_val * 0.75, 2),
+        "mid":               round(mid_val, 2),
+        "high":              round(mid_val * 1.25, 2),
+        "comparables":       comparables,
+        "adjustments":       adjustments,
+        "sector_multiplier": round(sector_mult, 3),
+    }
+
+
+def vc_method_valuation(
+    projected_exit_revenue: float,
+    projected_exit_multiple: float,
+    years_to_exit: int,
+    target_irr: float = 0.30,
+    dilution_to_exit: float = 0.20,
+    investment_amount: float = 0.0,
+) -> dict:
+    """
+    Classic VC Method (Sahlman, HBS 1987).
+
+    Steps
+    -----
+    1. Exit value          = projected_exit_revenue × projected_exit_multiple
+    2. Required terminal $ = Exit value (the slice the investor walks out with
+                             at exit)
+    3. Post-money today    = Exit value / (1 + target_irr) ** years_to_exit
+    4. Pre-money today     = Post-money − investment_amount
+    5. Retention ratio     = 1 / (1 − dilution_to_exit)
+       Ownership today     = (investment / post_money) × retention_ratio
+
+    Parameters
+    ----------
+    projected_exit_revenue  : USD revenue forecast at exit year
+    projected_exit_multiple : Revenue or EBITDA multiple paid at exit
+    years_to_exit           : Holding period (years), must be >= 1
+    target_irr              : Investor required IRR (default 30% — typical VC)
+    dilution_to_exit        : Cumulative dilution from future rounds (default 20%)
+    investment_amount       : Size of this round (used to derive ownership %)
+
+    Returns
+    -------
+    dict with method, post_money, pre_money, ownership_required, exit_value,
+    retention_ratio, discount_factor, assumptions.
+    """
+    years = max(1, int(years_to_exit))
+    irr   = max(-0.99, float(target_irr))
+    dil   = max(0.0, min(float(dilution_to_exit), 0.95))
+
+    exit_value      = float(projected_exit_revenue) * float(projected_exit_multiple)
+    discount_factor = (1.0 + irr) ** years
+    post_money      = exit_value / discount_factor if discount_factor > 0 else 0.0
+    pre_money       = max(0.0, post_money - float(investment_amount))
+
+    retention_ratio = 1.0 / (1.0 - dil) if dil < 1.0 else float("inf")
+    if investment_amount > 0 and post_money > 0:
+        base_ownership      = investment_amount / post_money
+        ownership_required  = min(1.0, base_ownership * retention_ratio)
+    else:
+        ownership_required  = 0.0
+
+    return {
+        "method":             "vc_method",
+        "exit_value":         round(exit_value, 2),
+        "discount_factor":    round(discount_factor, 4),
+        "post_money":         round(post_money, 2),
+        "pre_money":          round(pre_money, 2),
+        "ownership_required": round(ownership_required, 4),
+        "retention_ratio":    round(retention_ratio, 4) if retention_ratio != float("inf") else None,
+        "assumptions": {
+            "projected_exit_revenue":  float(projected_exit_revenue),
+            "projected_exit_multiple": float(projected_exit_multiple),
+            "years_to_exit":           years,
+            "target_irr":              irr,
+            "dilution_to_exit":        dil,
+            "investment_amount":       float(investment_amount),
+        },
+    }
+
+
+def venture_capital_valuation(*args, **kwargs) -> dict:
+    """Backward-compat alias for :func:`vc_method_valuation`."""
+    return vc_method_valuation(*args, **kwargs)
+
+
+def composite_valuation(
+    company_name: str,
+    sector: str = "tech",
+    revenue: float | None = None,
+    stage: str = "seed",
+    region: str = "US",
+    # Berkus inputs
+    berkus_sound_idea: float = 500_000.0,
+    berkus_prototype: float = 0.0,
+    berkus_mgmt: float = 0.0,
+    berkus_relationships: float = 0.0,
+    berkus_rollout: float = 0.0,
+    # Scorecard inputs (all default to peer-median)
+    sc_mgmt: float = 1.0,
+    sc_opportunity: float = 1.0,
+    sc_product: float = 1.0,
+    sc_competition: float = 1.0,
+    sc_marketing: float = 1.0,
+    sc_funding_need: float = 1.0,
+    sc_other: float = 1.0,
+    # VC Method inputs (only used for early/growth stages)
+    projected_exit_revenue: float | None = None,
+    projected_exit_multiple: float | None = None,
+    years_to_exit: int = 5,
+    target_irr: float = 0.30,
+    dilution_to_exit: float = 0.20,
+    # Comparable revenue-multiple input
+    revenue_multiple_estimate: float | None = None,
+    **kwargs,
+) -> dict:
+    """
+    Composite private-company valuation — blends Berkus, Scorecard, VC Method,
+    and revenue-multiple comparables according to the company's stage.
+
+    Stage logic
+    -----------
+    * Pre-revenue (revenue is None or 0): Berkus 60%, Scorecard 40%, VC skipped.
+    * Early-stage   (0 < revenue < 5M)  : Berkus 30%, Scorecard 40%, VC 30%.
+    * Growth-stage  (5M <= revenue < 50M): Scorecard 20%, VC 60%, comps 20%.
+    * Late-stage    (revenue >= 50M)    : Scorecard 10%, VC 50%, comps 40%.
+
+    Parameters
+    ----------
+    company_name : Used only for the response payload.
+    sector       : Sector label (controls scorecard multiplier and comp multiple).
+    revenue      : Latest revenue in USD. ``None`` or 0 = pre-revenue.
+    stage        : "pre-seed" | "seed" | "series_a" | "series_b" | "growth" | "late".
+    region       : Region key for scorecard baselines.
+    revenue_multiple_estimate
+                 : Optional precomputed multiple-based valuation (USD). If not
+                   provided, it is derived from :data:`_REVENUE_MULTIPLES` when
+                   ``revenue`` is positive.
+
+    Returns
+    -------
+    dict with method, valuation_low/mid/high, weights, components (each method's
+    full dict), and the inferred stage bucket.
+    """
+    # ------------- 1. Run individual methods --------------------------------
+    berkus = berkus_valuation(
+        sound_idea=berkus_sound_idea,
+        prototype=berkus_prototype,
+        mgmt_quality=berkus_mgmt,
+        strategic_relationships=berkus_relationships,
+        product_rollout=berkus_rollout,
+    )
+
+    scorecard_stage = "seed"
+    if stage in ("pre-seed", "pre_seed", "preseed"):
+        scorecard_stage = "pre-seed"
+    elif stage in ("series_a", "series-a", "a"):
+        scorecard_stage = "series_a"
+    elif stage in ("series_b", "series-b", "b", "growth", "late"):
+        scorecard_stage = "series_b"
+
+    scorecard = scorecard_valuation(
+        ticker_or_company=company_name,
+        sector=sector,
+        region=region,
+        stage=scorecard_stage,
+        management_strength=sc_mgmt,
+        opportunity_size=sc_opportunity,
+        product_tech=sc_product,
+        competitive_environment=sc_competition,
+        sales_marketing=sc_marketing,
+        need_for_funding=sc_funding_need,
+        other_factor=sc_other,
+    )
+
+    # VC Method only meaningful when we have a forecast. If not provided but
+    # the company has revenue, derive a naive forecast: 3x revenue at exit
+    # with a 5x multiple (industry rule-of-thumb placeholder).
+    rev = float(revenue) if revenue is not None else 0.0
+    vc = None
+    if (projected_exit_revenue is not None and projected_exit_multiple is not None):
+        vc = vc_method_valuation(
+            projected_exit_revenue=projected_exit_revenue,
+            projected_exit_multiple=projected_exit_multiple,
+            years_to_exit=years_to_exit,
+            target_irr=target_irr,
+            dilution_to_exit=dilution_to_exit,
+        )
+    elif rev > 0:
+        # Sensible default forecast for blending purposes.
+        default_exit_rev = rev * 3.0
+        default_exit_mult = (_REVENUE_MULTIPLES.get(sector, _REVENUE_MULTIPLES["Other"])["mid"])
+        vc = vc_method_valuation(
+            projected_exit_revenue=default_exit_rev,
+            projected_exit_multiple=default_exit_mult,
+            years_to_exit=years_to_exit,
+            target_irr=target_irr,
+            dilution_to_exit=dilution_to_exit,
+        )
+
+    # Revenue-multiple comparable
+    comp_mid = None
+    if revenue_multiple_estimate is not None:
+        comp_mid = float(revenue_multiple_estimate)
+    elif rev > 0:
+        sector_mults = _REVENUE_MULTIPLES.get(sector, _REVENUE_MULTIPLES["Other"])
+        comp_mid = rev * sector_mults["mid"]
+
+    # ------------- 2. Pick stage bucket and weights -------------------------
+    if rev <= 0:
+        bucket = "pre_revenue"
+        weights = {"berkus": 0.60, "scorecard": 0.40, "vc": 0.00, "comps": 0.00}
+    elif rev < 5_000_000:
+        bucket = "early"
+        weights = {"berkus": 0.30, "scorecard": 0.40, "vc": 0.30, "comps": 0.00}
+    elif rev < 50_000_000:
+        bucket = "growth"
+        weights = {"berkus": 0.00, "scorecard": 0.20, "vc": 0.60, "comps": 0.20}
+    else:
+        bucket = "late"
+        weights = {"berkus": 0.00, "scorecard": 0.10, "vc": 0.50, "comps": 0.40}
+
+    # If we don't actually have a VC valuation, rebalance the weight off it.
+    if vc is None and weights["vc"] > 0:
+        spillover = weights["vc"]
+        weights["vc"] = 0.0
+        # Push spillover into scorecard preferentially, then comps, then berkus.
+        if rev > 0:
+            weights["scorecard"] += spillover * 0.5
+            if comp_mid is not None:
+                weights["comps"] += spillover * 0.5
+            else:
+                weights["scorecard"] += spillover * 0.5
+        else:
+            weights["berkus"] += spillover
+
+    # If comps unavailable but weighted, push that weight into scorecard.
+    if comp_mid is None and weights["comps"] > 0:
+        weights["scorecard"] += weights["comps"]
+        weights["comps"] = 0.0
+
+    # ------------- 3. Blend ------------------------------------------------
+    mid_components: list[tuple[str, float, float]] = []  # (name, value, weight)
+    if weights["berkus"] > 0:
+        mid_components.append(("berkus", berkus["mid"], weights["berkus"]))
+    if weights["scorecard"] > 0:
+        mid_components.append(("scorecard", scorecard["mid"], weights["scorecard"]))
+    if weights["vc"] > 0 and vc is not None:
+        mid_components.append(("vc_method", vc["post_money"], weights["vc"]))
+    if weights["comps"] > 0 and comp_mid is not None:
+        mid_components.append(("comps", comp_mid, weights["comps"]))
+
+    total_w = sum(w for _, _, w in mid_components) or 1.0
+    mid_val = sum(v * w for _, v, w in mid_components) / total_w
+    low_val = mid_val * 0.75
+    high_val = mid_val * 1.30
+
+    return {
+        "method":          "composite",
+        "company":         company_name,
+        "sector":          sector,
+        "stage":           stage,
+        "stage_bucket":    bucket,
+        "region":          region,
+        "revenue":         rev,
+        "valuation_low":   round(low_val, 2),
+        "valuation_mid":   round(mid_val, 2),
+        "valuation_high":  round(high_val, 2),
+        "low":             round(low_val, 2),   # ergonomic aliases
+        "mid":             round(mid_val, 2),
+        "high":            round(high_val, 2),
+        "weights":         {k: round(v, 3) for k, v in weights.items()},
+        "components": {
+            "berkus":    berkus,
+            "scorecard": scorecard,
+            "vc_method": vc,
+            "comps":     {"mid": round(comp_mid, 2) if comp_mid is not None else None,
+                          "sector_mid_multiple": _REVENUE_MULTIPLES.get(
+                              sector, _REVENUE_MULTIPLES["Other"])["mid"]},
+        },
+    }

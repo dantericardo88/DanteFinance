@@ -239,5 +239,96 @@ large_score = compute_acquisition_likelihood_score("large", True, "Healthcare")
 assert large_score == 80.0, f"Large FCF strategic: {large_score}"
 print(f"[OK] compute_acquisition_likelihood_score (large/FCF/healthcare): {large_score}")
 
+# ------------------------------------------------------------------
+# Wave-35 Crusade additions: Berkus / Scorecard / VC Method / Composite
+# valuations for pre-revenue + early-stage private companies.
+# This block exists because the prior Wave 3 LIED about implementing
+# these — the harsh audit caught it. These asserts force honesty.
+# ------------------------------------------------------------------
+from sentinel.sfe.private_company_profiles import (
+    berkus_valuation,
+    scorecard_valuation,
+    vc_method_valuation,
+    composite_valuation,
+)
+
+assert callable(berkus_valuation),     "berkus_valuation must exist"
+assert callable(scorecard_valuation),  "scorecard_valuation must exist"
+assert callable(vc_method_valuation),  "vc_method_valuation must exist"
+assert callable(composite_valuation),  "composite_valuation must exist"
+
+# Berkus — 5 factors x $500k = $2.5M ceiling
+b_max = berkus_valuation(500_000, 500_000, 500_000, 500_000, 500_000)
+assert b_max["method"] == "berkus"
+assert b_max["mid"] == 2_500_000, f"Berkus ceiling should be $2.5M: {b_max['mid']}"
+assert b_max["ceiling"] == 2_500_000.0
+assert set(b_max["components"].keys()) == {
+    "sound_idea", "prototype", "mgmt_quality",
+    "strategic_relationships", "product_rollout",
+}, "Berkus must expose all 5 components"
+b_default = berkus_valuation()
+assert b_default["mid"] == 500_000, "Default sound_idea = $500k baseline"
+print(f"[OK] berkus_valuation: ceiling=${b_max['mid']:,.0f}, default=${b_default['mid']:,.0f}")
+
+# Scorecard — US seed Software peer-median == $2.5M * 1.30 = $3.25M
+sc = scorecard_valuation("AcmeAI", sector="Software", region="US", stage="seed")
+assert sc["method"] == "scorecard"
+assert sc["comparables"]["regional_baseline"] == 2_500_000.0, "US seed = $2.5M"
+assert abs(sc["mid"] - 3_250_000.0) < 1.0, f"Software seed peer-median: {sc['mid']}"
+assert "adjustments" in sc and len(sc["adjustments"]) == 7, "7 scorecard factors"
+sc_a = scorecard_valuation("AcmeAI", sector="Software", region="US", stage="series_a")
+assert sc_a["comparables"]["regional_baseline"] == 8_000_000.0, "US Series A = $8M"
+print(f"[OK] scorecard_valuation: seed mid=${sc['mid']:,.0f} series_a mid=${sc_a['mid']:,.0f}")
+
+# VC Method — Exit $500M, 30% IRR, 5 years → post-money ≈ $134.66M
+vc = vc_method_valuation(
+    projected_exit_revenue=100_000_000,
+    projected_exit_multiple=5,
+    years_to_exit=5,
+    target_irr=0.30,
+    dilution_to_exit=0.20,
+    investment_amount=5_000_000,
+)
+assert vc["method"] == "vc_method"
+assert vc["exit_value"] == 500_000_000, f"Exit value: {vc['exit_value']}"
+expected_post = 500_000_000 / (1.30**5)
+assert abs(vc["post_money"] - expected_post) < 1.0, f"Post-money: {vc['post_money']}"
+assert vc["pre_money"] == round(vc["post_money"] - 5_000_000, 2)
+assert 0 < vc["ownership_required"] < 1.0, "Ownership in (0,1)"
+print(f"[OK] vc_method_valuation: exit=${vc['exit_value']:,.0f} post=${vc['post_money']:,.0f} ownership={vc['ownership_required']:.2%}")
+
+# Composite — pre-revenue: Berkus 60% / Scorecard 40%
+comp_pre = composite_valuation("PreRevCo", sector="Software", revenue=None, stage="seed")
+assert comp_pre["stage_bucket"] == "pre_revenue"
+assert comp_pre["weights"]["berkus"] == 0.60
+assert comp_pre["weights"]["scorecard"] == 0.40
+assert comp_pre["weights"]["vc"] == 0.0
+
+# Composite — early stage: VC method active
+comp_early = composite_valuation("EarlyCo", sector="Software", revenue=2_000_000, stage="seed")
+assert comp_early["stage_bucket"] == "early"
+assert comp_early["weights"]["vc"] > 0
+assert comp_early["components"]["vc_method"] is not None
+
+# Composite — growth: VC dominates
+comp_growth = composite_valuation("GrowthCo", sector="Software", revenue=20_000_000, stage="series_a")
+assert comp_growth["stage_bucket"] == "growth"
+assert comp_growth["weights"]["vc"] >= 0.50
+
+# Composite — late: comps significant
+comp_late = composite_valuation("LateCo", sector="Software", revenue=100_000_000, stage="series_b")
+assert comp_late["stage_bucket"] == "late"
+assert comp_late["weights"]["comps"] >= 0.30
+
+print(f"[OK] composite_valuation: pre=${comp_pre['valuation_mid']:,.0f} early=${comp_early['valuation_mid']:,.0f} growth=${comp_growth['valuation_mid']:,.0f} late=${comp_late['valuation_mid']:,.0f}")
+
+# Honesty grep — make absolutely sure the 4 function defs exist in source.
+import inspect, sentinel.sfe.private_company_profiles as mod
+src = inspect.getsource(mod)
+for fn_name in ("berkus_valuation", "scorecard_valuation",
+                "vc_method_valuation", "composite_valuation"):
+    assert f"def {fn_name}(" in src, f"def {fn_name}( missing from source"
+print("[OK] honesty grep: all 4 function defs present in source")
+
 print("\n[PASS] dim_097: Private company profiles")
 PYEOF

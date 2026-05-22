@@ -2,7 +2,7 @@
 # dim_051: Financial RAG v3 — TF-IDF fallback, hybrid search, build_index/query,
 #          PDF ingestion, entity-linked retrieval, citation extraction
 set -e
-cd /c/Projects/DanteFinance
+cd "$(dirname "$0")/../.."
 
 python - <<'PYEOF'
 import sys, os

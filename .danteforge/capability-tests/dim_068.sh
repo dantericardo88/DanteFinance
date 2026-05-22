@@ -1,7 +1,7 @@
 #!/bin/bash
 # dim_068: Factor research v3 — FactorLibrary, pure math helpers, dataclasses
 set -e
-cd /c/Projects/DanteFinance
+cd "$(dirname "$0")/../.."
 
 python - <<'PYEOF'
 import sys, os

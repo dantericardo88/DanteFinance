@@ -2349,6 +2349,495 @@ class FundLifecycle:
 
 
 # ---------------------------------------------------------------------------
+# PE/VC Fund Performance Metrics — IRR, DPI, TVPI, RVPI
+# ---------------------------------------------------------------------------
+#
+# These are the four canonical LP-level performance metrics for venture and
+# private-equity funds. All are pure-math (no network), fully testable.
+#
+#   IRR  — Internal Rate of Return on a date-stamped cash-flow stream.
+#          Solved by Newton-Raphson on the XNPV equation (Excel's XIRR).
+#          Negative amounts = capital calls (LP pays in).
+#          Positive amounts = distributions (GP returns cash to LP).
+#          A terminal_nav can be added at the last date to represent the
+#          residual unrealised value of the portfolio.
+#
+#   DPI  — Distributions to Paid-In = total distributions / total contributions.
+#          A DPI > 1.0 means the LP has been made whole on a cash-on-cash basis.
+#
+#   TVPI — Total Value to Paid-In = (distributions + current_nav) / contributions.
+#          The total-value multiple including unrealised gains.
+#
+#   RVPI — Residual Value to Paid-In = current_nav / contributions.
+#          The unrealised portion of TVPI (TVPI = DPI + RVPI).
+#
+# ---------------------------------------------------------------------------
+
+# Newton-Raphson convergence parameters for XIRR
+_IRR_EPS = 1e-9
+_IRR_MAX_ITER = 1000
+_IRR_INITIAL_GUESS = 0.10
+_IRR_STEP_TOL = 1e-9
+
+
+def _xnpv(rate: float, cash_flows: List[Tuple[date, float]]) -> float:
+    """
+    XNPV: net present value of a stream of date-stamped cash flows at `rate`.
+
+    NPV = sum_i amount_i / (1 + rate) ** ((date_i - date_0) / 365)
+    """
+    if not cash_flows:
+        return 0.0
+    d0 = cash_flows[0][0]
+    total = 0.0
+    one_plus_r = 1.0 + rate
+    for d, amt in cash_flows:
+        # Guard against (1 + rate) <= 0 which would blow up the power.
+        if one_plus_r <= 0:
+            return float("inf")
+        years = (d - d0).days / 365.0
+        total += amt / (one_plus_r ** years)
+    return total
+
+
+def _dxnpv(rate: float, cash_flows: List[Tuple[date, float]]) -> float:
+    """Analytical derivative of _xnpv w.r.t. rate."""
+    if not cash_flows:
+        return 0.0
+    d0 = cash_flows[0][0]
+    total = 0.0
+    one_plus_r = 1.0 + rate
+    if one_plus_r <= 0:
+        return float("inf")
+    for d, amt in cash_flows:
+        years = (d - d0).days / 365.0
+        total += -years * amt / (one_plus_r ** (years + 1.0))
+    return total
+
+
+def compute_fund_irr(
+    cash_flows: List[Tuple[date, float]],
+    terminal_nav: float = 0.0,
+) -> Optional[float]:
+    """
+    Compute the annualised IRR (XIRR) of a date-stamped cash-flow stream.
+
+    Parameters
+    ----------
+    cash_flows : list of (date, amount) tuples
+        Negative amounts are capital calls (LP contributions).
+        Positive amounts are distributions (LP receives cash back).
+    terminal_nav : float, default 0.0
+        Residual unrealised NAV added as a positive cash flow at the last date.
+
+    Returns
+    -------
+    float
+        Annualised IRR as a decimal (e.g. 0.18 = 18%).
+        Returns ``None`` if the input is degenerate (fewer than two flows,
+        all-same-sign, or Newton-Raphson fails to converge).
+
+    Algorithm: Newton-Raphson on XNPV with analytical derivative.
+    Falls back to a bisection sweep over [-0.99, 10.0] if NR diverges.
+    """
+    if not cash_flows or len(cash_flows) < 2:
+        return None
+
+    # Sort by date so date_0 is the earliest contribution
+    flows = sorted(cash_flows, key=lambda x: x[0])
+
+    # Apply terminal NAV at the last date
+    if terminal_nav:
+        last_date, last_amt = flows[-1]
+        flows = flows[:-1] + [(last_date, last_amt + terminal_nav)]
+
+    # Need both positive and negative flows for IRR to be well-defined
+    has_neg = any(a < 0 for _, a in flows)
+    has_pos = any(a > 0 for _, a in flows)
+    if not (has_neg and has_pos):
+        return None
+
+    # Newton-Raphson
+    rate = _IRR_INITIAL_GUESS
+    for _ in range(_IRR_MAX_ITER):
+        npv = _xnpv(rate, flows)
+        if abs(npv) < _IRR_EPS:
+            return rate
+        d_npv = _dxnpv(rate, flows)
+        if abs(d_npv) < _IRR_EPS:
+            break  # derivative vanished — fall through to bisection
+        new_rate = rate - npv / d_npv
+        # Keep rate above -1 (otherwise (1+r) goes non-positive)
+        if new_rate <= -0.9999:
+            new_rate = (rate - 0.9999) / 2.0
+        if abs(new_rate - rate) < _IRR_STEP_TOL:
+            return new_rate
+        rate = new_rate
+
+    # Bisection fallback
+    lo, hi = -0.999, 10.0
+    f_lo = _xnpv(lo, flows)
+    f_hi = _xnpv(hi, flows)
+    if f_lo * f_hi > 0:
+        return None  # no sign change in bracket
+    for _ in range(_IRR_MAX_ITER):
+        mid = 0.5 * (lo + hi)
+        f_mid = _xnpv(mid, flows)
+        if abs(f_mid) < _IRR_EPS or (hi - lo) < _IRR_STEP_TOL:
+            return mid
+        if f_lo * f_mid < 0:
+            hi, f_hi = mid, f_mid
+        else:
+            lo, f_lo = mid, f_mid
+    return 0.5 * (lo + hi)
+
+
+def compute_fund_dpi(distributions: float, capital_called: float) -> float:
+    """
+    DPI — Distributions to Paid-In multiple.
+
+    DPI = total_distributions / total_capital_called
+
+    A DPI of 1.5 means the LP has received $1.50 in distributions for every
+    $1.00 of capital called. DPI > 1.0 means the LP is cash-on-cash whole.
+
+    Returns 0.0 if capital_called is zero (avoids ZeroDivisionError).
+    """
+    if capital_called <= 0:
+        return 0.0
+    return distributions / capital_called
+
+
+def compute_fund_tvpi(
+    distributions: float,
+    current_nav: float,
+    capital_called: float,
+) -> float:
+    """
+    TVPI — Total Value to Paid-In multiple.
+
+    TVPI = (distributions + current_nav) / capital_called
+
+    The total realised-plus-unrealised return multiple. By construction
+    TVPI = DPI + RVPI.
+
+    Returns 0.0 if capital_called is zero.
+    """
+    if capital_called <= 0:
+        return 0.0
+    return (distributions + current_nav) / capital_called
+
+
+def compute_fund_rvpi(current_nav: float, capital_called: float) -> float:
+    """
+    RVPI — Residual Value to Paid-In multiple.
+
+    RVPI = current_nav / capital_called
+
+    The unrealised portion of TVPI — i.e. the value of the portfolio still
+    held by the fund, expressed as a multiple of LP contributions.
+
+    Returns 0.0 if capital_called is zero.
+    """
+    if capital_called <= 0:
+        return 0.0
+    return current_nav / capital_called
+
+
+# ---------------------------------------------------------------------------
+# compute_fund_metrics — wrapper that resolves all four metrics for a CIK
+# ---------------------------------------------------------------------------
+
+# Optional table for caching per-fund LP cash flows (date-stamped).
+# This makes compute_fund_metrics deterministic when the operator has loaded
+# fund cash-flow history (e.g. from a Form ADV brochure or LP statements).
+FUND_CASHFLOWS_DDL = """
+CREATE TABLE IF NOT EXISTS fund_cashflows (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    cik           TEXT NOT NULL,
+    flow_date     TEXT NOT NULL,
+    amount        REAL NOT NULL,
+    flow_type     TEXT,   -- 'call' | 'distribution' | 'nav'
+    note          TEXT,
+    UNIQUE(cik, flow_date, amount, flow_type)
+);
+CREATE INDEX IF NOT EXISTS idx_fcf_cik ON fund_cashflows(cik);
+
+CREATE TABLE IF NOT EXISTS fund_metadata (
+    cik           TEXT PRIMARY KEY,
+    vintage_year  INTEGER,
+    strategy      TEXT,
+    current_nav   REAL DEFAULT 0,
+    updated_at    TEXT DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+
+def _ensure_fund_metric_tables(db: "VCPEDatabase") -> None:
+    """Create the per-fund cash-flow / metadata tables if they don't exist."""
+    conn = db._connect()
+    conn.executescript(FUND_CASHFLOWS_DDL)
+    conn.commit()
+
+
+def record_fund_cashflow(
+    cik: str,
+    flow_date: date,
+    amount: float,
+    flow_type: str = "",
+    note: str = "",
+    db: Optional["VCPEDatabase"] = None,
+) -> None:
+    """
+    Record a single LP cash flow for a fund.
+
+    Parameters
+    ----------
+    cik         : fund CIK
+    flow_date   : date of the flow
+    amount      : negative = capital call, positive = distribution
+    flow_type   : 'call', 'distribution', or 'nav' (free-text)
+    note        : optional human-readable note
+    """
+    db = db or VCPEDatabase()
+    _ensure_fund_metric_tables(db)
+    conn = db._connect()
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO fund_cashflows
+        (cik, flow_date, amount, flow_type, note)
+        VALUES (?,?,?,?,?)
+        """,
+        (cik, flow_date.isoformat(), float(amount), flow_type, note),
+    )
+    conn.commit()
+
+
+def set_fund_metadata(
+    cik: str,
+    vintage_year: Optional[int] = None,
+    strategy: Optional[str] = None,
+    current_nav: Optional[float] = None,
+    db: Optional["VCPEDatabase"] = None,
+) -> None:
+    """Upsert vintage_year / strategy / current_nav for a fund."""
+    db = db or VCPEDatabase()
+    _ensure_fund_metric_tables(db)
+    conn = db._connect()
+    conn.execute(
+        """
+        INSERT INTO fund_metadata (cik, vintage_year, strategy, current_nav, updated_at)
+        VALUES (?,?,?,?,?)
+        ON CONFLICT(cik) DO UPDATE SET
+            vintage_year = COALESCE(excluded.vintage_year, fund_metadata.vintage_year),
+            strategy     = COALESCE(excluded.strategy,     fund_metadata.strategy),
+            current_nav  = COALESCE(excluded.current_nav,  fund_metadata.current_nav),
+            updated_at   = excluded.updated_at
+        """,
+        (
+            cik,
+            vintage_year,
+            strategy,
+            current_nav,
+            datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+    conn.commit()
+
+
+def compute_fund_metrics(
+    fund_cik: str,
+    db: Optional["VCPEDatabase"] = None,
+) -> Dict[str, Any]:
+    """
+    Compute the canonical PE/VC performance metrics for a fund identified by CIK.
+
+    Returns
+    -------
+    dict with keys:
+        fund_name     : str  (from fund_universe.fund_name, or None if unknown)
+        cik           : str  (echoes the input CIK, normalised)
+        vintage_year  : int  (from fund_metadata, or None)
+        strategy      : str  (from fund_metadata, or None)
+        irr           : float or None — annualised IRR (decimal)
+        dpi           : float or None — Distributions to Paid-In
+        rvpi          : float or None — Residual Value to Paid-In
+        tvpi          : float or None — Total Value to Paid-In
+
+    Behaviour
+    ---------
+    Reads cash flows from the ``fund_cashflows`` table and the latest NAV from
+    ``fund_metadata.current_nav``. If a field cannot be computed (e.g. no cash
+    flows recorded, or capital_called = 0), the corresponding key is ``None``
+    but the others are still returned.
+    """
+    db = db or VCPEDatabase()
+    _ensure_fund_metric_tables(db)
+    conn = db._connect()
+
+    # Resolve fund name from the universe table (if seeded)
+    name_row = conn.execute(
+        "SELECT fund_name FROM fund_universe WHERE cik = ?", (fund_cik,)
+    ).fetchone()
+    fund_name = name_row["fund_name"] if name_row else None
+
+    # Resolve metadata (vintage, strategy, current_nav)
+    meta_row = conn.execute(
+        "SELECT vintage_year, strategy, current_nav FROM fund_metadata WHERE cik = ?",
+        (fund_cik,),
+    ).fetchone()
+    vintage_year = meta_row["vintage_year"] if meta_row else None
+    strategy = meta_row["strategy"] if meta_row else None
+    current_nav = float(meta_row["current_nav"]) if meta_row and meta_row["current_nav"] else 0.0
+
+    # Pull cash flows
+    cf_rows = conn.execute(
+        "SELECT flow_date, amount, flow_type FROM fund_cashflows WHERE cik = ? ORDER BY flow_date",
+        (fund_cik,),
+    ).fetchall()
+
+    cash_flows: List[Tuple[date, float]] = []
+    capital_called = 0.0
+    distributions = 0.0
+    for r in cf_rows:
+        try:
+            d = datetime.strptime(r["flow_date"], "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            continue
+        amt = float(r["amount"])
+        cash_flows.append((d, amt))
+        if amt < 0:
+            capital_called += -amt
+        elif amt > 0:
+            # If the flow is explicitly tagged as NAV, do NOT count it as a
+            # realised distribution. Otherwise it is a distribution.
+            if (r["flow_type"] or "").lower() != "nav":
+                distributions += amt
+
+    irr = None
+    if cash_flows:
+        irr = compute_fund_irr(cash_flows, terminal_nav=current_nav)
+
+    dpi = compute_fund_dpi(distributions, capital_called) if capital_called > 0 else None
+    tvpi = compute_fund_tvpi(distributions, current_nav, capital_called) if capital_called > 0 else None
+    rvpi = compute_fund_rvpi(current_nav, capital_called) if capital_called > 0 else None
+
+    return {
+        "fund_name":    fund_name,
+        "cik":          fund_cik,
+        "vintage_year": vintage_year,
+        "strategy":     strategy,
+        "irr":          irr,
+        "dpi":          dpi,
+        "rvpi":         rvpi,
+        "tvpi":         tvpi,
+    }
+
+
+# ---------------------------------------------------------------------------
+# discover_new_funds_via_iapd — dynamic CIK discovery via SEC IAPD
+# ---------------------------------------------------------------------------
+
+# SEC IAPD (Investment Adviser Public Disclosure) firm-search endpoint.
+# Returns JSON when called with the JSON-only path. Useful for discovering
+# Investment Advisers (RIAs / ERAs) — many VCs file as Exempt Reporting
+# Advisers, so this complements EDGAR Form D discovery.
+_IAPD_SEARCH_URL = (
+    "https://adviserinfo.sec.gov/IAPD/Content/Search/iapd_OrgSearchResult.aspx"
+)
+_IAPD_API_URL = "https://api.adviserinfo.sec.gov/search/firm"
+
+
+def discover_new_funds_via_iapd(
+    query: str = "venture capital",
+    max_results: int = 50,
+    client: Optional[EDGARClient] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Discover Investment Advisers (and thus, indirectly, VC/PE fund managers)
+    via the SEC IAPD firm-search API.
+
+    Many venture and PE managers register as Exempt Reporting Advisers and
+    appear in IAPD even when they don't yet have an EDGAR CIK with Form D
+    filings. This function complements ``FundUniverse.discover_from_edgar``.
+
+    Parameters
+    ----------
+    query : str
+        Free-text search query (e.g. "venture capital", "growth equity").
+    max_results : int
+        Maximum number of hits to return.
+    client : EDGARClient, optional
+        Reuse an existing rate-limited client; one is created if omitted.
+
+    Returns
+    -------
+    list of dict
+        Each dict has keys::
+
+            firm_name : str   — registered legal name
+            crd       : str   — SEC CRD number (unique adviser identifier)
+            sec_no    : str   — SEC file number (e.g. "801-12345")
+            city      : str
+            state     : str
+            source    : "iapd"
+
+        Returns an empty list on any network or parse error (never raises).
+    """
+    client = client or EDGARClient()
+    params = {
+        "query": query,
+        "hl": "true",
+        "nrows": max_results,
+        "start": 0,
+        "r": 25,
+        "sort": "score+desc",
+        "type": "Firm",
+        "investorType": "all",
+    }
+    data = client.get_json(_IAPD_API_URL, params=params)
+    if not data:
+        logger.warning("discover_new_funds_via_iapd: empty response for query=%r", query)
+        return []
+
+    results: List[Dict[str, Any]] = []
+    # IAPD returns a JSON envelope: {"hits": {"hits": [{"_source": {...}}, ...]}}
+    hits = (data.get("hits") or {}).get("hits") or []
+    for hit in hits[:max_results]:
+        src = hit.get("_source") or {}
+        firm_name = (
+            src.get("firm_name")
+            or src.get("org_name")
+            or src.get("name")
+            or ""
+        )
+        crd = str(src.get("firm_ia_crd_nb") or src.get("crd_number") or src.get("crd") or "")
+        sec_no = str(src.get("firm_ia_full_sec_no") or src.get("sec_no") or "")
+        city = src.get("main_addr_city") or src.get("city") or ""
+        state = src.get("main_addr_state") or src.get("state") or ""
+
+        if not firm_name or not crd:
+            continue
+
+        results.append(
+            {
+                "firm_name": str(firm_name).strip(),
+                "crd":       crd,
+                "sec_no":    sec_no,
+                "city":      str(city),
+                "state":     str(state),
+                "source":    "iapd",
+            }
+        )
+
+    logger.info(
+        "discover_new_funds_via_iapd: %d advisers matched query=%r",
+        len(results), query,
+    )
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Convenience: run all scrapers and print a summary report
 # ---------------------------------------------------------------------------
 

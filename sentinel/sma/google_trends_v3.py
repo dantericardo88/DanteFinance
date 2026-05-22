@@ -717,22 +717,37 @@ class TrendsSignalEngine:
     def compute_fear_greed_proxy(
         self,
         market_terms: Optional[List[str]] = None,
+        mode: str = "trends",
     ) -> float:
         """Fear/greed composite index (0-100 scale).
 
-        Combines 5 equally-weighted signals (20% each):
+        Modes:
+          * ``"market_data"`` — delegate to :func:`compute_fear_greed_composite_v2`,
+            which uses VIX + FRED STLFSI4 + Put/Call + SPY breadth + HY spread.
+            NO Google Trends in the inputs. Returns the ``composite_score`` field.
+          * ``"trends"``      — (default, legacy) 5-component PYTRENDS composite:
 
-        1. search_volume  — ratio of crash vs tips search intensity (inverted = fear)
-        2. momentum       — 125d vs 250d MA ratio from SPY price (proxy from trends)
-        3. breadth        — stocks above 50d MA proxy (trend strength of "stock market")
-        4. junk_bond_proxy — "high yield bonds" search vs "treasury bonds"
-        5. volatility_proxy — "market volatility" search intensity (inverted = fear)
+            1. search_volume  — ratio of crash vs tips search intensity (inverted = fear)
+            2. momentum       — 125d vs 250d MA ratio from SPY price (proxy from trends)
+            3. breadth        — stocks above 50d MA proxy (trend strength of "stock market")
+            4. junk_bond_proxy — "high yield bonds" search vs "treasury bonds"
+            5. volatility_proxy — "market volatility" search intensity (inverted = fear)
 
         Score mapping: <25=Extreme Fear, 25-45=Fear, 45-55=Neutral,
                        55-75=Greed, >75=Extreme Greed.
 
         Returns score in [0, 100].
         """
+        if mode == "market_data":
+            try:
+                v2 = compute_fear_greed_composite_v2()
+                return float(v2["composite_score"])
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "fear_greed v2 (market_data) failed, falling back to trends: %s",
+                    exc,
+                )
+                # Fall through to pytrends path.
         # Component weights (must sum to 1.0)
         W_SEARCH   = 0.20
         W_MOMENTUM = 0.20
@@ -1002,6 +1017,296 @@ class TrendsSignalEngine:
                     "surprise_prob": 0.5,
                 }
         return result
+
+
+# ---------------------------------------------------------------------------
+# Fear/Greed V2 — real market data (yfinance + FRED + CBOE), no Google Trends
+# ---------------------------------------------------------------------------
+
+# FRED CSV endpoint — free, no API key required for series observations.
+_FRED_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={series}"
+_CBOE_DAILY_URL = (
+    "https://www.cboe.com/us/options/market_statistics/daily/"
+    "?dt={date}&downloadCSV=true&type=ratio"
+)
+
+
+def _fred_latest_value(series_id: str, timeout: float = 10.0) -> Optional[float]:
+    """Fetch the most recent numeric observation for a FRED series via the
+    public CSV endpoint (no API key needed).
+
+    Returns ``None`` if the series cannot be fetched or contains no valid data.
+    """
+    url = _FRED_CSV_URL.format(series=series_id)
+    try:
+        resp = requests.get(url, headers=_HEADERS, timeout=timeout)
+        resp.raise_for_status()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("FRED fetch failed for %s: %s", series_id, exc)
+        return None
+
+    text = resp.text.strip()
+    if not text:
+        return None
+
+    # Parse CSV: header line "DATE,SERIES_ID" then "YYYY-MM-DD,value" rows.
+    reader = csv.reader(io.StringIO(text))
+    rows = list(reader)
+    if len(rows) < 2:
+        return None
+
+    # Walk from the most recent row backwards to find a real numeric value
+    # (FRED uses "." for missing observations).
+    for row in reversed(rows[1:]):
+        if len(row) < 2:
+            continue
+        raw = row[1].strip()
+        if raw in ("", "."):
+            continue
+        try:
+            return float(raw)
+        except ValueError:
+            continue
+    return None
+
+
+def _yf_latest_close(ticker: str, period: str = "5d") -> Optional[float]:
+    """Return the most recent close price for ``ticker`` via yfinance.
+
+    Returns ``None`` if yfinance is unavailable or the fetch fails.
+    """
+    try:
+        import yfinance as yf  # local import: optional dependency
+    except ImportError:
+        logger.debug("yfinance not installed; cannot fetch %s", ticker)
+        return None
+
+    try:
+        hist = yf.Ticker(ticker).history(period=period, auto_adjust=False)
+        if hist is None or hist.empty or "Close" not in hist.columns:
+            return None
+        close = hist["Close"].dropna()
+        if close.empty:
+            return None
+        return float(close.iloc[-1])
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("yfinance fetch failed for %s: %s", ticker, exc)
+        return None
+
+
+def _yf_history_closes(ticker: str, period: str = "1y") -> Optional[List[float]]:
+    """Return a list of daily closes for ``ticker``. ``None`` on failure."""
+    try:
+        import yfinance as yf  # local import: optional dependency
+    except ImportError:
+        logger.debug("yfinance not installed; cannot fetch %s history", ticker)
+        return None
+
+    try:
+        hist = yf.Ticker(ticker).history(period=period, auto_adjust=False)
+        if hist is None or hist.empty or "Close" not in hist.columns:
+            return None
+        closes = [float(v) for v in hist["Close"].dropna().tolist()]
+        return closes or None
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("yfinance history failed for %s: %s", ticker, exc)
+        return None
+
+
+def _fetch_put_call_ratio(timeout: float = 10.0) -> Optional[float]:
+    """Fetch the latest CBOE total put/call ratio.
+
+    Strategy:
+      1. Try CBOE's daily market-statistics page (public, no key).
+      2. Fall back to the ``^VPCR`` yfinance pseudo-ticker (CBOE Total P/C).
+    """
+    # ---- Strategy 1: CBOE public daily endpoint ----
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    url = _CBOE_DAILY_URL.format(date=today)
+    try:
+        resp = requests.get(url, headers=_HEADERS, timeout=timeout)
+        if resp.status_code == 200 and resp.text.strip():
+            text = resp.text
+            # CBOE CSV: look for the "TOTAL PUT/CALL RATIO" row.
+            for line in text.splitlines():
+                low = line.lower()
+                if "total" in low and "put/call" in low:
+                    parts = [p.strip() for p in line.split(",") if p.strip()]
+                    for tok in reversed(parts):
+                        try:
+                            val = float(tok)
+                            if 0.05 < val < 5.0:  # plausible P/C ratio range
+                                return val
+                        except ValueError:
+                            continue
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("CBOE put/call fetch failed: %s", exc)
+
+    # ---- Strategy 2: yfinance ^VPCR proxy ----
+    pcr = _yf_latest_close("^VPCR", period="5d")
+    if pcr is not None and 0.05 < pcr < 5.0:
+        return pcr
+
+    return None
+
+
+def _score_vix(vix: float) -> float:
+    """VIX -> 0-100 score. >40 = extreme fear (0); <12 = extreme greed (100)."""
+    if vix >= 40.0:
+        return 0.0
+    if vix <= 12.0:
+        return 100.0
+    # Linear interp between 40 (=0) and 12 (=100).
+    return _clamp(100.0 * (40.0 - vix) / (40.0 - 12.0), 0.0, 100.0)
+
+
+def _score_stlfsi(stlfsi: float) -> float:
+    """St. Louis Financial Stress Index -> 0-100. Negative = greed, positive = fear."""
+    return _clamp(50.0 - stlfsi * 25.0, 0.0, 100.0)
+
+
+def _score_put_call(pcr: float) -> float:
+    """Put/Call ratio -> 0-100. >1.0 = fear (0); <0.7 = greed (100)."""
+    if pcr >= 1.0:
+        return 0.0
+    if pcr <= 0.7:
+        return 100.0
+    return _clamp(100.0 * (1.0 - pcr) / (1.0 - 0.7), 0.0, 100.0)
+
+
+def _score_breadth(closes: List[float], window: int = 125) -> float:
+    """% of price above its rolling MA -> proxy for market breadth.
+
+    Returns 100 when current price is well above the MA, 0 when well below.
+    """
+    if not closes:
+        return 50.0
+    if len(closes) < window:
+        window = max(5, len(closes) // 2)
+    ma = sum(closes[-window:]) / window
+    if ma <= 0:
+        return 50.0
+    pct = (closes[-1] - ma) / ma  # e.g. +0.05 = 5% above MA
+    # Map: -10% -> 0, +10% -> 100, linear between.
+    return _clamp(50.0 + pct * 500.0, 0.0, 100.0)
+
+
+def _score_junk_bonds(spread_pct: float) -> float:
+    """ICE BofA HY OAS (in *percent*, e.g. 4.50 = 450 bps) -> 0-100.
+
+    Tight (<4%) = greed (100); wide (>8%) = fear (0).
+    """
+    bps = spread_pct * 100.0
+    if bps <= 400.0:
+        return 100.0
+    if bps >= 800.0:
+        return 0.0
+    return _clamp(100.0 * (800.0 - bps) / (800.0 - 400.0), 0.0, 100.0)
+
+
+def _classify_fear_greed_v2(score: float) -> str:
+    """Snake-case classification for the v2 composite."""
+    if score < 25:
+        return "extreme_fear"
+    if score < 45:
+        return "fear"
+    if score <= 55:
+        return "neutral"
+    if score <= 75:
+        return "greed"
+    return "extreme_greed"
+
+
+def compute_fear_greed_composite_v2() -> dict:
+    """5-component market-data fear/greed composite — NO Google Trends inputs.
+
+    Sources (all free / no API key):
+      * VIX                  : yfinance ``^VIX``                       (25% weight)
+      * STLFSI4              : FRED ``STLFSI4`` (St. Louis Fin Stress) (25% weight)
+      * Put/Call ratio       : CBOE daily JSON / ``^VPCR`` fallback    (20% weight)
+      * Breadth (SPY vs MA)  : yfinance ``SPY``, 125-day MA            (15% weight)
+      * Junk-bond spread     : FRED ``BAMLH0A0HYM2`` HY OAS            (15% weight)
+
+    Returns::
+
+        {
+            "composite_score": float [0, 100],
+            "interpretation": "extreme_fear" | "fear" | "neutral" | "greed" | "extreme_greed",
+            "components": {
+                "vix":        {"value": float, "score": 0-100, "weight": 0.25},
+                "stlfsi":     {"value": float, "score": 0-100, "weight": 0.25},
+                "put_call":   {"value": float, "score": 0-100, "weight": 0.20},
+                "breadth":    {"value": float, "score": 0-100, "weight": 0.15},
+                "junk_bonds": {"value": float, "score": 0-100, "weight": 0.15},
+            },
+            "timestamp": "<ISO datetime>",
+            "source":    "yfinance + FRED + CBOE (no Google Trends)",
+        }
+    """
+    weights = {
+        "vix": 0.25,
+        "stlfsi": 0.25,
+        "put_call": 0.20,
+        "breadth": 0.15,
+        "junk_bonds": 0.15,
+    }
+
+    # ----- 1. VIX (yfinance ^VIX) -----
+    vix_val = _yf_latest_close("^VIX", period="5d")
+    if vix_val is None or vix_val <= 0:
+        # Neutral fallback: long-run VIX median ~ 17.5.
+        vix_val = 17.5
+    vix_score = _score_vix(vix_val)
+
+    # ----- 2. St. Louis Financial Stress Index (FRED STLFSI4) -----
+    stlfsi_val = _fred_latest_value("STLFSI4")
+    if stlfsi_val is None:
+        stlfsi_val = 0.0  # neutral
+    stlfsi_score = _score_stlfsi(stlfsi_val)
+
+    # ----- 3. Put/Call ratio (CBOE -> yfinance fallback) -----
+    pcr_val = _fetch_put_call_ratio()
+    if pcr_val is None:
+        pcr_val = 0.85  # long-run median ~ 0.85
+    pcr_score = _score_put_call(pcr_val)
+
+    # ----- 4. Market breadth (SPY vs 125d MA) -----
+    spy_closes = _yf_history_closes("SPY", period="1y") or []
+    breadth_score = _score_breadth(spy_closes, window=125)
+    breadth_val = 0.0
+    if spy_closes:
+        win = min(125, len(spy_closes))
+        ma = sum(spy_closes[-win:]) / win if win else 0.0
+        breadth_val = (spy_closes[-1] - ma) / ma * 100.0 if ma > 0 else 0.0
+
+    # ----- 5. HY credit spread (FRED BAMLH0A0HYM2, in percent) -----
+    hy_val = _fred_latest_value("BAMLH0A0HYM2")
+    if hy_val is None:
+        hy_val = 4.5  # long-run median ~ 450 bps
+    junk_score = _score_junk_bonds(hy_val)
+
+    composite = (
+        weights["vix"]        * vix_score
+        + weights["stlfsi"]     * stlfsi_score
+        + weights["put_call"]   * pcr_score
+        + weights["breadth"]    * breadth_score
+        + weights["junk_bonds"] * junk_score
+    )
+    composite = round(_clamp(composite, 0.0, 100.0), 2)
+
+    return {
+        "composite_score": composite,
+        "interpretation": _classify_fear_greed_v2(composite),
+        "components": {
+            "vix":        {"value": round(float(vix_val), 4),    "score": round(vix_score, 2),     "weight": weights["vix"]},
+            "stlfsi":     {"value": round(float(stlfsi_val), 4), "score": round(stlfsi_score, 2),  "weight": weights["stlfsi"]},
+            "put_call":   {"value": round(float(pcr_val), 4),    "score": round(pcr_score, 2),     "weight": weights["put_call"]},
+            "breadth":    {"value": round(float(breadth_val), 4),"score": round(breadth_score, 2), "weight": weights["breadth"]},
+            "junk_bonds": {"value": round(float(hy_val), 4),     "score": round(junk_score, 2),    "weight": weights["junk_bonds"]},
+        },
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "source": "yfinance + FRED + CBOE (no Google Trends)",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1560,9 +1865,14 @@ class GoogleTrendsEngine:
         df = pd.DataFrame(rows).sort_values("composite_score", ascending=False)
         return df.reset_index(drop=True)
 
-    def get_fear_greed_index(self) -> float:
-        """Single-number market fear/greed indicator from search trends."""
-        return self._signal_engine.compute_fear_greed_proxy()
+    def get_fear_greed_index(self, mode: str = "market_data") -> float:
+        """Single-number market fear/greed indicator.
+
+        Defaults to ``mode="market_data"`` which uses VIX + FRED + CBOE
+        (see :func:`compute_fear_greed_composite_v2`). Pass ``mode="trends"``
+        for the legacy pytrends-only composite.
+        """
+        return self._signal_engine.compute_fear_greed_proxy(mode=mode)
 
     def export_signals(self, universe: List[str], path: str) -> None:
         """Export search scores for a universe to CSV."""

@@ -55,6 +55,8 @@ __all__ = [
     "PeerNonGAAPComparator",
     "NonGAAPDB",
     "nongaap_v3_router",
+    "compute_non_gaap_quality",
+    "classify_adjustment_type",
 ]
 
 # ---------------------------------------------------------------------------
@@ -1789,6 +1791,382 @@ def _score_label(score: float) -> str:
     if score >= 35:
         return "Poor"
     return "Red Flag"
+
+
+# ---------------------------------------------------------------------------
+# Adjustment-level quality scoring (dim_017 deep credibility checks)
+# ---------------------------------------------------------------------------
+
+# Loughran-McDonald financial negative / uncertainty lexicon — used to qualify
+# language around adjustments. We ship a compact subset; full LM lexicon (~10k
+# tokens) is too large to vendor here but the canonical seeds below cover the
+# words most relevant to non-GAAP red flag detection (vague, contingent,
+# uncertain, and "one-time" hedge language).
+_LM_NEGATIVE: frozenset[str] = frozenset({
+    "loss", "losses", "impair", "impairment", "impaired", "write", "writedown",
+    "writeoff", "discontinued", "deficient", "deficiency", "adverse", "decline",
+    "deteriorate", "deteriorated", "deteriorating", "weakness", "weaker",
+    "litigation", "lawsuit", "settlement", "penalty", "fine", "investigation",
+    "restate", "restated", "restatement", "fraud", "misstate", "misstatement",
+})
+_LM_UNCERTAINTY: frozenset[str] = frozenset({
+    "approximate", "approximately", "assume", "assumed", "assumption",
+    "believe", "believed", "contingent", "depend", "depended", "estimate",
+    "estimated", "indefinite", "indeterminable", "may", "might", "possible",
+    "possibly", "predict", "probable", "risk", "uncertain", "uncertainty",
+    "unforeseen", "vague", "various",
+})
+
+# Keyword groups for classification fallback (used if LM is not consulted).
+_CLASSIFY_KEYWORDS: list[tuple[str, str]] = [
+    # canonical type, regex
+    ("sbc",             r"\b(stock[- ]?based|share[- ]?based|equity[- ]?award|sbc|rsu|restricted[- ]?stock|esop)\b"),
+    ("restructuring",   r"\b(restructur|severance|workforce|headcount|layoff|reduction[- ]?in[- ]?force|rif)\b"),
+    ("acquisition",     r"\b(acquisition|acquired|m&a|merger|deal[- ]?cost|transaction[- ]?cost|integration)\b"),
+    ("impairment",      r"\b(impairment|impaired|write[- ]?down|write[- ]?off|goodwill)\b"),
+    ("litigation",      r"\b(litigation|lawsuit|settlement|legal|regulatory|fine|penalty)\b"),
+]
+
+# Words that signal a charge is being framed as one-time / non-recurring.
+_ONE_TIME_HEDGE_WORDS: frozenset[str] = frozenset({
+    "one-time", "onetime", "one time", "nonrecurring", "non-recurring",
+    "extraordinary", "unusual", "exceptional", "special", "discrete",
+    "isolated", "infrequent",
+})
+
+
+def classify_adjustment_type(description: str) -> str:
+    """
+    Classify a non-GAAP adjustment description into a canonical type.
+
+    Returns one of:
+      'restructuring' | 'sbc' | 'acquisition' | 'impairment' | 'litigation' | 'other'
+
+    Detection is keyword-based on the lower-cased description. Order matters —
+    SBC is checked before generic equity language; impairment is checked after
+    acquisition so that "acquisition-related goodwill impairment" is classified
+    as impairment (the more specific accounting concept) rather than acquisition
+    (the cause). When no keywords match we return 'other' so callers can decide
+    whether to surface the raw description.
+    """
+    if not description:
+        return "other"
+    text = description.lower()
+    # SBC is a hard-priority first match to avoid the broad equity/option words
+    # being shadowed by "acquisition of stock" type phrases.
+    if re.search(_CLASSIFY_KEYWORDS[0][1], text):
+        return "sbc"
+    # Check impairment before acquisition: "acquired intangible impairment" is
+    # an impairment, not an acquisition cost.
+    if re.search(_CLASSIFY_KEYWORDS[3][1], text):
+        return "impairment"
+    if re.search(_CLASSIFY_KEYWORDS[1][1], text):
+        return "restructuring"
+    if re.search(_CLASSIFY_KEYWORDS[2][1], text):
+        return "acquisition"
+    if re.search(_CLASSIFY_KEYWORDS[4][1], text):
+        return "litigation"
+    return "other"
+
+
+def _lm_sentiment_flags(description: str) -> dict[str, int]:
+    """
+    Return Loughran-McDonald style negative/uncertainty hit counts for the
+    description. Falls back gracefully when no tokens match.
+    """
+    if not description:
+        return {"negative": 0, "uncertainty": 0}
+    tokens = re.findall(r"[a-z][a-z\-]+", description.lower())
+    neg  = sum(1 for t in tokens if t in _LM_NEGATIVE)
+    unc  = sum(1 for t in tokens if t in _LM_UNCERTAINTY)
+    return {"negative": neg, "uncertainty": unc}
+
+
+def _claims_one_time(description: str) -> bool:
+    """True if the description uses 'one-time' / nonrecurring hedge language."""
+    if not description:
+        return False
+    text = description.lower()
+    return any(w in text for w in _ONE_TIME_HEDGE_WORDS)
+
+
+def _claims_extraordinary(description: str) -> bool:
+    if not description:
+        return False
+    return "extraordinary" in description.lower()
+
+
+def _yoy_history_matches(
+    adj_desc: str,
+    adj_type: str,
+    history: list[dict],
+) -> list[dict]:
+    """
+    Return prior-period adjustments that look like the same item — either same
+    classified type or substantial description overlap (>=2 shared keywords).
+    """
+    matches: list[dict] = []
+    cur_words = set(re.findall(r"[a-z]{4,}", (adj_desc or "").lower()))
+    for h in history or []:
+        h_desc = (h.get("description") or "").lower()
+        h_type = classify_adjustment_type(h_desc)
+        if adj_type != "other" and h_type == adj_type:
+            matches.append(h)
+            continue
+        hw = set(re.findall(r"[a-z]{4,}", h_desc))
+        if len(cur_words & hw) >= 2:
+            matches.append(h)
+    return matches
+
+
+def _has_recent_ma_evidence(history: list[dict]) -> bool:
+    """
+    Heuristic: 'recent M&A' evidence is present if any history record carries
+    an explicit `m_and_a` or `new_acquisition` flag, OR its description
+    mentions a new deal verb ('acquired', 'merger', 'completed acquisition').
+    """
+    for h in history or []:
+        if h.get("m_and_a") or h.get("new_acquisition"):
+            return True
+        d = (h.get("description") or "").lower()
+        if re.search(r"\b(acquired|completed[- ]?acquisition|merger[- ]?of|closed[- ]?merger)\b", d):
+            return True
+    return False
+
+
+def compute_non_gaap_quality(
+    adjustments: list[dict],
+    history: list[dict] | None = None,
+) -> dict:
+    """
+    Score the quality / trustworthiness of a company's non-GAAP adjustments.
+
+    Args:
+      adjustments: list of {description, amount, classification, period,
+                            ebit?, tax_effect?, ...}
+        - 'classification' is the company-supplied tag, e.g. 'non-cash',
+          'one-time', 'restructuring'. Used as a hint, not authoritative.
+        - 'ebit' (optional, top level via adjustments[i].get('ebit')) lets R3
+          run a materiality check; in its absence we use the largest |amount|
+          across adjustments as the denominator.
+        - 'tax_effect' (optional) supports R7.
+      history: optional list of prior-period adjustments for comparison. Same
+        schema as `adjustments`. Used for R1, R2, R4, R8.
+
+    Returns:
+      {
+        "quality_score": float in [0.0, 1.0],
+        "flags": [str],
+        "trustworthy_adjustments": [adjustments that pass],
+        "suspicious_adjustments": [adjustments that fail],
+        "rules_applied": [str],
+      }
+
+    Quality rules (each contributes to score):
+      R1. "One-time" claimed but repeats year-over-year -> flag suspicious
+      R2. Non-cash adjustment growing >50% YoY without explanation -> flag
+      R3. Adjustment > 20% of EBIT -> flag for materiality review
+      R4. Restructuring charges repeated 3+ years -> flag (real restructuring
+          is finite)
+      R5. Stock-based comp excluded from non-GAAP earnings -> flag (SEC
+          discourages)
+      R6. Description contains "extraordinary" but adjustment doesn't fit
+          Reg G -> flag
+      R7. Tax effect missing or zero on material non-cash adj -> flag
+      R8. Acquisition-related repeats 4+ years without new M&A -> flag
+    """
+    history = history or []
+    adjustments = adjustments or []
+
+    flags: list[str] = []
+    rules_applied: list[str] = []
+    trustworthy: list[dict] = []
+    suspicious: list[dict] = []
+
+    # Per-adjustment penalty in [0, 1]; we aggregate to a score below.
+    per_adj_penalty: list[float] = []
+
+    # ------------------------------------------------------------------
+    # Pre-pass: pre-compute classifications and history aggregates so we
+    # can run R4 / R8 (which look across the full history horizon) on
+    # every adjustment without re-tokenising in the loop.
+    # ------------------------------------------------------------------
+    history_types: list[str] = [
+        classify_adjustment_type(h.get("description", "")) for h in history
+    ]
+    history_restructuring_periods = {
+        h.get("period") for h, t in zip(history, history_types)
+        if t == "restructuring" and h.get("period")
+    }
+    history_acquisition_periods = {
+        h.get("period") for h, t in zip(history, history_types)
+        if t == "acquisition" and h.get("period")
+    }
+    recent_ma = _has_recent_ma_evidence(history)
+
+    # Materiality denominator: prefer caller-supplied EBIT, else largest |amt|.
+    ebit_hint: float | None = None
+    for a in adjustments:
+        e = a.get("ebit")
+        if isinstance(e, (int, float)) and e:
+            ebit_hint = float(e)
+            break
+    if ebit_hint is None and adjustments:
+        try:
+            ebit_hint = max(abs(float(a.get("amount") or 0.0)) for a in adjustments)
+        except Exception:
+            ebit_hint = None
+
+    for adj in adjustments:
+        desc       = (adj.get("description") or "").strip()
+        amount     = float(adj.get("amount") or 0.0)
+        classif    = (adj.get("classification") or "").lower()
+        period     = adj.get("period") or ""
+        tax_effect = adj.get("tax_effect")
+        adj_type   = classify_adjustment_type(desc)
+        adj_flags: list[str] = []
+        penalty    = 0.0
+
+        # R1: "one-time" claimed but repeats YoY
+        if _claims_one_time(desc) or "one-time" in classif or "non-recurring" in classif:
+            matches = _yoy_history_matches(desc, adj_type, history)
+            if len(matches) >= 1:
+                msg = (
+                    f"R1: '{desc[:60]}' claimed one-time but has "
+                    f"{len(matches)} prior-period match(es) — likely recurring"
+                )
+                adj_flags.append(msg)
+                penalty += 0.30
+                if "R1" not in rules_applied:
+                    rules_applied.append("R1")
+
+        # R2: non-cash adjustment growing >50% YoY without explanation
+        is_non_cash = (
+            "non-cash" in classif
+            or "noncash" in classif
+            or adj_type in {"sbc", "impairment"}
+        )
+        if is_non_cash and history:
+            prior = _yoy_history_matches(desc, adj_type, history)
+            if prior:
+                # Find the most recent prior (by period string sort).
+                prior_sorted = sorted(prior, key=lambda h: h.get("period") or "", reverse=True)
+                prev_amt = float(prior_sorted[0].get("amount") or 0.0)
+                if prev_amt > 0:
+                    growth = (amount - prev_amt) / prev_amt
+                    explained = bool(
+                        adj.get("explanation")
+                        or _lm_sentiment_flags(desc)["uncertainty"] >= 2
+                    )
+                    if growth > 0.50 and not explained:
+                        adj_flags.append(
+                            f"R2: non-cash adjustment grew {growth*100:.0f}% YoY "
+                            f"(${prev_amt:,.0f} -> ${amount:,.0f}) without explanation"
+                        )
+                        penalty += 0.25
+                        if "R2" not in rules_applied:
+                            rules_applied.append("R2")
+
+        # R3: adjustment > 20% of EBIT
+        if ebit_hint and ebit_hint > 0:
+            material_pct = abs(amount) / ebit_hint
+            if material_pct > 0.20:
+                adj_flags.append(
+                    f"R3: adjustment is {material_pct*100:.0f}% of EBIT proxy "
+                    f"(${ebit_hint:,.0f}) — material; verify Reg G disclosure"
+                )
+                penalty += 0.15
+                if "R3" not in rules_applied:
+                    rules_applied.append("R3")
+
+        # R4: restructuring charges repeated 3+ years
+        if adj_type == "restructuring":
+            yrs = len(history_restructuring_periods | {period} if period else history_restructuring_periods)
+            if yrs >= 3:
+                adj_flags.append(
+                    f"R4: restructuring charges appear in {yrs} periods — real "
+                    "restructuring is finite; recurring restructuring is opex"
+                )
+                penalty += 0.25
+                if "R4" not in rules_applied:
+                    rules_applied.append("R4")
+
+        # R5: SBC excluded from non-GAAP earnings
+        if adj_type == "sbc":
+            adj_flags.append(
+                "R5: stock-based compensation excluded — SEC staff explicitly "
+                "discourages this; SBC is a real economic cost"
+            )
+            penalty += 0.30
+            if "R5" not in rules_applied:
+                rules_applied.append("R5")
+
+        # R6: 'extraordinary' wording but does not fit Reg G
+        if _claims_extraordinary(desc):
+            # Reg G effectively prohibits 'extraordinary' for items that are
+            # not both unusual AND infrequent. SBC, restructuring, acquisition
+            # costs and ordinary impairments do not qualify.
+            if adj_type in {"sbc", "restructuring", "acquisition", "impairment"} or not _claims_one_time(desc):
+                adj_flags.append(
+                    f"R6: '{desc[:60]}' described as 'extraordinary' but adjustment "
+                    f"type '{adj_type}' does not satisfy Reg G unusual+infrequent test"
+                )
+                penalty += 0.20
+                if "R6" not in rules_applied:
+                    rules_applied.append("R6")
+
+        # R7: material non-cash adjustment with missing / zero tax effect
+        if is_non_cash and abs(amount) > 0:
+            material = ebit_hint and (abs(amount) / ebit_hint) > 0.05
+            if material:
+                tax_missing = (
+                    tax_effect is None
+                    or (isinstance(tax_effect, (int, float)) and float(tax_effect) == 0.0)
+                )
+                if tax_missing:
+                    adj_flags.append(
+                        "R7: material non-cash adjustment has missing or zero tax "
+                        "effect — non-GAAP tax adjustment is required for credibility"
+                    )
+                    penalty += 0.15
+                    if "R7" not in rules_applied:
+                        rules_applied.append("R7")
+
+        # R8: acquisition-related repeats 4+ years without new M&A evidence
+        if adj_type == "acquisition":
+            yrs = len(history_acquisition_periods | ({period} if period else set()))
+            if yrs >= 4 and not recent_ma:
+                adj_flags.append(
+                    f"R8: acquisition-related charge in {yrs} periods with no new "
+                    "M&A evidence — likely operating cost mislabelled as deal cost"
+                )
+                penalty += 0.25
+                if "R8" not in rules_applied:
+                    rules_applied.append("R8")
+
+        # Aggregate per-adjustment outcome
+        flags.extend(adj_flags)
+        per_adj_penalty.append(min(penalty, 1.0))
+        if adj_flags:
+            suspicious.append(adj)
+        else:
+            trustworthy.append(adj)
+
+    # Aggregate quality score:
+    #   1.0 with no penalties; penalties subtract weighted by adjustment count.
+    if per_adj_penalty:
+        avg_penalty = sum(per_adj_penalty) / len(per_adj_penalty)
+        quality_score = max(0.0, min(1.0, 1.0 - avg_penalty))
+    else:
+        quality_score = 1.0
+
+    return {
+        "quality_score":           round(quality_score, 4),
+        "flags":                   flags,
+        "trustworthy_adjustments": trustworthy,
+        "suspicious_adjustments":  suspicious,
+        "rules_applied":           rules_applied,
+    }
 
 
 # ---------------------------------------------------------------------------

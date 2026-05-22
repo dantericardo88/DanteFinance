@@ -1,7 +1,7 @@
 #!/bin/bash
 # dim_062: Event-driven backtest v3 — EventBus, dataclasses, BacktestEngine structure
 set -e
-cd /c/Projects/DanteFinance
+cd "$(dirname "$0")/../.."
 
 python - <<'PYEOF'
 import sys, os

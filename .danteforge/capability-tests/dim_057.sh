@@ -1,7 +1,7 @@
 #!/bin/bash
 # dim_057: Earnings RAG v3 — TF-IDF, guidance sentences, tone shift, earnings timeline
 set -e
-cd /c/Projects/DanteFinance
+cd "$(dirname "$0")/../.."
 
 python - <<'PYEOF'
 import sys, os

@@ -17,9 +17,18 @@ from sentinel.sfe.activist_tracker_v3 import (
     compute_campaign_success_rate,
     predict_settlement_probability,
     compute_target_vulnerability_score,
+    ActivistTracker,
+    ActivistScreener,
+    get_active_campaigns_from_edgar,
+    _split_display_name,
+    _ACTIVIST_TARGETS_CACHE,
+    _ACTIVIST_CAMPAIGNS_CACHE,
 )
 from datetime import date
+import inspect
 import math
+import re
+from pathlib import Path
 
 # Test _parse_int
 assert _parse_int("1,500,000") == 1500000
@@ -93,10 +102,7 @@ assert campaign.status == "active"
 assert "board_seats" in campaign.campaign_types
 print("[OK] ActivistCampaign dataclass created successfully")
 
-# ── Math verification: compute_campaign_success_rate ────────────────────────
-# 5 campaigns: 2 won, 1 settled, 1 lost, 1 active
-# win_rate = (2+1) / (2+1+1) = 3/4 = 0.75  (excludes ongoing)
-# resolution_rate = (2+1+1) / 5 = 4/5 = 0.80
+# Math: compute_campaign_success_rate
 campaigns = [
     ActivistCampaign("Elliott", "C1", "A Corp", "AAA", date(2022, 1, 1),
                      date(2023, 1, 1), "won", [], 8.0, 12.0, [], [], "acc1"),
@@ -110,17 +116,15 @@ campaigns = [
                      None, "active", [], 9.0, 9.0, [], [], "acc5"),
 ]
 result = compute_campaign_success_rate(campaigns)
-assert result["total_campaigns"] == 5, f"total={result['total_campaigns']}"
-assert result["wins"]    == 3,  f"wins={result['wins']}"   # won + settled
-assert result["losses"]  == 1,  f"losses={result['losses']}"
-assert result["ongoing"] == 1,  f"ongoing={result['ongoing']}"
-assert abs(result["win_rate"] - 0.75) < 1e-9, f"win_rate={result['win_rate']}"
-assert abs(result["resolution_rate"] - 0.8) < 1e-9, f"resolution_rate={result['resolution_rate']}"
-print(f"[OK] compute_campaign_success_rate: 5 campaigns -> win_rate={result['win_rate']:.2f} (expected 0.75)")
+assert result["total_campaigns"] == 5
+assert result["wins"]    == 3
+assert result["losses"]  == 1
+assert result["ongoing"] == 1
+assert abs(result["win_rate"] - 0.75) < 1e-9
+assert abs(result["resolution_rate"] - 0.8) < 1e-9
+print(f"[OK] compute_campaign_success_rate -> win_rate={result['win_rate']:.2f}")
 
-# ── Math verification: predict_settlement_probability ───────────────────────
-# Verify logistic function: P = 1 / (1 + exp(-log_odds))
-# Known activist, 3 board seats, 10% stake, P/B < 1.5, 5 prior campaigns
+# Math: predict_settlement_probability
 result_p = predict_settlement_probability(
     board_seats_demanded=3,
     pct_owned=10.0,
@@ -130,24 +134,11 @@ result_p = predict_settlement_probability(
 )
 log_odds_check = 0.405 + min(3, 5) * 0.35 + min(10.0, 25.0) * 0.04 + 0.55 + min(5, 10) * 0.10 + 0.30
 expected_prob  = 1.0 / (1.0 + math.exp(-log_odds_check))
-assert abs(result_p["settlement_probability"] - round(expected_prob, 4)) < 1e-4, \
-    f"prob={result_p['settlement_probability']} != expected {expected_prob:.4f}"
-assert result_p["settlement_probability"] > 0.5, "High-profile campaign should exceed 50%"
-print(f"[OK] predict_settlement_probability: log_odds={result_p['log_odds']}, "
-      f"prob={result_p['settlement_probability']:.4f}, outlook={result_p['outlook']}")
+assert abs(result_p["settlement_probability"] - round(expected_prob, 4)) < 1e-4
+assert result_p["settlement_probability"] > 0.5
+print(f"[OK] predict_settlement_probability -> {result_p['settlement_probability']:.4f}")
 
-# Verify logistic formula directly: P = 1/(1+e^-log_odds)
-for lo in [-2.0, 0.0, 2.0]:
-    expected = 1.0 / (1.0 + math.exp(-lo))
-    computed = predict_settlement_probability(0, 0.0, False, None, 0)
-    # Manual check of formula correctness
-    assert abs(1.0 / (1.0 + math.exp(-lo)) - expected) < 1e-12
-print("[OK] Logistic formula 1/(1+e^-x) mathematically correct for x in {-2, 0, 2}")
-
-# ── Math verification: compute_target_vulnerability_score ───────────────────
-# P/B=1.2 -> +2.0, ROE=3% -> +2.0, cash/mktcap=0.25 -> +2.0,
-# tsr=-0.30 -> +1.5, insider_own=0.5% -> +1.5, staggered_board -> +1.0
-# Total = 10.0 -> capped at 10.0
+# Math: compute_target_vulnerability_score
 result_v = compute_target_vulnerability_score(
     pb_ratio=1.2,
     roe_pct=3.0,
@@ -156,31 +147,119 @@ result_v = compute_target_vulnerability_score(
     insider_ownership_pct=0.5,
     has_staggered_board=True,
 )
-expected_score = 2.0 + 2.0 + 2.0 + 1.5 + 1.5 + 1.0   # = 10.0
-assert result_v["vulnerability_score"] == min(expected_score, 10.0), \
-    f"Score={result_v['vulnerability_score']} expected={min(expected_score, 10.0)}"
+assert result_v["vulnerability_score"] == 10.0
 assert result_v["risk_label"] == "high"
 assert len(result_v["signals"]) == 6
-print(f"[OK] compute_target_vulnerability_score: all signals triggered -> "
-      f"score={result_v['vulnerability_score']}, label={result_v['risk_label']}")
+print(f"[OK] compute_target_vulnerability_score -> {result_v['vulnerability_score']}")
 
-# Partial signals: P/B < 1.5 (+2.0), ROE < 5% (+2.0), staggered board (+1.0) = 5.0
 result_partial = compute_target_vulnerability_score(
     pb_ratio=1.3,
     roe_pct=2.0,
     has_staggered_board=True,
 )
-assert result_partial["vulnerability_score"] == 5.0, \
-    f"Partial score={result_partial['vulnerability_score']} expected=5.0"
+assert result_partial["vulnerability_score"] == 5.0
 assert result_partial["risk_label"] == "moderate"
-print(f"[OK] compute_target_vulnerability_score partial: P/B+ROE+staggered -> "
-      f"score={result_partial['vulnerability_score']}, label={result_partial['risk_label']}")
+print(f"[OK] compute_target_vulnerability_score partial -> {result_partial['vulnerability_score']}")
 
-# No signals -> score 0, label low
 result_none = compute_target_vulnerability_score(pb_ratio=3.0, roe_pct=20.0)
 assert result_none["vulnerability_score"] == 0.0
 assert result_none["risk_label"] == "low"
-print("[OK] compute_target_vulnerability_score: no signals -> score=0.0, label=low")
+print("[OK] compute_target_vulnerability_score no signals -> 0.0")
+
+# ── HARSH-AUDIT GATE — Wave 3 lie verification ─────────────────────────────
+# 1) Hardcoded fallback DIS/PFE/INTC must be deleted from source.
+src_path = Path("sentinel/sfe/activist_tracker_v3.py")
+src      = src_path.read_text(encoding="utf-8")
+assert "_get_model_vulnerable_targets" not in src, (
+    "_get_model_vulnerable_targets() still present — hardcoded fallback "
+    "was not removed"
+)
+forbidden = re.search(
+    r"VulnerableTarget\([^)]*ticker\s*=\s*[\"']DIS[\"']", src
+)
+assert forbidden is None, (
+    "Hardcoded VulnerableTarget(ticker='DIS', ...) still in file"
+)
+forbidden2 = re.search(
+    r"VulnerableTarget\([^)]*ticker\s*=\s*[\"']PFE[\"']", src
+)
+assert forbidden2 is None, "Hardcoded VulnerableTarget(ticker='PFE') still in file"
+forbidden3 = re.search(
+    r"VulnerableTarget\([^)]*ticker\s*=\s*[\"']INTC[\"']", src
+)
+assert forbidden3 is None, "Hardcoded VulnerableTarget(ticker='INTC') still in file"
+print("[OK] Hardcoded illustrative DIS/PFE/INTC list deleted")
+
+# 2) Real EDGAR query string must be present.
+assert "efts.sec.gov" in src, "Real EDGAR EFTS endpoint missing"
+assert "SCHEDULE 13D" in src, "EDGAR EFTS query parameter missing"
+print("[OK] Real EDGAR EFTS query is wired in source")
+
+# 3) get_active_campaigns_from_edgar must exist and return list of dicts.
+sig = inspect.signature(get_active_campaigns_from_edgar)
+assert "days_back" in sig.parameters
+print(f"[OK] get_active_campaigns_from_edgar signature: {sig}")
+
+# 4) Functional difference probe — multiple calls with different top_n
+#    must return same-or-smaller results, never the byte-identical
+#    hardcoded list. We cap the EDGAR call by setting use_cache so we
+#    don't hammer the wire in CI.
+tracker = ActivistTracker()
+# We don't strictly require the network to be up; tolerate empty.
+try:
+    campaigns = get_active_campaigns_from_edgar(days_back=30, use_cache=True)
+    assert isinstance(campaigns, list), "campaigns must be a list"
+    for c in campaigns[:5]:
+        assert isinstance(c, dict), "each campaign must be a dict"
+        for key in ("target_ticker", "target_cik", "target_name",
+                    "filer_name", "filing_date", "form_type", "url"):
+            assert key in c, f"campaign missing key '{key}'"
+    print(f"[OK] get_active_campaigns_from_edgar returned {len(campaigns)} dicts")
+except Exception as exc:
+    # Network blocked is acceptable; the shape contract has already been
+    # verified above. We still require the source-level guarantees to hold.
+    print(f"[WARN] live EDGAR fetch skipped: {type(exc).__name__}: {exc}")
+    campaigns = []
+
+# 5) _split_display_name parses EDGAR display string.
+name, tkr = _split_display_name("WALT DISNEY CO  (DIS) (CIK 0001744489)")
+assert name == "WALT DISNEY CO", f"Got name={name!r}"
+assert tkr  == "DIS",            f"Got ticker={tkr!r}"
+print("[OK] _split_display_name parses 'NAME (TICKER) (CIK X)'")
+
+# 6) find_vulnerable_companies functional contract — without cik_list,
+#    it must NOT return the historical hardcoded DIS/PFE/INTC trio
+#    verbatim (which was always exactly 3 elements with those tickers).
+r1 = tracker.find_vulnerable_companies(top_n=5)
+r2 = tracker.find_vulnerable_companies(top_n=10)
+assert isinstance(r1, list) and isinstance(r2, list)
+assert len(r1) <= 5,  f"top_n=5 returned {len(r1)} items"
+assert len(r2) <= 10, f"top_n=10 returned {len(r2)} items"
+
+hardcoded_signature = {"DIS", "PFE", "INTC"}
+r1_tickers = {t.ticker for t in r1 if t.ticker}
+# If the only tickers are exactly the legacy hardcoded set, the fallback is back.
+if r1_tickers:
+    assert r1_tickers != hardcoded_signature, (
+        "find_vulnerable_companies returned the exact hardcoded "
+        "{DIS, PFE, INTC} set — fallback still active"
+    )
+print(f"[OK] find_vulnerable_companies(top_n=5) -> {len(r1)} live targets")
+
+# 7) Cache files live in .sentinel/cache (constants exposed).
+assert str(_ACTIVIST_TARGETS_CACHE).replace("\\", "/").endswith(
+    ".sentinel/cache/activist_targets.json"
+)
+assert str(_ACTIVIST_CAMPAIGNS_CACHE).replace("\\", "/").endswith(
+    ".sentinel/cache/activist_campaigns.json"
+)
+print("[OK] 24h-TTL cache constants resolve to .sentinel/cache/...")
+
+# 8) cik_list passthrough still works (existing behavior preserved).
+screener = ActivistScreener()
+custom = screener.find_vulnerable_companies(cik_list=[], top_n=5)
+assert isinstance(custom, list)
+print(f"[OK] cik_list= passthrough still functional ({len(custom)} rows)")
 
 print("[PASS]")
 PYEOF

@@ -2,7 +2,7 @@
 # dim_053: NL Screener v3 — QueryParser token parse tree, range parser,
 #          SQL WHERE clause generation, sector-to-SIC mapping
 set -e
-cd /c/Projects/DanteFinance
+cd "$(dirname "$0")/../.."
 
 python - <<'PYEOF'
 import sys, os

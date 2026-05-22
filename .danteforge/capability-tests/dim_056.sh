@@ -1,7 +1,7 @@
 #!/bin/bash
 # dim_056: Query Expander v3 — ontology, query_specificity, concept_graph, BM25 ranking
 set -e
-cd /c/Projects/DanteFinance
+cd "$(dirname "$0")/../.."
 
 python - <<'PYEOF'
 import sys, os

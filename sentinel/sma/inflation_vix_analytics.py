@@ -148,6 +148,277 @@ def _cache_set(series_id: str, csv_data: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Calibration cache (JSON values for derived regime thresholds, etc.)
+# ---------------------------------------------------------------------------
+
+
+def _init_calibration_db() -> sqlite3.Connection:
+    conn = sqlite3.connect(str(_DB_PATH))
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS calibration_cache (
+            key         TEXT PRIMARY KEY,
+            fetched_at  INTEGER,
+            json_value  TEXT
+        )
+        """
+    )
+    conn.commit()
+    return conn
+
+
+def _calibration_get(key: str, max_age_seconds: int) -> Optional[dict[str, Any]]:
+    try:
+        import json as _json
+        conn = _init_calibration_db()
+        row = conn.execute(
+            "SELECT json_value, fetched_at FROM calibration_cache WHERE key=?",
+            (key,),
+        ).fetchone()
+        conn.close()
+        if row is None:
+            return None
+        json_value, fetched_at = row
+        if time.time() - fetched_at > max_age_seconds:
+            return None
+        return _json.loads(json_value)
+    except Exception:
+        return None
+
+
+def _calibration_set(key: str, value: dict[str, Any]) -> None:
+    try:
+        import json as _json
+        conn = _init_calibration_db()
+        conn.execute(
+            "INSERT OR REPLACE INTO calibration_cache (key, fetched_at, json_value) VALUES (?,?,?)",
+            (key, int(time.time()), _json.dumps(value, default=str)),
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# FRED-calibrated inflation regime thresholds (replaces hardcoded 3.5/2.0)
+# ---------------------------------------------------------------------------
+
+# Default fallback thresholds used ONLY if FRED is unreachable. These are NOT
+# the primary classification thresholds — the primary path is the FRED-derived
+# percentiles computed in `_calibrate_inflation_regime_thresholds_from_fred()`.
+_DEFAULT_INFLATION_LOW_FALLBACK = 2.0
+_DEFAULT_INFLATION_HIGH_FALLBACK = 3.5
+
+_INFLATION_CACHE_KEY = "inflation_regime_thresholds_v1"
+_VIX_CACHE_KEY = "vix_regime_thresholds_v1"
+_CALIB_TTL_SECONDS = 30 * 24 * 3600  # 30 days
+
+
+def _calibrate_inflation_regime_thresholds_from_fred(
+    lookback_years: int = 25,
+    force_refresh: bool = False,
+) -> dict[str, Any]:
+    """
+    Calibrate inflation regime thresholds from FRED CPIAUCSL historical data.
+
+    Methodology:
+      1. Fetch CPIAUCSL (CPI All Urban Consumers) for the past `lookback_years`.
+      2. Compute trailing 12-month YoY inflation rate per month.
+      3. Return 25th percentile (low) and 75th percentile (high) of that distribution.
+
+    Result is cached in SQLite for 30 days (regime thresholds change slowly).
+
+    Returns
+    -------
+    dict with keys:
+      low                : 25th percentile of historical YoY inflation (%)
+      high               : 75th percentile of historical YoY inflation (%)
+      median             : 50th percentile
+      mean               : mean YoY
+      calibration_date   : ISO date of calibration
+      n_observations     : number of monthly YoY observations
+      lookback_years     : input lookback
+      source             : "FRED:CPIAUCSL" or "fallback"
+    """
+    if not force_refresh:
+        cached = _calibration_get(_INFLATION_CACHE_KEY, _CALIB_TTL_SECONDS)
+        if cached:
+            return cached
+
+    days = int(lookback_years * 366) + 30
+    cpi = _fetch_fred_series("CPIAUCSL", lookback_days=days, max_cache_age=86400)
+
+    if cpi.empty or len(cpi.dropna()) < 24:
+        result = {
+            "low": _DEFAULT_INFLATION_LOW_FALLBACK,
+            "high": _DEFAULT_INFLATION_HIGH_FALLBACK,
+            "median": (
+                _DEFAULT_INFLATION_LOW_FALLBACK + _DEFAULT_INFLATION_HIGH_FALLBACK
+            ) / 2.0,
+            "mean": (
+                _DEFAULT_INFLATION_LOW_FALLBACK + _DEFAULT_INFLATION_HIGH_FALLBACK
+            ) / 2.0,
+            "calibration_date": date.today().isoformat(),
+            "n_observations": 0,
+            "lookback_years": lookback_years,
+            "source": "fallback",
+        }
+        return result
+
+    # CPIAUCSL is monthly. Compute YoY pct change.
+    s = cpi.dropna().sort_index()
+    yoy = (s.pct_change(12) * 100.0).dropna()
+    if yoy.empty:
+        result = {
+            "low": _DEFAULT_INFLATION_LOW_FALLBACK,
+            "high": _DEFAULT_INFLATION_HIGH_FALLBACK,
+            "median": (
+                _DEFAULT_INFLATION_LOW_FALLBACK + _DEFAULT_INFLATION_HIGH_FALLBACK
+            ) / 2.0,
+            "mean": (
+                _DEFAULT_INFLATION_LOW_FALLBACK + _DEFAULT_INFLATION_HIGH_FALLBACK
+            ) / 2.0,
+            "calibration_date": date.today().isoformat(),
+            "n_observations": 0,
+            "lookback_years": lookback_years,
+            "source": "fallback",
+        }
+        return result
+
+    p25 = float(np.percentile(yoy.values, 25))
+    p75 = float(np.percentile(yoy.values, 75))
+    p50 = float(np.percentile(yoy.values, 50))
+    mean_v = float(yoy.values.mean())
+
+    result = {
+        "low": round(p25, 4),
+        "high": round(p75, 4),
+        "median": round(p50, 4),
+        "mean": round(mean_v, 4),
+        "calibration_date": date.today().isoformat(),
+        "n_observations": int(len(yoy)),
+        "lookback_years": lookback_years,
+        "source": "FRED:CPIAUCSL",
+    }
+    _calibration_set(_INFLATION_CACHE_KEY, result)
+    return result
+
+
+def _calibrate_vix_regime_thresholds_from_yf(
+    lookback_years: int = 10,
+    force_refresh: bool = False,
+) -> dict[str, Any]:
+    """
+    Calibrate VIX regime thresholds from yfinance ^VIX historical data.
+
+    Methodology:
+      1. Fetch ^VIX from yfinance for the past `lookback_years`.
+      2. Return 20th percentile (low) and 80th percentile (high) of daily VIX closes.
+
+    Result is cached in SQLite for 30 days.
+
+    Falls back to FRED VIXCLS if yfinance is unavailable.
+
+    Returns
+    -------
+    dict with keys:
+      low                : 20th percentile (below this = low-vol regime)
+      high               : 80th percentile (above this = elevated/crisis regime)
+      median             : 50th percentile
+      mean               : mean VIX
+      calibration_date   : ISO date of calibration
+      n_observations     : number of daily VIX observations
+      lookback_years     : input lookback
+      source             : "yfinance:^VIX", "FRED:VIXCLS", or "fallback"
+    """
+    if not force_refresh:
+        cached = _calibration_get(_VIX_CACHE_KEY, _CALIB_TTL_SECONDS)
+        if cached:
+            return cached
+
+    days = int(lookback_years * 366) + 30
+    vix_series = _yf_close("^VIX", lookback_days=days)
+    source = "yfinance:^VIX"
+
+    if vix_series.empty or len(vix_series.dropna()) < 50:
+        # Fall back to FRED VIXCLS
+        vix_series = _fetch_fred_series("VIXCLS", lookback_days=days, max_cache_age=86400)
+        source = "FRED:VIXCLS"
+
+    if vix_series.empty or len(vix_series.dropna()) < 50:
+        result = {
+            "low": 15.0,
+            "high": 25.0,
+            "median": 18.0,
+            "mean": 19.0,
+            "calibration_date": date.today().isoformat(),
+            "n_observations": 0,
+            "lookback_years": lookback_years,
+            "source": "fallback",
+        }
+        return result
+
+    vals = vix_series.dropna().values.astype(float)
+    p20 = float(np.percentile(vals, 20))
+    p80 = float(np.percentile(vals, 80))
+    p50 = float(np.percentile(vals, 50))
+    mean_v = float(vals.mean())
+
+    result = {
+        "low": round(p20, 4),
+        "high": round(p80, 4),
+        "median": round(p50, 4),
+        "mean": round(mean_v, 4),
+        "calibration_date": date.today().isoformat(),
+        "n_observations": int(len(vals)),
+        "lookback_years": lookback_years,
+        "source": source,
+    }
+    _calibration_set(_VIX_CACHE_KEY, result)
+    return result
+
+
+def _classify_inflation_regime(yoy_pct: float) -> str:
+    """
+    Classify a single CPI YoY observation into a regime label using
+    FRED-calibrated 25th/75th percentile thresholds.
+
+    Returns: "low" | "moderate" | "high"
+    """
+    cal = _calibrate_inflation_regime_thresholds_from_fred()
+    low = float(cal["low"])
+    high = float(cal["high"])
+    if yoy_pct < low:
+        return "low"
+    if yoy_pct > high:
+        return "high"
+    return "moderate"
+
+
+def _classify_vix_regime(vix: float) -> str:
+    """
+    Classify VIX value using yfinance-calibrated 20th/80th percentile thresholds.
+
+    Returns: "low" | "normal" | "elevated" | "crisis"
+
+    Crisis tier is set at calibrated_high * 1.5 to capture genuine tail events
+    that exceed the 80th percentile by 50%.
+    """
+    cal = _calibrate_vix_regime_thresholds_from_yf()
+    low = float(cal["low"])
+    high = float(cal["high"])
+    crisis = high * 1.5
+    if vix < low:
+        return "low"
+    if vix < high:
+        return "normal"
+    if vix < crisis:
+        return "elevated"
+    return "crisis"
+
+
+# ---------------------------------------------------------------------------
 # FRED fetch helper (synchronous, with cache)
 # ---------------------------------------------------------------------------
 

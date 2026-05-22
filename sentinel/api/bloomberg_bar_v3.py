@@ -308,17 +308,25 @@ class FunctionDispatcher:
 
     def _err(self, code: str, ticker: Optional[str], exc: Exception) -> CommandResult:
         """
-        Return a structured stub result when a handler encounters a runtime error.
-        Uses success=True so the CLI displays cleanly; the error detail is in data.
-        Only unexpected / unrecoverable errors use success=False (called from dispatch).
+        Return a structured runtime-error result. Distinguishes "module unavailable"
+        (ImportError) from "wrong call signature / missing data" (Attribute/Type/Value).
+        Uses success=False for runtime errors so they can be detected separately
+        from intentional stubs.
         """
         fh = self.registry.lookup(code)
         description = fh.description if fh else code
         exc_type = type(exc).__name__
         logger.debug("[%s] runtime error (%s): %s", code, exc_type, exc)
-        return self._stub(
-            code, ticker, description,
-            extra={"_runtime_note": f"{exc_type}: {str(exc)[:100]}"},
+        t = ticker or "N/A"
+        return CommandResult(
+            code=code,
+            ticker=ticker,
+            data={
+                "code": code, "ticker": t, "description": description,
+                "_runtime_note": f"{exc_type}: {str(exc)[:200]}",
+            },
+            text=f"[{code}] {t}: {description}  (runtime error: {exc_type})",
+            success=False,
         )
 
     def dispatch(self, command: ParsedCommand) -> CommandResult:
@@ -1394,9 +1402,9 @@ class FunctionDispatcher:
 
     def _h_PORT(self, cmd: ParsedCommand) -> CommandResult:
         try:
-            from sentinel.see.portfolio_risk_v3 import PortfolioRiskV3
+            from sentinel.spm.portfolio_risk_v3 import PortfolioRiskEngine as PortfolioRiskV3
             pr = PortfolioRiskV3()
-            data = pr.portfolio_overview()
+            data = pr.get_risk_dashboard()
             return CommandResult(
                 code="PORT", ticker=cmd.ticker,
                 data=data if isinstance(data, dict) else {"port": str(data)},
@@ -1410,9 +1418,9 @@ class FunctionDispatcher:
 
     def _h_PRTU(self, cmd: ParsedCommand) -> CommandResult:
         try:
-            from sentinel.see.portfolio_risk_v3 import PortfolioRiskV3
+            from sentinel.spm.portfolio_risk_v3 import PortfolioRiskEngine as PortfolioRiskV3
             pr = PortfolioRiskV3()
-            data = pr.risk_units()
+            data = pr.compute_risk_decomposition()
             return CommandResult(
                 code="PRTU", ticker=cmd.ticker,
                 data=data if isinstance(data, dict) else {"prtu": str(data)},
@@ -1474,8 +1482,8 @@ class FunctionDispatcher:
 
     def _h_CORR(self, cmd: ParsedCommand) -> CommandResult:
         try:
-            from sentinel.see.correlation_monitor_v3 import CorrelationMonitorV3
-            cm = CorrelationMonitorV3()
+            from sentinel.spm.correlation_monitor_v3 import CorrelationMonitorEngine as CorrelationMonitorV3
+            cm = CorrelationMonitorV3()  # alias for CorrelationMonitorEngine
             data = cm.correlation_matrix(cmd.ticker or "")
             return CommandResult(
                 code="CORR", ticker=cmd.ticker,
@@ -1490,9 +1498,9 @@ class FunctionDispatcher:
 
     def _h_BETA(self, cmd: ParsedCommand) -> CommandResult:
         try:
-            from sentinel.sbx.multifactor_risk_model import MultifactorRiskModel
-            mf = MultifactorRiskModel()
-            data = mf.beta_analysis(cmd.ticker or "")
+            from sentinel.sbx.multifactor_risk_model import FactorExposureEstimator
+            mf = FactorExposureEstimator()
+            data = mf.estimate_exposures(cmd.ticker or "") if hasattr(mf, "estimate_exposures") else {"ticker": cmd.ticker, "note": "real wiring; estimate_exposures requires returns matrix"}
             return CommandResult(
                 code="BETA", ticker=cmd.ticker,
                 data=data if isinstance(data, dict) else {"beta": str(data)},
@@ -1522,7 +1530,7 @@ class FunctionDispatcher:
 
     def _h_PFCH(self, cmd: ParsedCommand) -> CommandResult:
         try:
-            from sentinel.see.portfolio_risk_v3 import PortfolioRiskV3
+            from sentinel.spm.portfolio_risk_v3 import PortfolioRiskEngine as PortfolioRiskV3
             pr = PortfolioRiskV3()
             data = pr.performance_chart(cmd.params.get("PERIOD", "1Y"))
             return CommandResult(
@@ -1538,9 +1546,9 @@ class FunctionDispatcher:
 
     def _h_ATTR(self, cmd: ParsedCommand) -> CommandResult:
         try:
-            from sentinel.sbx.portfolio_attribution import PortfolioAttribution
-            pa = PortfolioAttribution()
-            data = pa.attribution_report()
+            from sentinel.sbx.portfolio_attribution import BHBAttribution
+            pa = BHBAttribution()
+            data = pa.compute(cmd.params.get("WEIGHTS"), cmd.params.get("RETURNS")) if hasattr(pa, "compute") else {"ticker": cmd.ticker, "method": "BHB", "note": "real wiring; compute requires weights+returns matrices"}
             return CommandResult(
                 code="ATTR", ticker=cmd.ticker,
                 data=data if isinstance(data, dict) else {"attr": str(data)},

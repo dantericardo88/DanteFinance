@@ -2,7 +2,7 @@
 # dim_063: Walk-forward optimizer v3 — pure train/test split computation,
 #          MC permutation test, parameter sensitivity surface, stability metric
 set -e
-cd /c/Projects/DanteFinance
+cd "$(dirname "$0")/../.."
 
 python - <<'PYEOF'
 import sys, os

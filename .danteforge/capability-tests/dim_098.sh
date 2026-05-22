@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# dim_098: VC/PE tracker — FundUniverse, FormDParser, DealFlowVelocity, FundLifecycle
+# dim_098: VC/PE tracker — FundUniverse, FormDParser, DealFlowVelocity,
+# FundLifecycle, plus IRR / DPI / TVPI / RVPI fund-performance metrics.
 # All assertions are pure computation — no network calls.
 set -e
 cd "$(dirname "$0")/../.."
@@ -19,6 +20,14 @@ from sentinel.sfe.vcpe_tracker_v3 import (
     VCPEDatabase,
     _UNIVERSE_SEED,
     DiscoveredFund,
+    compute_fund_irr,
+    compute_fund_dpi,
+    compute_fund_tvpi,
+    compute_fund_rvpi,
+    compute_fund_metrics,
+    record_fund_cashflow,
+    set_fund_metadata,
+    discover_new_funds_via_iapd,
 )
 
 # ── 1. FundUniverse: fund_count > 0 using in-memory DB ───────────────────────
@@ -257,5 +266,117 @@ assert new_profile["final_close_estimated"] is False, \
     "New fund should not have final_close_estimated"
 print(f"[OK] FundLifecycle.profile new fund (2024-06-01): stage={new_profile['stage']!r}")
 
-print("\n[PASS] dim_098: VC/PE tracker - FundUniverse, FormDParser, DealFlowVelocity, FundLifecycle")
+# ── 5. Fund performance metrics: IRR / DPI / TVPI / RVPI ─────────────────────
+
+# IRR: $-100 today, $200 in 5 years → IRR ~14.87%
+irr = compute_fund_irr([(date(2020, 1, 1), -100.0), (date(2025, 1, 1), 200.0)])
+assert irr is not None, "compute_fund_irr returned None for a valid 2-flow stream"
+assert 0.14 < irr < 0.16, f"IRR should be ~0.1487 for 2x in 5y, got {irr}"
+print(f"[OK] compute_fund_irr: 2x in 5y => IRR={irr:.4f} (~14.87%)")
+
+# IRR with terminal NAV: $-100 today, $0 today + 5y, terminal NAV = $200 at year 5
+irr_nav = compute_fund_irr(
+    [(date(2020, 1, 1), -100.0), (date(2025, 1, 1), 0.0)],
+    terminal_nav=200.0,
+)
+assert irr_nav is not None and 0.14 < irr_nav < 0.16, \
+    f"IRR with terminal_nav=200 should match: got {irr_nav}"
+print(f"[OK] compute_fund_irr with terminal_nav=200 => IRR={irr_nav:.4f}")
+
+# IRR degenerate cases
+assert compute_fund_irr([]) is None, "Empty cash flows should return None"
+assert compute_fund_irr([(date(2020, 1, 1), -100.0)]) is None, \
+    "Single flow should return None"
+assert compute_fund_irr([(date(2020, 1, 1), -100.0),
+                        (date(2021, 1, 1), -50.0)]) is None, \
+    "All-negative flows should return None"
+print(f"[OK] compute_fund_irr handles degenerate inputs (empty / single / all-neg)")
+
+# DPI: $100 distributed on $50 called = 2.0
+assert compute_fund_dpi(100, 50) == 2.0, \
+    f"DPI(100,50) should be 2.0, got {compute_fund_dpi(100, 50)}"
+assert compute_fund_dpi(0, 50) == 0.0, "DPI(0,50) should be 0.0"
+assert compute_fund_dpi(100, 0) == 0.0, "DPI with capital_called=0 should be 0.0"
+print(f"[OK] compute_fund_dpi: (100,50)=2.0, (0,50)=0.0, (100,0)=0.0")
+
+# TVPI: ($100 distributed + $30 NAV) / $50 called = 2.6
+assert compute_fund_tvpi(100, 30, 50) == 2.6, \
+    f"TVPI(100,30,50) should be 2.6, got {compute_fund_tvpi(100, 30, 50)}"
+assert compute_fund_tvpi(0, 0, 50) == 0.0, "TVPI with no value should be 0.0"
+assert compute_fund_tvpi(100, 30, 0) == 0.0, "TVPI with capital_called=0 should be 0.0"
+print(f"[OK] compute_fund_tvpi: (100,30,50)=2.6, edge cases handled")
+
+# RVPI: $30 NAV / $50 called = 0.6
+assert compute_fund_rvpi(30, 50) == 0.6, \
+    f"RVPI(30,50) should be 0.6, got {compute_fund_rvpi(30, 50)}"
+assert compute_fund_rvpi(0, 50) == 0.0, "RVPI(0,50) should be 0.0"
+assert compute_fund_rvpi(30, 0) == 0.0, "RVPI with capital_called=0 should be 0.0"
+print(f"[OK] compute_fund_rvpi: (30,50)=0.6, edge cases handled")
+
+# Identity: TVPI == DPI + RVPI (within float epsilon)
+d, n, c = 100.0, 30.0, 50.0
+assert abs(compute_fund_tvpi(d, n, c) - (compute_fund_dpi(d, c) + compute_fund_rvpi(n, c))) < 1e-12, \
+    "TVPI must equal DPI + RVPI"
+print(f"[OK] Identity: TVPI = DPI + RVPI verified")
+
+# ── 6. compute_fund_metrics: end-to-end DB-backed wrapper ────────────────────
+with tempfile.TemporaryDirectory() as tmpdir:
+    db_path = Path(tmpdir) / "test_metrics.db"
+    db = VCPEDatabase(db_path=db_path)
+
+    # Seed the universe so we get a real fund name back
+    universe = FundUniverse(db=db)
+    universe._load_seed()
+
+    test_cik = "1056831"   # Sequoia Capital (in seed)
+
+    # Record a synthetic 5-year fund cash-flow stream:
+    #   Year 0: $-100M called
+    #   Year 5: $200M distributed
+    record_fund_cashflow(test_cik, date(2020, 1, 1), -100_000_000.0, "call", db=db)
+    record_fund_cashflow(test_cik, date(2025, 1, 1),  200_000_000.0, "distribution", db=db)
+    set_fund_metadata(test_cik, vintage_year=2020, strategy="Venture", current_nav=0.0, db=db)
+
+    metrics = compute_fund_metrics(test_cik, db=db)
+    assert metrics["fund_name"] == "Sequoia Capital", \
+        f"fund_name lookup failed: {metrics['fund_name']!r}"
+    assert metrics["vintage_year"] == 2020, f"vintage_year wrong: {metrics['vintage_year']}"
+    assert metrics["strategy"] == "Venture", f"strategy wrong: {metrics['strategy']!r}"
+    assert metrics["irr"] is not None and 0.14 < metrics["irr"] < 0.16, \
+        f"compute_fund_metrics IRR wrong: {metrics['irr']}"
+    assert metrics["dpi"] == 2.0, f"compute_fund_metrics DPI wrong: {metrics['dpi']}"
+    assert metrics["tvpi"] == 2.0, f"compute_fund_metrics TVPI wrong: {metrics['tvpi']}"
+    assert metrics["rvpi"] == 0.0, f"compute_fund_metrics RVPI wrong: {metrics['rvpi']}"
+    print(f"[OK] compute_fund_metrics: {metrics['fund_name']} "
+          f"IRR={metrics['irr']:.4f} DPI={metrics['dpi']} "
+          f"TVPI={metrics['tvpi']} RVPI={metrics['rvpi']}")
+
+    # Add interim NAV so RVPI > 0
+    set_fund_metadata(test_cik, current_nav=30_000_000.0, db=db)
+    metrics2 = compute_fund_metrics(test_cik, db=db)
+    assert metrics2["rvpi"] == 0.3, f"RVPI with NAV=30M wrong: {metrics2['rvpi']}"
+    # TVPI = (200M + 30M) / 100M = 2.3
+    assert abs(metrics2["tvpi"] - 2.3) < 1e-9, f"TVPI wrong: {metrics2['tvpi']}"
+    print(f"[OK] compute_fund_metrics with NAV=30M => RVPI={metrics2['rvpi']} TVPI={metrics2['tvpi']}")
+
+    # Unknown CIK still returns the dict (with None fields), doesn't crash
+    empty = compute_fund_metrics("0000000", db=db)
+    assert empty["fund_name"] is None
+    assert empty["irr"] is None
+    assert empty["dpi"] is None
+    print(f"[OK] compute_fund_metrics for unknown CIK returns None fields gracefully")
+
+    db.close()
+
+# ── 7. discover_new_funds_via_iapd is importable and signature-compatible ────
+assert callable(discover_new_funds_via_iapd), \
+    "discover_new_funds_via_iapd must be a callable"
+# We don't actually hit the network in CI — just verify it's wired up correctly.
+import inspect
+sig = inspect.signature(discover_new_funds_via_iapd)
+assert "query" in sig.parameters, "discover_new_funds_via_iapd must accept query="
+print(f"[OK] discover_new_funds_via_iapd is importable with signature {sig}")
+
+print("\n[PASS] dim_098: VC/PE tracker - FundUniverse, FormDParser, DealFlowVelocity, "
+      "FundLifecycle, IRR/DPI/TVPI/RVPI metrics")
 PYEOF

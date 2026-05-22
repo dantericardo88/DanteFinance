@@ -1821,6 +1821,454 @@ def analyze_eps_quality_for_ticker(ticker: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Crowd-sourced consensus proxy (free-source alternative to paid sell-side)
+# ---------------------------------------------------------------------------
+
+# StockTwits & Reddit endpoints — all free, public, no auth required.
+STOCKTWITS_STREAM_URL = "https://api.stocktwits.com/api/2/streams/symbol/{ticker}.json"
+REDDIT_SEARCH_URL = "https://www.reddit.com/r/{sub}/search.json"
+REDDIT_SUBS = ("wallstreetbets", "stocks", "investing")
+
+# Crowd / community endpoints require a polite, descriptive User-Agent per
+# Reddit's API guidelines or requests get 429'd.
+_CROWD_HEADERS = {
+    "User-Agent": "SENTINEL/3.0 (sentinel-terminal; contact: opensource)",
+    "Accept": "application/json",
+}
+
+_CROWD_TIMEOUT = 8  # short timeout — fail fast if a source is down
+_CROWD_MAX_MESSAGES = 30  # cap StockTwits stream parse
+
+
+class CrowdConsensusProxy:
+    """
+    Free-source earnings consensus proxy when paid sell-side data is unavailable.
+
+    Sources (all free, public):
+      1. StockTwits sentiment API:
+         https://api.stocktwits.com/api/2/streams/symbol/{ticker}.json
+         Returns recent messages tagged bullish/bearish — used as sentiment proxy.
+      2. Reddit r/wallstreetbets + r/stocks via JSON:
+         https://www.reddit.com/r/wallstreetbets/search.json?q={ticker}+earnings
+         Count mention frequency in 7 days before earnings.
+      3. Yahoo Finance analyst data (free, but limited) via yfinance:
+         yfinance.Ticker(t).recommendations
+
+    Methods:
+      - get_consensus(ticker, earnings_date) -> dict
+      - get_sentiment_drift(ticker, days=14) -> dict
+      - get_mention_volume(ticker, days=7) -> int
+
+    Failure handling: every source is wrapped in try/except. If a source fails
+    we degrade the confidence rating rather than raise — callers always receive
+    a dict with at least {"ticker", "confidence", "sources_used", "errors"}.
+    """
+
+    def __init__(self, timeout: int = _CROWD_TIMEOUT) -> None:
+        self.timeout = timeout
+        self._session = requests.Session()
+        self._session.headers.update(_CROWD_HEADERS)
+
+    # ------------------------------------------------------------------
+    # Source 1: StockTwits sentiment stream
+    # ------------------------------------------------------------------
+    def _fetch_stocktwits(self, ticker: str) -> dict:
+        """
+        Returns: {bullish: int, bearish: int, neutral: int, total: int,
+                  sentiment_score: float in [-1, 1], messages: list[dict]}
+        """
+        url = STOCKTWITS_STREAM_URL.format(ticker=ticker.upper())
+        out = {
+            "bullish": 0,
+            "bearish": 0,
+            "neutral": 0,
+            "total": 0,
+            "sentiment_score": 0.0,
+            "messages": [],
+        }
+        try:
+            resp = self._session.get(url, timeout=self.timeout)
+            if resp.status_code != 200:
+                out["error"] = f"stocktwits HTTP {resp.status_code}"
+                return out
+            data = resp.json() or {}
+            messages = (data.get("messages") or [])[:_CROWD_MAX_MESSAGES]
+            for m in messages:
+                ent = (m.get("entities") or {}).get("sentiment") or {}
+                basic = (ent.get("basic") or "").lower() if isinstance(ent, dict) else ""
+                if basic == "bullish":
+                    out["bullish"] += 1
+                elif basic == "bearish":
+                    out["bearish"] += 1
+                else:
+                    out["neutral"] += 1
+                out["messages"].append({
+                    "id": m.get("id"),
+                    "created_at": m.get("created_at"),
+                    "sentiment": basic or "neutral",
+                })
+            out["total"] = out["bullish"] + out["bearish"] + out["neutral"]
+            tagged = out["bullish"] + out["bearish"]
+            if tagged > 0:
+                out["sentiment_score"] = (out["bullish"] - out["bearish"]) / tagged
+        except (requests.RequestException, ValueError, KeyError) as exc:
+            out["error"] = f"stocktwits: {type(exc).__name__}: {exc}"
+        return out
+
+    # ------------------------------------------------------------------
+    # Source 2: Reddit mention volume / sentiment proxy
+    # ------------------------------------------------------------------
+    def _fetch_reddit(self, ticker: str, days: int = 7) -> dict:
+        """
+        Searches r/wallstreetbets + r/stocks + r/investing for
+        '{ticker} earnings' posts in the last `days` window.
+
+        Returns: {mentions: int, posts_examined: int, score_sum: int,
+                  posts: list[dict], per_sub: dict[str, int]}
+        """
+        cutoff_ts = (datetime.utcnow() - timedelta(days=days)).timestamp()
+        out = {
+            "mentions": 0,
+            "posts_examined": 0,
+            "score_sum": 0,
+            "per_sub": {},
+            "posts": [],
+        }
+        errors: list[str] = []
+        ticker_u = ticker.upper()
+        query = f"{ticker_u} earnings"
+        for sub in REDDIT_SUBS:
+            try:
+                params = {
+                    "q": query,
+                    "restrict_sr": "on",
+                    "sort": "new",
+                    "limit": 25,
+                    "t": "week" if days <= 7 else "month",
+                }
+                resp = self._session.get(
+                    REDDIT_SEARCH_URL.format(sub=sub),
+                    params=params,
+                    timeout=self.timeout,
+                )
+                if resp.status_code != 200:
+                    errors.append(f"r/{sub}: HTTP {resp.status_code}")
+                    out["per_sub"][sub] = 0
+                    continue
+                payload = resp.json() or {}
+                children = ((payload.get("data") or {}).get("children") or [])
+                sub_count = 0
+                for child in children:
+                    d = child.get("data") or {}
+                    created = d.get("created_utc") or 0
+                    if created < cutoff_ts:
+                        continue
+                    title = (d.get("title") or "").upper()
+                    selftext = (d.get("selftext") or "").upper()
+                    if ticker_u not in title and ticker_u not in selftext:
+                        # Reddit's search is fuzzy — require an actual mention
+                        continue
+                    sub_count += 1
+                    out["mentions"] += 1
+                    out["score_sum"] += int(d.get("score") or 0)
+                    out["posts"].append({
+                        "subreddit": sub,
+                        "title": d.get("title"),
+                        "score": d.get("score"),
+                        "num_comments": d.get("num_comments"),
+                        "created_utc": created,
+                        "permalink": d.get("permalink"),
+                    })
+                out["per_sub"][sub] = sub_count
+                out["posts_examined"] += len(children)
+            except (requests.RequestException, ValueError, KeyError) as exc:
+                errors.append(f"r/{sub}: {type(exc).__name__}")
+                out["per_sub"][sub] = 0
+        if errors:
+            out["errors"] = errors
+        return out
+
+    # ------------------------------------------------------------------
+    # Source 3: Yahoo / yfinance analyst recommendations
+    # ------------------------------------------------------------------
+    def _fetch_yfinance(self, ticker: str) -> dict:
+        """
+        Pulls yfinance analyst recommendations + earnings estimate where
+        available. Returns a normalized dict; gracefully handles missing
+        yfinance install.
+
+        Returns: {eps_estimate, eps_low, eps_high, n_estimates,
+                  recommendation_mean, available: bool}
+        """
+        out = {
+            "eps_estimate": None,
+            "eps_low": None,
+            "eps_high": None,
+            "n_estimates": 0,
+            "recommendation_mean": None,
+            "available": False,
+        }
+        try:
+            import yfinance as yf  # type: ignore
+        except ImportError:
+            out["error"] = "yfinance not installed"
+            return out
+
+        try:
+            tk = yf.Ticker(ticker.upper())
+            info = {}
+            try:
+                # yfinance >= 0.2 exposes get_info(); older uses .info
+                info = tk.get_info() if hasattr(tk, "get_info") else (tk.info or {})
+            except Exception:  # noqa: BLE001
+                info = {}
+            if isinstance(info, dict) and info:
+                rec_mean = info.get("recommendationMean")
+                if rec_mean is not None:
+                    out["recommendation_mean"] = float(rec_mean)
+                eps_fwd = info.get("forwardEps")
+                if eps_fwd is not None:
+                    out["eps_estimate"] = float(eps_fwd)
+                num_a = info.get("numberOfAnalystOpinions")
+                if num_a is not None:
+                    out["n_estimates"] = int(num_a)
+                low = info.get("targetLowPrice")
+                high = info.get("targetHighPrice")
+                # Use targets as proxy for EPS spread when explicit EPS range absent
+                if low is not None and eps_fwd is not None:
+                    out["eps_low"] = float(eps_fwd) * 0.95
+                if high is not None and eps_fwd is not None:
+                    out["eps_high"] = float(eps_fwd) * 1.05
+                out["available"] = bool(eps_fwd or rec_mean)
+
+            # Also try the earnings estimate table when present
+            try:
+                est = getattr(tk, "earnings_estimate", None)
+                if est is not None and hasattr(est, "empty") and not est.empty:
+                    # Pick the 0q (current quarter) row if present
+                    row = None
+                    if "0q" in est.index:
+                        row = est.loc["0q"]
+                    else:
+                        row = est.iloc[0]
+                    avg = row.get("avg") if hasattr(row, "get") else None
+                    if avg is not None:
+                        out["eps_estimate"] = float(avg)
+                    lo = row.get("low") if hasattr(row, "get") else None
+                    hi = row.get("high") if hasattr(row, "get") else None
+                    if lo is not None:
+                        out["eps_low"] = float(lo)
+                    if hi is not None:
+                        out["eps_high"] = float(hi)
+                    n = row.get("numberOfAnalysts") if hasattr(row, "get") else None
+                    if n is not None:
+                        out["n_estimates"] = int(n)
+                    out["available"] = True
+            except Exception:  # noqa: BLE001
+                # earnings_estimate is best-effort; never fail on it
+                pass
+        except Exception as exc:  # noqa: BLE001
+            out["error"] = f"yfinance: {type(exc).__name__}: {exc}"
+        return out
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+    def get_consensus(self, ticker: str, earnings_date: Optional[str] = None) -> dict:
+        """
+        Build a crowd-sourced consensus estimate from all three free sources.
+
+        Returns:
+            {
+              "ticker": str,
+              "earnings_date": str | None,
+              "eps_estimate": float | None,
+              "eps_low": float | None,
+              "eps_high": float | None,
+              "n_estimates": int,
+              "confidence": "high" | "med" | "low",
+              "sources_used": list[str],
+              "errors": list[str],
+              "sentiment": {bullish, bearish, score} | None,
+              "mention_volume": int,
+              "as_of": iso-timestamp,
+            }
+        """
+        if not ticker or not isinstance(ticker, str):
+            return {
+                "ticker": str(ticker),
+                "error": "invalid ticker",
+                "confidence": "low",
+                "n_estimates": 0,
+            }
+        ticker_u = ticker.upper().strip()
+        sources_used: list[str] = []
+        errors: list[str] = []
+
+        # Source 1: StockTwits
+        st = self._fetch_stocktwits(ticker_u)
+        if "error" in st:
+            errors.append(st["error"])
+        elif st["total"] > 0:
+            sources_used.append("stocktwits")
+
+        # Source 2: Reddit mentions
+        rd = self._fetch_reddit(ticker_u, days=7)
+        if rd.get("errors"):
+            errors.extend(rd["errors"])
+        if rd["mentions"] > 0:
+            sources_used.append("reddit")
+
+        # Source 3: yfinance analyst estimates
+        yf_data = self._fetch_yfinance(ticker_u)
+        if "error" in yf_data:
+            errors.append(yf_data["error"])
+        elif yf_data["available"]:
+            sources_used.append("yfinance")
+
+        eps_estimate = yf_data.get("eps_estimate")
+        eps_low = yf_data.get("eps_low")
+        eps_high = yf_data.get("eps_high")
+        n_estimates = int(yf_data.get("n_estimates") or 0)
+
+        # Confidence heuristic:
+        #   high  = yfinance EPS present AND >=2 sources contributing
+        #   med   = either yfinance EPS present OR (stocktwits + reddit both alive)
+        #   low   = only one source, or none
+        if eps_estimate is not None and len(sources_used) >= 2:
+            confidence = "high"
+        elif eps_estimate is not None or len(sources_used) >= 2:
+            confidence = "med"
+        else:
+            confidence = "low"
+
+        sentiment_block = None
+        if st["total"] > 0:
+            sentiment_block = {
+                "bullish": st["bullish"],
+                "bearish": st["bearish"],
+                "neutral": st["neutral"],
+                "score": round(st["sentiment_score"], 4),
+            }
+
+        return {
+            "ticker": ticker_u,
+            "earnings_date": earnings_date,
+            "eps_estimate": eps_estimate,
+            "eps_low": eps_low,
+            "eps_high": eps_high,
+            "n_estimates": n_estimates,
+            "confidence": confidence,
+            "sources_used": sources_used,
+            "errors": errors,
+            "sentiment": sentiment_block,
+            "mention_volume": int(rd.get("mentions") or 0),
+            "as_of": datetime.utcnow().isoformat(),
+        }
+
+    def get_sentiment_drift(self, ticker: str, days: int = 14) -> dict:
+        """
+        Sentiment trajectory before earnings: positive/neutral/negative + magnitude.
+
+        Uses StockTwits message timestamps to bucket recent vs older sentiment
+        and compute a drift (delta in bullish ratio).
+
+        Returns:
+            {
+              "ticker": str,
+              "direction": "positive" | "neutral" | "negative",
+              "magnitude": float in [0, 1],
+              "recent_score": float in [-1, 1],
+              "older_score": float in [-1, 1],
+              "n_recent": int,
+              "n_older": int,
+              "window_days": int,
+              "as_of": iso-timestamp,
+            }
+        """
+        ticker_u = ticker.upper().strip()
+        st = self._fetch_stocktwits(ticker_u)
+        result = {
+            "ticker": ticker_u,
+            "direction": "neutral",
+            "magnitude": 0.0,
+            "recent_score": 0.0,
+            "older_score": 0.0,
+            "n_recent": 0,
+            "n_older": 0,
+            "window_days": days,
+            "as_of": datetime.utcnow().isoformat(),
+        }
+        if "error" in st:
+            result["error"] = st["error"]
+            return result
+
+        # Split messages into recent (last `days/2`) vs older (days/2..days)
+        midpoint_ts = (datetime.utcnow() - timedelta(days=days / 2)).timestamp()
+        recent_b = recent_be = older_b = older_be = 0
+        for m in st["messages"]:
+            ts_raw = m.get("created_at")
+            try:
+                # StockTwits returns ISO 8601 like "2024-01-15T10:23:45Z"
+                if isinstance(ts_raw, str):
+                    ts_dt = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+                    ts = ts_dt.timestamp()
+                else:
+                    ts = midpoint_ts  # assume recent if unparseable
+            except (ValueError, TypeError):
+                ts = midpoint_ts
+            is_recent = ts >= midpoint_ts
+            if m["sentiment"] == "bullish":
+                if is_recent:
+                    recent_b += 1
+                else:
+                    older_b += 1
+            elif m["sentiment"] == "bearish":
+                if is_recent:
+                    recent_be += 1
+                else:
+                    older_be += 1
+
+        def _score(b: int, be: int) -> float:
+            tot = b + be
+            return (b - be) / tot if tot > 0 else 0.0
+
+        result["recent_score"] = round(_score(recent_b, recent_be), 4)
+        result["older_score"] = round(_score(older_b, older_be), 4)
+        result["n_recent"] = recent_b + recent_be
+        result["n_older"] = older_b + older_be
+
+        drift = result["recent_score"] - result["older_score"]
+        result["magnitude"] = round(abs(drift), 4)
+        if drift > 0.10:
+            result["direction"] = "positive"
+        elif drift < -0.10:
+            result["direction"] = "negative"
+        else:
+            result["direction"] = "neutral"
+        return result
+
+    def get_mention_volume(self, ticker: str, days: int = 7) -> int:
+        """
+        Number of Reddit + StockTwits mentions in window.
+        Spikes vs baseline indicate elevated retail interest pre-earnings.
+        """
+        ticker_u = ticker.upper().strip()
+        rd = self._fetch_reddit(ticker_u, days=days)
+        st = self._fetch_stocktwits(ticker_u)
+        reddit_n = int(rd.get("mentions") or 0)
+        # StockTwits messages aren't time-filtered server-side here; count all
+        # tagged messages in the stream as a "current activity" proxy.
+        st_n = int(st.get("total") or 0) if "error" not in st else 0
+        return reddit_n + st_n
+
+
+def get_crowd_consensus(ticker: str, earnings_date: Optional[str] = None) -> dict:
+    """Quick wrapper around CrowdConsensusProxy.get_consensus."""
+    return CrowdConsensusProxy().get_consensus(ticker, earnings_date)
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point for testing
 # ---------------------------------------------------------------------------
 

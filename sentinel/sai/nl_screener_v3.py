@@ -66,6 +66,18 @@ except ImportError:
     HAS_FDL = False
 
 try:
+    from sentinel.sai.nl_grammar import (
+        NLGrammarParser,
+        parse_screener_query as grammar_parse_screener_query,
+        is_complex_query as grammar_is_complex_query,
+        Comparison as _GrammarComparison,
+        BoolExpr as _GrammarBoolExpr,
+    )
+    HAS_GRAMMAR = True
+except ImportError:
+    HAS_GRAMMAR = False
+
+try:
     from sentinel.core.logging import get_logger
     logger = get_logger(__name__)
 except Exception:
@@ -455,7 +467,40 @@ class QueryParser:
     """
 
     def parse(self, query: str) -> ScreenerQuery:
-        """Parse a natural language query into a structured ScreenerQuery."""
+        """Parse a natural language query into a structured ScreenerQuery.
+
+        Complex structured queries (containing AND/OR/NOT/parens/BETWEEN/IN)
+        are routed to the recursive-descent grammar parser in
+        ``sentinel.sai.nl_grammar``. Plain-English queries continue to use
+        the legacy regex-based extractor for backward compatibility.
+        """
+        # Route complex boolean queries to the grammar parser
+        if HAS_GRAMMAR and grammar_is_complex_query(query):
+            try:
+                grammar_filters, grammar_sectors = self._parse_with_grammar(query)
+                if grammar_filters or grammar_sectors:
+                    return ScreenerQuery(
+                        raw_query=query,
+                        filters=grammar_filters,
+                        sort_by=None,
+                        sort_desc=True,
+                        limit=25,
+                        sectors=grammar_sectors,
+                        market_cap_min=None,
+                        market_cap_max=None,
+                        requires_dividend=any(
+                            f.metric == "dividend_yield" for f in grammar_filters
+                        ),
+                        requires_profitable=any(
+                            f.metric == "net_income" and f.operator in (">", ">=")
+                            and isinstance(f.value, (int, float)) and f.value >= 0
+                            for f in grammar_filters
+                        ),
+                    )
+            except SyntaxError:
+                # Fall through to legacy parser if grammar fails
+                pass
+
         q = query.lower().strip()
         filters: List[ScreenerFilter] = []
         sectors: List[str] = []
@@ -550,6 +595,116 @@ class QueryParser:
             requires_dividend=requires_dividend,
             requires_profitable=requires_profitable,
         )
+
+    # ------------------------------------------------------------------
+    # Grammar-bridge (delegates to sentinel.sai.nl_grammar)
+    # ------------------------------------------------------------------
+    _GRAMMAR_TO_METRIC = {
+        "price_to_earnings": "pe_ratio",
+        "price_to_book": "pb_ratio",
+        "price_to_sales": "ps_ratio",
+        "ev_to_ebitda": "ev_ebitda",
+        "market_cap": "market_cap",
+        "return_on_equity": "roe",
+        "return_on_assets": "roa",
+        "return_on_investment": "roi",
+        "earnings_per_share": "eps",
+        "revenue": "revenue",
+        "net_income": "net_income",
+        "free_cash_flow": "fcf",
+        "profit_margin": "profit_margin",
+        "gross_margin": "gross_margin",
+        "operating_margin": "operating_margin",
+        "net_margin": "net_margin",
+        "dividend_yield": "dividend_yield",
+        "debt_to_equity": "debt_to_equity",
+    }
+
+    def _parse_with_grammar(
+        self, query: str
+    ) -> Tuple[List[ScreenerFilter], List[str]]:
+        """Translate a grammar AST into a flat list of ``ScreenerFilter`` objects.
+
+        Returns ``(filters, sectors)``. Sector predicates are pulled out of the
+        filter list into the dedicated ``sectors`` slot so downstream execution
+        can dispatch them against the GICS universe rather than treating them
+        as numeric filters.
+        """
+        parser = NLGrammarParser()
+        ast = parser.parse(query)
+        filters: List[ScreenerFilter] = []
+        sectors: List[str] = []
+        self._collect_grammar_nodes(ast, filters, sectors, negate=False)
+        return filters, sectors
+
+    def _collect_grammar_nodes(
+        self,
+        node,
+        filters: List[ScreenerFilter],
+        sectors: List[str],
+        negate: bool,
+    ) -> None:
+        """Recursively walk a grammar AST and append ScreenerFilter leaves."""
+        if isinstance(node, _GrammarComparison):
+            # Categorical sector: hoist into ScreenerQuery.sectors
+            if node.field == "sector" and node.op in ("==", "!="):
+                sector_val = str(node.value)
+                if (node.op == "==") ^ negate:  # equal & not-negated, or != & negated
+                    canonical = _SECTOR_ALIASES.get(sector_val.lower(), sector_val)
+                    if canonical not in sectors:
+                        sectors.append(canonical)
+                return
+
+            metric = self._GRAMMAR_TO_METRIC.get(node.field, node.field)
+
+            if node.op == "BETWEEN":
+                lo, hi = float(node.value), float(node.value2)
+                if lo > hi:
+                    lo, hi = hi, lo
+                filters.append(ScreenerFilter(
+                    metric=metric, operator="between", value=(lo, hi)
+                ))
+                return
+
+            if node.op == "IN":
+                # Represent IN as not_null + leave categorical matching to executor
+                filters.append(ScreenerFilter(
+                    metric=metric, operator="not_null", value=tuple(node.value)
+                ))
+                return
+
+            op = node.op
+            if negate:
+                _negate = {
+                    ">": "<=", "<": ">=", ">=": "<", "<=": ">",
+                    "==": "!=", "!=": "==",
+                }
+                op = _negate.get(op, op)
+
+            # Standard comparison
+            try:
+                value = float(node.value)
+            except (TypeError, ValueError):
+                value = node.value  # leave as string
+            filters.append(ScreenerFilter(
+                metric=metric, operator=op, value=value
+            ))
+            return
+
+        if isinstance(node, _GrammarBoolExpr):
+            if node.op == "NOT":
+                for child in node.children:
+                    self._collect_grammar_nodes(
+                        child, filters, sectors, negate=not negate
+                    )
+                return
+            # AND / OR — flatten into the filter list. The executor evaluates
+            # filters as AND by default; OR-composed branches still appear so
+            # downstream consumers can inspect them. A future enhancement can
+            # introduce a structured boolean filter tree.
+            for child in node.children:
+                self._collect_grammar_nodes(child, filters, sectors, negate=negate)
+            return
 
     _BETWEEN_PATTERN = re.compile(
         r"(\w[\w\s/\-]*?)\s+(?:is\s+)?between\s+"

@@ -200,5 +200,39 @@ br3 = compute_beat_rate(surprise_10)
 assert br3["quarters_used"] == 8, f"Expected 8, got {br3['quarters_used']}"
 print(f"[OK] compute_beat_rate: window correctly capped at 8 quarters")
 
+# --------------------------------------------------------------------------
+# NEW: Test 9 — CrowdConsensusProxy structure + module wrapper
+# (No network required — verify methods exist and return sensible dict shape.
+#  Network calls inside the methods fail-soft and return dicts with errors.)
+# --------------------------------------------------------------------------
+from sentinel.sfe.earnings_kpi_tracker_v3 import CrowdConsensusProxy, get_crowd_consensus
+
+proxy = CrowdConsensusProxy()
+assert hasattr(proxy, "get_consensus"), "missing get_consensus"
+assert hasattr(proxy, "get_sentiment_drift"), "missing get_sentiment_drift"
+assert hasattr(proxy, "get_mention_volume"), "missing get_mention_volume"
+print("[OK] CrowdConsensusProxy: has get_consensus, get_sentiment_drift, get_mention_volume")
+
+# Module-level convenience wrapper
+r = get_crowd_consensus("AAPL")
+assert isinstance(r, dict), f"expected dict, got {type(r).__name__}"
+# Must expose at least one of: confidence, n_estimates, error
+assert ("confidence" in r) or ("n_estimates" in r) or ("error" in r), \
+    f"missing required structure keys, got: {list(r.keys())}"
+print(f"[OK] get_crowd_consensus: returns dict with keys={sorted(r.keys())[:6]}...")
+
+# get_sentiment_drift returns dict with direction + magnitude
+sd = proxy.get_sentiment_drift("AAPL", days=14)
+assert isinstance(sd, dict)
+assert "direction" in sd or "error" in sd
+assert "magnitude" in sd or "error" in sd
+print(f"[OK] get_sentiment_drift: direction={sd.get('direction')}, magnitude={sd.get('magnitude')}")
+
+# get_mention_volume returns int
+mv = proxy.get_mention_volume("AAPL", days=7)
+assert isinstance(mv, int), f"expected int, got {type(mv).__name__}"
+assert mv >= 0
+print(f"[OK] get_mention_volume: {mv} mentions")
+
 print("[PASS]")
 PYEOF

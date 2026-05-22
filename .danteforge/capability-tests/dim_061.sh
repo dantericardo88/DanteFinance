@@ -1,7 +1,7 @@
 #!/bin/bash
 # dim_061: VectorBT Backtesting v3 — NumpyPortfolio fallback (pure numpy)
 set -e
-cd /c/Projects/DanteFinance
+cd "$(dirname "$0")/../.."
 
 python - <<'PYEOF'
 import sys, os

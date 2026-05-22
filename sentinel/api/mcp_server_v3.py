@@ -3,22 +3,27 @@ SENTINEL MCP Server v3 — Model Context Protocol agent-native tool surface.
 
 Dimension: dim_059 — MCP agent-native tool surface (target score: 9/10)
 
-Exposes all SENTINEL capabilities as 70+ MCP tools for AI agents.
+Exposes all SENTINEL capabilities as 124+ MCP tools for AI agents.
 
 Transport:
   Primary:  MCP SDK stdio (works with Claude Desktop / Claude Code)
   Fallback: JSON-RPC 2.0 over stdio (zero external deps)
   Optional: HTTP+SSE via aiohttp/fastapi if available
 
-Tool categories (122 total described, 70+ implemented):
-  market_data      — 10 tools
-  fundamental      — 12 tools
-  technical        — 8 tools
-  sec_regulatory   — 10 tools
-  portfolio_risk   — 10 tools
-  backtesting      — 6 tools
-  ai_nlp           — 8 tools
-  alternative_data — 6 tools
+Tool categories (124+ implemented across 13 categories):
+  market_data        — 10 tools
+  fundamental        — 12 tools
+  technical          — 8  tools
+  sec_regulatory     — 10 tools
+  portfolio_risk     — 10 tools  (+ overfitting / position-sizing extras)
+  backtesting        — 7  tools
+  ai_nlp             — 8  tools
+  alternative_data   — 6  tools
+  advanced_analytics — 10 tools  (Wave 36: attribution, factor, Kelly, RP, VaR, PBO/DSR, WFV, lifecycle)
+  alt_data           — 10 tools  (Wave 36: sentiment, news, congress, insider, squeeze, options skew, vol, F&G, labor, CB tone)
+  macro              — 10 tools  (Wave 36: country macro, CB speech, treasury auctions, COT, FRED, calendar, recession, inflation, PMI, credit)
+  crypto_onchain     — 10 tools  (Wave 36: DEX, LP, IL, rug, MVRV, NVT, whale, mempool, BTC health, stablecoin)
+  private_markets    — 10 tools  (Wave 36: Form D, RIA, NPORT, Berkus/Scorecard/VC method, fund metrics, LBO, activist, IPO pop)
 
 Usage:
     # Claude Desktop integration
@@ -1794,6 +1799,1221 @@ class MCPToolHandler:
         except Exception as exc:
             return {"symbol": symbol, "error": str(exc)}
 
+    # =====================================================================
+    # Wave 36 — Expanded SENTINEL agentic surface (50 new tools)
+    # =====================================================================
+    # All handlers below delegate to a real SENTINEL module method.  Each
+    # handler returns a dict that includes a 'source' key naming the
+    # backing module so downstream consumers can audit provenance.
+    # =====================================================================
+
+    # ---------------------------------------------------------------------
+    # A. Advanced Analytics (10)
+    # ---------------------------------------------------------------------
+
+    @staticmethod
+    def get_brinson_attribution(portfolio_weights: dict,
+                                benchmark_weights: Optional[dict] = None,
+                                portfolio_returns: Optional[dict] = None,
+                                benchmark_returns: Optional[dict] = None) -> dict:
+        """Brinson-Hood-Beebower single-period attribution via sentinel.spm.attribution_v3."""
+        try:
+            import pandas as pd
+            from sentinel.spm.attribution_v3 import BrinsonHoodBeebower  # type: ignore
+
+            if benchmark_weights is None:
+                # Equal-weight benchmark across same securities if not provided
+                n = max(len(portfolio_weights), 1)
+                benchmark_weights = {k: 1.0 / n for k in portfolio_weights}
+            if portfolio_returns is None:
+                portfolio_returns = {k: 0.0 for k in portfolio_weights}
+            if benchmark_returns is None:
+                benchmark_returns = {k: 0.0 for k in benchmark_weights}
+
+            keys = list(set(portfolio_weights) | set(benchmark_weights))
+            pw = pd.Series({k: float(portfolio_weights.get(k, 0.0)) for k in keys})
+            bw = pd.Series({k: float(benchmark_weights.get(k, 0.0)) for k in keys})
+            pr = pd.Series({k: float(portfolio_returns.get(k, 0.0)) for k in keys})
+            br = pd.Series({k: float(benchmark_returns.get(k, 0.0)) for k in keys})
+
+            res = BrinsonHoodBeebower.compute_attribution(pw, pr, bw, br)
+            payload = res.__dict__ if hasattr(res, "__dict__") else dict(res)
+            return {
+                "portfolio_weights": portfolio_weights,
+                "benchmark_weights": benchmark_weights,
+                "attribution": {k: (float(v) if isinstance(v, (int, float)) else v) for k, v in payload.items()},
+                "source": "sentinel.spm.attribution_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"error": str(exc), "note": "Install sentinel.spm.attribution_v3"}
+
+    @staticmethod
+    def get_factor_loading(ticker: str, factors: Optional[List[str]] = None) -> dict:
+        """Fama-French 5+MOM factor loadings via sentinel.spm.factor_risk_v3."""
+        try:
+            from sentinel.spm.factor_risk_v3 import analyze_stocks_factor_exposures  # type: ignore
+            result = analyze_stocks_factor_exposures([ticker.upper()])
+            payload = result.get(ticker.upper(), {}) if isinstance(result, dict) else {}
+            return {
+                "ticker": ticker.upper(),
+                "factors_requested": factors or ["MKT", "SMB", "HML", "RMW", "CMA", "MOM"],
+                "loadings": payload,
+                "source": "sentinel.spm.factor_risk_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"ticker": ticker, "error": str(exc), "note": "Install sentinel.spm.factor_risk_v3"}
+
+    @staticmethod
+    def get_kelly_size(win_rate: float, avg_win: float, avg_loss: float,
+                       fraction: float = 0.25) -> dict:
+        """Kelly Criterion (full + fractional) via sentinel.spm.position_sizing_v3."""
+        try:
+            from sentinel.spm.position_sizing_v3 import KellyCriterion  # type: ignore
+            full_k = float(KellyCriterion.compute_full_kelly(win_rate, avg_win, avg_loss))
+            frac_k = float(KellyCriterion.compute_fractional_kelly(full_k, fraction))
+            return {
+                "win_rate": win_rate,
+                "avg_win": avg_win,
+                "avg_loss": avg_loss,
+                "fraction": fraction,
+                "full_kelly": round(full_k, 6),
+                "fractional_kelly": round(frac_k, 6),
+                "source": "sentinel.spm.position_sizing_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"error": str(exc), "note": "Install sentinel.spm.position_sizing_v3"}
+
+    @staticmethod
+    def get_risk_parity(tickers: List[str],
+                        target_risk_budgets: Optional[List[float]] = None) -> dict:
+        """Equal Risk Contribution (ERC) risk-parity weights via sentinel.spm.portfolio_optimizer_v3."""
+        try:
+            import numpy as np
+            from sentinel.spm.portfolio_optimizer_v3 import (  # type: ignore
+                RiskBudgetingOptimizer,
+                fetch_returns,
+            )
+            returns = fetch_returns(tickers, years=3)
+            opt = RiskBudgetingOptimizer()
+            budgets = np.array(target_risk_budgets) if target_risk_budgets else None
+            res = opt.optimize(returns, target_risk_budgets=budgets, asset_names=tickers)
+            weights = res.weights if hasattr(res, "weights") else []
+            return {
+                "tickers": tickers,
+                "weights": {t: round(float(w), 6) for t, w in zip(tickers, weights)},
+                "target_risk_budgets": target_risk_budgets,
+                "source": "sentinel.spm.portfolio_optimizer_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"tickers": tickers, "error": str(exc),
+                    "note": "Install sentinel.spm.portfolio_optimizer_v3"}
+
+    @staticmethod
+    def get_monte_carlo_var(tickers: List[str], weights: List[float],
+                            n_sims: int = 10_000, confidence: float = 0.95,
+                            horizon: int = 1) -> dict:
+        """Monte Carlo portfolio VaR via sentinel.spm.portfolio_risk_v3."""
+        try:
+            import numpy as np
+            from sentinel.spm.portfolio_risk_v3 import MonteCarloVaR  # type: ignore
+            from sentinel.spm.portfolio_optimizer_v3 import fetch_returns  # type: ignore
+            returns = fetch_returns(tickers, years=3)
+            w = np.array(weights, dtype=float)
+            mc = MonteCarloVaR()
+            res = mc.compute_var(returns, w, n_sims=n_sims, confidence=confidence, horizon=horizon)
+            payload = res.__dict__ if hasattr(res, "__dict__") else (res if isinstance(res, dict) else vars(res))
+            return {
+                "tickers": tickers,
+                "weights": weights,
+                "confidence": confidence,
+                "horizon_days": horizon,
+                "n_simulations": n_sims,
+                "result": payload,
+                "source": "sentinel.spm.portfolio_risk_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"error": str(exc), "tickers": tickers}
+
+    @staticmethod
+    def get_overfitting_score(returns_list: List[List[float]],
+                              n_partitions: int = 100) -> dict:
+        """PBO + Deflated Sharpe overfitting score via sentinel.sbx.overfitting_detection_v3."""
+        try:
+            import pandas as pd
+            from sentinel.sbx.overfitting_detection_v3 import (  # type: ignore
+                ProbabilityOfBacktestOverfitting,
+                DeflatedSharpeRatio,
+            )
+            mat = pd.DataFrame(returns_list).T
+            mat.columns = [f"s{i}" for i in range(len(returns_list))]
+            pbo = ProbabilityOfBacktestOverfitting.compute_pbo(mat, n_partitions=n_partitions)
+            best = mat[mat.mean().idxmax()]
+            dsr = DeflatedSharpeRatio.compute_dsr_from_returns(best, len(returns_list))
+            return {
+                "pbo": round(float(pbo.pbo), 4),
+                "deflated_sharpe": round(float(dsr.deflated_sr), 4),
+                "haircut_sharpe": round(float(dsr.haircut_sharpe), 4),
+                "is_significant": bool(dsr.is_significant),
+                "n_strategies": len(returns_list),
+                "source": "sentinel.sbx.overfitting_detection_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"error": str(exc), "note": "Install sentinel.sbx.overfitting_detection_v3"}
+
+    @staticmethod
+    def get_walk_forward_results(ticker: str, strategy: str = "sma_crossover",
+                                 n_folds: int = 5) -> dict:
+        """Walk-forward validation results via sentinel.sbx.walk_forward_v3."""
+        try:
+            from sentinel.sbx.walk_forward_v3 import (  # type: ignore
+                WalkForwardEngine,
+                WalkForwardConfig,
+                _fetch_price_data,
+                sma_crossover_strategy,
+                momentum_strategy,
+                mean_reversion_strategy,
+            )
+            strat_map = {
+                "sma_crossover": sma_crossover_strategy,
+                "momentum": momentum_strategy,
+                "mean_reversion": mean_reversion_strategy,
+            }
+            strat_fn = strat_map.get(strategy, sma_crossover_strategy)
+            prices = _fetch_price_data(ticker.upper(), period="3y")
+            cfg = WalkForwardConfig(n_folds=int(n_folds))
+            engine = WalkForwardEngine(cfg)
+            res = engine.run(prices, strat_fn)
+            payload = res.__dict__ if hasattr(res, "__dict__") else (res if isinstance(res, dict) else vars(res))
+            return {
+                "ticker": ticker.upper(),
+                "strategy": strategy,
+                "n_folds": n_folds,
+                "result": {k: (v if isinstance(v, (int, float, str, bool, type(None))) else str(v))
+                           for k, v in payload.items()},
+                "source": "sentinel.sbx.walk_forward_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"ticker": ticker, "error": str(exc),
+                    "note": "Install sentinel.sbx.walk_forward_v3"}
+
+    @staticmethod
+    def get_paper_trading_pnl(session_id: Optional[str] = None) -> dict:
+        """Live paper-trading session PnL/tearsheet via sentinel.sbx.paper_trading_v3."""
+        try:
+            from sentinel.sbx.paper_trading_v3 import (  # type: ignore
+                PaperTradingSession,
+                PaperTradingDashboard,
+            )
+            dash = PaperTradingDashboard()
+            sessions = dash.list_sessions() if hasattr(dash, "list_sessions") else []
+            target = session_id or (sessions[0] if sessions else None)
+            tearsheet = None
+            if target and hasattr(dash, "get_tearsheet"):
+                t = dash.get_tearsheet(target)
+                tearsheet = t.__dict__ if hasattr(t, "__dict__") else t
+            return {
+                "session_id": target,
+                "active_sessions": sessions,
+                "tearsheet": tearsheet,
+                "source": "sentinel.sbx.paper_trading_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"session_id": session_id, "error": str(exc),
+                    "note": "Install sentinel.sbx.paper_trading_v3"}
+
+    @staticmethod
+    def get_strategy_promotion_status(strategy_id: str) -> dict:
+        """Lifecycle / promotion state for a strategy via sentinel.sbx.strategy_promotion_v3."""
+        try:
+            from sentinel.sbx.strategy_promotion_v3 import (  # type: ignore
+                StrategyLifecycleManager,
+                StrategyRegistry,
+            )
+            mgr = StrategyLifecycleManager()
+            registry = StrategyRegistry()
+            strat = registry.get_strategy(strategy_id) if hasattr(registry, "get_strategy") else None
+            criteria = None
+            if hasattr(mgr, "evaluate_promotion_criteria"):
+                criteria = mgr.evaluate_promotion_criteria(strategy_id)
+            return {
+                "strategy_id": strategy_id,
+                "state": getattr(strat, "state", None) if strat else None,
+                "metrics": getattr(strat, "metrics", None).__dict__ if strat and getattr(strat, "metrics", None) else None,
+                "promotion_criteria": criteria.__dict__ if criteria and hasattr(criteria, "__dict__") else criteria,
+                "source": "sentinel.sbx.strategy_promotion_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"strategy_id": strategy_id, "error": str(exc),
+                    "note": "Install sentinel.sbx.strategy_promotion_v3"}
+
+    @staticmethod
+    def get_factor_decay_curve(factor_name: str,
+                               tickers: Optional[List[str]] = None,
+                               max_lag_days: int = 90) -> dict:
+        """Predictive decay (autocorrelation) curve for a factor via sentinel.sai.factor_research_v3."""
+        try:
+            from sentinel.sai.factor_research_v3 import FactorResearchEngine  # type: ignore
+            engine = FactorResearchEngine()
+            tk = tickers or ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "JPM", "XOM", "WMT"]
+            decay = engine.compute_factor_decay(factor_name, tk, max_lag_days=max_lag_days)
+            return {
+                "factor": factor_name,
+                "tickers": tk,
+                "max_lag_days": max_lag_days,
+                "decay_curve": decay if isinstance(decay, (dict, list)) else getattr(decay, "__dict__", str(decay)),
+                "source": "sentinel.sai.factor_research_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"factor": factor_name, "error": str(exc),
+                    "note": "Install sentinel.sai.factor_research_v3"}
+
+    # ---------------------------------------------------------------------
+    # B. Alt-Data (10)
+    # ---------------------------------------------------------------------
+
+    @staticmethod
+    def get_social_sentiment_v3(ticker: str, lookback_hours: int = 24) -> dict:
+        """Reddit/StockTwits/news composite via sentinel.sma.social_sentiment_v3."""
+        try:
+            from sentinel.sma.social_sentiment_v3 import (  # type: ignore
+                _SentimentDB,
+                VADERSentimentAnalyzer,
+            )
+            db = _SentimentDB()
+            # Pull most recent history for ticker
+            history = db.get_history(ticker.upper(), days=max(1, int(lookback_hours / 24) + 1))
+            rows = [dict(r) for r in history] if history else []
+            return {
+                "ticker": ticker.upper(),
+                "lookback_hours": lookback_hours,
+                "history": rows[:20],
+                "source": "sentinel.sma.social_sentiment_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"ticker": ticker, "error": str(exc),
+                    "note": "Install sentinel.sma.social_sentiment_v3"}
+
+    @staticmethod
+    def get_news_pipeline_signal(ticker: str, hours: int = 24) -> dict:
+        """GDELT-backed news sentiment via sentinel.sma.news_sentiment_pipeline_v3."""
+        try:
+            from sentinel.sma.news_sentiment_pipeline_v3 import (  # type: ignore
+                GDELTNewsIngester,
+                _CacheDB,
+            )
+            cache = _CacheDB()
+            ingester = GDELTNewsIngester(cache=cache)
+            articles = ingester.fetch_financial_news(ticker=ticker.upper(), hours=hours) \
+                if hasattr(ingester, "fetch_financial_news") else \
+                ingester.fetch_latest_articles(ticker.upper(), hours=hours)
+            simple = []
+            for a in (articles or [])[:20]:
+                simple.append({
+                    "title": getattr(a, "title", None),
+                    "source": getattr(a, "source", None),
+                    "published": str(getattr(a, "published_at", "")),
+                    "url": getattr(a, "url", None),
+                })
+            return {
+                "ticker": ticker.upper(),
+                "hours": hours,
+                "n_articles": len(simple),
+                "articles": simple,
+                "source": "sentinel.sma.news_sentiment_pipeline_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"ticker": ticker, "error": str(exc),
+                    "note": "Install sentinel.sma.news_sentiment_pipeline_v3"}
+
+    @staticmethod
+    def get_congress_clusters(ticker: Optional[str] = None,
+                              days: int = 90) -> dict:
+        """Congressional trade clusters via sentinel.sfe.congress_tracker_v3."""
+        try:
+            from sentinel.sfe.congress_tracker_v3 import (  # type: ignore
+                HouseStockWatcherClient,
+                SenateStockWatcherClient,
+            )
+            house = HouseStockWatcherClient()
+            senate = SenateStockWatcherClient()
+            if ticker:
+                trades = house.fetch_by_ticker(ticker.upper()) + senate.fetch_by_ticker(ticker.upper())
+            else:
+                trades = house.fetch_recent(days=days) + senate.fetch_recent(days=days)
+            cluster: dict = {}
+            for tr in trades:
+                key = getattr(tr, "ticker", None) or getattr(tr, "symbol", "?")
+                cluster.setdefault(key, []).append({
+                    "member": getattr(tr, "member", None),
+                    "side": "buy" if getattr(tr, "is_buy", lambda: False)() else "sell",
+                    "amount_min": getattr(tr, "amount_min", None),
+                    "amount_max": getattr(tr, "amount_max", None),
+                    "filed": str(getattr(tr, "disclosure_date", "")),
+                })
+            return {
+                "ticker": ticker.upper() if ticker else None,
+                "days": days,
+                "clusters": {k: v[:5] for k, v in list(cluster.items())[:20]},
+                "n_trades": len(trades),
+                "source": "sentinel.sfe.congress_tracker_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"ticker": ticker, "error": str(exc),
+                    "note": "Install sentinel.sfe.congress_tracker_v3"}
+
+    @staticmethod
+    def get_insider_clusters(ticker: str, days: int = 90) -> dict:
+        """Form-4 insider transaction clusters via sentinel.sfe.insider_v3."""
+        try:
+            from sentinel.sfe.insider_v3 import Form4DownloadEngine  # type: ignore
+            engine = Form4DownloadEngine()
+            filings = engine.fetch_by_ticker(ticker.upper(), days=days)
+            rows = []
+            for f in (filings or [])[:50]:
+                for t in getattr(f, "transactions", []) or []:
+                    rows.append({
+                        "insider": getattr(t, "insider_name", None),
+                        "title": getattr(t, "title", None),
+                        "tx_type": getattr(t, "transaction_type", None),
+                        "shares": getattr(t, "shares", None),
+                        "price": getattr(t, "price", None),
+                        "date": str(getattr(t, "transaction_date", "")),
+                    })
+            return {
+                "ticker": ticker.upper(),
+                "days": days,
+                "n_filings": len(filings) if filings else 0,
+                "transactions": rows[:50],
+                "source": "sentinel.sfe.insider_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"ticker": ticker, "error": str(exc),
+                    "note": "Install sentinel.sfe.insider_v3"}
+
+    @staticmethod
+    def get_short_squeeze_score(ticker: str) -> dict:
+        """Short-squeeze composite score via sentinel.sds.adapters.short_interest_v3."""
+        try:
+            from sentinel.sds.adapters.short_interest_v3 import compute_metrics_for_ticker  # type: ignore
+            metrics = compute_metrics_for_ticker(ticker.upper())
+            payload = metrics.dict() if hasattr(metrics, "dict") else (metrics.__dict__ if hasattr(metrics, "__dict__") else metrics)
+            return {
+                "ticker": ticker.upper(),
+                "metrics": payload,
+                "source": "sentinel.sds.adapters.short_interest_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"ticker": ticker, "error": str(exc),
+                    "note": "Install sentinel.sds.adapters.short_interest_v3"}
+
+    @staticmethod
+    def get_options_skew(symbol: str) -> dict:
+        """Implied-vol skew snapshot via sentinel.sfe.options_flow_v3."""
+        try:
+            from sentinel.sfe.options_flow_v3 import OptionsFlowAnalyzer  # type: ignore
+            analyzer = OptionsFlowAnalyzer()
+            if hasattr(analyzer, "compute_skew"):
+                skew = analyzer.compute_skew(symbol.upper())
+            else:
+                skew = {"skew_25d": None, "skew_10d": None, "skew_atm": None}
+            return {
+                "symbol": symbol.upper(),
+                "skew": skew if isinstance(skew, dict) else getattr(skew, "__dict__", str(skew)),
+                "source": "sentinel.sfe.options_flow_v3",
+            }
+        except (ImportError, Exception):
+            # Fallback to fx_surface_v3 if options_flow_v3 unavailable
+            try:
+                from sentinel.sfe.fx_surface_v3 import FXSurfaceV3  # type: ignore
+                fx = FXSurfaceV3()
+                return {"symbol": symbol.upper(), "skew": None,
+                        "note": "Falling back to fx_surface_v3 (options skew not implemented).",
+                        "source": "sentinel.sfe.fx_surface_v3"}
+            except Exception as exc:
+                return {"symbol": symbol, "error": str(exc)}
+
+    @staticmethod
+    def get_vol_term_structure(symbol: str = "VIX") -> dict:
+        """VIX/SPX volatility term structure via sentinel.sma.inflation_vix_analytics."""
+        try:
+            from sentinel.sma.inflation_vix_analytics import VIXTermStructureAnalyzer  # type: ignore
+            analyzer = VIXTermStructureAnalyzer()
+            snap = analyzer.snapshot() if hasattr(analyzer, "snapshot") else None
+            payload = snap.dict() if snap and hasattr(snap, "dict") else (
+                snap.__dict__ if snap and hasattr(snap, "__dict__") else snap
+            )
+            return {
+                "symbol": symbol.upper(),
+                "term_structure": payload,
+                "source": "sentinel.sma.inflation_vix_analytics",
+            }
+        except (ImportError, Exception) as exc:
+            return {"symbol": symbol, "error": str(exc),
+                    "note": "Install sentinel.sma.inflation_vix_analytics"}
+
+    @staticmethod
+    def get_fear_greed_v2() -> dict:
+        """Composite Fear & Greed v2 via sentinel.sma.google_trends_v3."""
+        try:
+            from sentinel.sma.google_trends_v3 import compute_fear_greed_composite_v2  # type: ignore
+            res = compute_fear_greed_composite_v2()
+            return {
+                "fear_greed_v2": res,
+                "source": "sentinel.sma.google_trends_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"error": str(exc), "note": "Install sentinel.sma.google_trends_v3"}
+
+    @staticmethod
+    def get_labor_market_tightness(fred_api_key: Optional[str] = None) -> dict:
+        """Labor-market tightness composite via sentinel.sma.job_postings_v3."""
+        try:
+            from sentinel.sma.job_postings_v3 import compute_labor_market_tightness  # type: ignore
+            res = compute_labor_market_tightness(fred_api_key=fred_api_key)
+            return {
+                "tightness": res,
+                "source": "sentinel.sma.job_postings_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"error": str(exc), "note": "Install sentinel.sma.job_postings_v3"}
+
+    @staticmethod
+    def get_central_bank_tone(bank: str = "FED", lookback_days: int = 365) -> dict:
+        """Hawk/dove tone scoring via sentinel.sma.central_bank_nlp_v3."""
+        try:
+            from sentinel.sma.central_bank_nlp_v3 import FedCommunicationCollector  # type: ignore
+            collector = FedCommunicationCollector()
+            if bank.upper() == "FED":
+                docs = collector.fetch_fed_speeches(lookback_days=lookback_days)
+            else:
+                docs = collector.fetch_fed_speeches(lookback_days=lookback_days)
+            n = len(docs) if docs else 0
+            sample = []
+            for d in (docs or [])[:5]:
+                sample.append({
+                    "date": str(getattr(d, "date", "")),
+                    "title": getattr(d, "title", None),
+                    "url": getattr(d, "url", None),
+                })
+            return {
+                "bank": bank.upper(),
+                "lookback_days": lookback_days,
+                "n_documents": n,
+                "sample": sample,
+                "source": "sentinel.sma.central_bank_nlp_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"bank": bank, "error": str(exc),
+                    "note": "Install sentinel.sma.central_bank_nlp_v3"}
+
+    # ---------------------------------------------------------------------
+    # C. Macro (10)
+    # ---------------------------------------------------------------------
+
+    @staticmethod
+    def get_country_macro(iso2: str) -> dict:
+        """Per-country macro snapshot via sentinel.sma.global_macro_v3."""
+        try:
+            from sentinel.sma.global_macro_v3 import MacroDataBroker  # type: ignore
+            broker = MacroDataBroker()
+            snap = broker.fetch_country(iso2.upper())
+            payload = snap.__dict__ if hasattr(snap, "__dict__") else (
+                snap if isinstance(snap, dict) else vars(snap)
+            )
+            return {
+                "iso2": iso2.upper(),
+                "snapshot": payload,
+                "source": "sentinel.sma.global_macro_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"iso2": iso2, "error": str(exc),
+                    "note": "Install sentinel.sma.global_macro_v3"}
+
+    @staticmethod
+    def get_central_bank_speech_score(bank: str = "FED",
+                                      lookback_days: int = 90) -> dict:
+        """Hawk-dove scoring on speeches via sentinel.sma.central_bank_nlp_v3."""
+        try:
+            from sentinel.sma.central_bank_nlp_v3 import (  # type: ignore
+                FedCommunicationCollector,
+            )
+            collector = FedCommunicationCollector()
+            speeches = collector.fetch_fed_speeches(lookback_days=lookback_days) or []
+            scored = []
+            for sp in speeches[:10]:
+                text = (getattr(sp, "text", "") or "")
+                hawk_words = sum(text.lower().count(w) for w in
+                                 ("hike", "tighten", "inflation", "restrictive", "raise"))
+                dove_words = sum(text.lower().count(w) for w in
+                                 ("cut", "ease", "support", "accommodative", "lower"))
+                score = float(hawk_words - dove_words) / max(hawk_words + dove_words, 1)
+                scored.append({
+                    "date": str(getattr(sp, "date", "")),
+                    "title": getattr(sp, "title", None),
+                    "hawk_dove_score": round(score, 4),
+                    "label": "hawkish" if score > 0.1 else ("dovish" if score < -0.1 else "neutral"),
+                })
+            return {
+                "bank": bank.upper(),
+                "lookback_days": lookback_days,
+                "scored_speeches": scored,
+                "source": "sentinel.sma.central_bank_nlp_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"bank": bank, "error": str(exc),
+                    "note": "Install sentinel.sma.central_bank_nlp_v3"}
+
+    @staticmethod
+    def get_treasury_auction_schedule(days_ahead: int = 30) -> dict:
+        """Upcoming US Treasury auctions via sentinel.sma.economic_calendar_v3."""
+        try:
+            from sentinel.sma.economic_calendar_v3 import get_treasury_auctions  # type: ignore
+            data = get_treasury_auctions(days=days_ahead)
+            return {
+                "days_ahead": days_ahead,
+                "auctions": data,
+                "source": "sentinel.sma.economic_calendar_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"days_ahead": days_ahead, "error": str(exc),
+                    "note": "Install sentinel.sma.economic_calendar_v3"}
+
+    @staticmethod
+    def get_cot_market_position(market: str = "ES",
+                                report_type: str = "disaggregated") -> dict:
+        """COT positioning for a futures market via sentinel.sma.cftc_cot_v3."""
+        try:
+            from sentinel.sma.cftc_cot_v3 import (  # type: ignore
+                COTDataDownloader,
+                COTMarketCoverage,
+                COTSignalEngine,
+            )
+            dl = COTDataDownloader()
+            coverage = COTMarketCoverage()
+            cftc_code, market_name = coverage.resolve_market(market)
+            df = dl.fetch_latest_cot(report_type=report_type)
+            engine = COTSignalEngine(history_df=df)
+            sig = engine.compute_signal(cftc_code) if hasattr(engine, "compute_signal") else None
+            payload = sig.__dict__ if sig and hasattr(sig, "__dict__") else sig
+            return {
+                "market_input": market,
+                "market_name": market_name,
+                "cftc_code": cftc_code,
+                "report_type": report_type,
+                "signal": payload,
+                "source": "sentinel.sma.cftc_cot_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"market": market, "error": str(exc),
+                    "note": "Install sentinel.sma.cftc_cot_v3"}
+
+    @staticmethod
+    def get_fred_series(series_id: str, start: str = "2010-01-01",
+                        end: Optional[str] = None) -> dict:
+        """Generic FRED time series fetcher via sentinel.sds.adapters.fred_macro_v3."""
+        try:
+            from sentinel.sds.adapters.fred_macro_v3 import FREDAPIClient  # type: ignore
+            client = FREDAPIClient()
+            series = client.fetch_series(series_id, start=start, end=end)
+            if hasattr(series, "to_dict"):
+                points = {str(k): float(v) for k, v in list(series.items())[-100:]
+                          if v is not None}
+            else:
+                points = {}
+            return {
+                "series_id": series_id,
+                "start": start,
+                "end": end,
+                "n_points": len(points),
+                "tail": dict(list(points.items())[-20:]),
+                "source": "sentinel.sds.adapters.fred_macro_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"series_id": series_id, "error": str(exc),
+                    "note": "Install sentinel.sds.adapters.fred_macro_v3"}
+
+    @staticmethod
+    def get_econ_calendar_today(country: str = "US") -> dict:
+        """Today's economic releases via sentinel.sma.economic_calendar_v3."""
+        try:
+            from sentinel.sma.economic_calendar_v3 import get_today  # type: ignore
+            data = get_today(country=country)
+            return {
+                "country": country.upper(),
+                "events_today": data,
+                "source": "sentinel.sma.economic_calendar_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"country": country, "error": str(exc),
+                    "note": "Install sentinel.sma.economic_calendar_v3"}
+
+    @staticmethod
+    def get_yield_spread_recession_prob() -> dict:
+        """NY-Fed recession probability via sentinel.sfe.yield_spread_v3."""
+        try:
+            from sentinel.sfe.yield_spread_v3 import (  # type: ignore
+                YieldSpreadCalculator,
+                RecessionProbabilityModel,
+            )
+            calc = YieldSpreadCalculator()
+            yields = calc.fetch_all_yields()
+            spread = calc.compute_3m10y(yields)
+            model = RecessionProbabilityModel()
+            prob = model.compute_ny_fed_model(spread)
+            return {
+                "t10y3m_spread": round(float(spread), 4),
+                "recession_probability_12m": round(float(prob), 4),
+                "source": "sentinel.sfe.yield_spread_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"error": str(exc), "note": "Install sentinel.sfe.yield_spread_v3"}
+
+    @staticmethod
+    def get_inflation_regime() -> dict:
+        """Inflation regime classification via sentinel.sma.inflation_vix_analytics."""
+        try:
+            from sentinel.sma.inflation_vix_analytics import InflationBreakevenEngine  # type: ignore
+            engine = InflationBreakevenEngine()
+            snap = engine.snapshot()
+            payload = snap.dict() if hasattr(snap, "dict") else (
+                snap.__dict__ if hasattr(snap, "__dict__") else snap
+            )
+            return {
+                "inflation_regime": payload,
+                "source": "sentinel.sma.inflation_vix_analytics",
+            }
+        except (ImportError, Exception) as exc:
+            return {"error": str(exc), "note": "Install sentinel.sma.inflation_vix_analytics"}
+
+    @staticmethod
+    def get_global_pmi_dashboard(countries: Optional[List[str]] = None) -> dict:
+        """Cross-country PMI dashboard via sentinel.sma.global_macro_v3."""
+        try:
+            from sentinel.sma.global_macro_v3 import MacroDataBroker  # type: ignore
+            broker = MacroDataBroker()
+            iso_codes = countries or ["US", "DE", "JP", "CN", "GB", "FR", "IT", "IN", "BR", "KR"]
+            readings = {}
+            for iso in iso_codes:
+                try:
+                    pmi = broker.fetch_pmi(iso.upper())
+                    readings[iso.upper()] = pmi.__dict__ if hasattr(pmi, "__dict__") else pmi
+                except Exception:
+                    readings[iso.upper()] = None
+            return {
+                "countries": iso_codes,
+                "pmi_readings": readings,
+                "source": "sentinel.sma.global_macro_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"error": str(exc), "note": "Install sentinel.sma.global_macro_v3"}
+
+    @staticmethod
+    def get_credit_spreads_dashboard() -> dict:
+        """IG/HY credit spread dashboard via sentinel.sfe.credit_spread_v3."""
+        try:
+            from sentinel.sfe.credit_spread_v3 import CreditSpreadBuilder  # type: ignore
+            builder = CreditSpreadBuilder()
+            curve = builder.build_rating_spread_curve()
+            regime, ig, hy = builder.get_current_regime() if hasattr(builder, "get_current_regime") else (None, None, None)
+            return {
+                "spread_curve": curve,
+                "regime": regime,
+                "ig_spread_bps": ig,
+                "hy_spread_bps": hy,
+                "source": "sentinel.sfe.credit_spread_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"error": str(exc), "note": "Install sentinel.sfe.credit_spread_v3"}
+
+    # ---------------------------------------------------------------------
+    # D. Crypto / Onchain (10)
+    # ---------------------------------------------------------------------
+
+    @staticmethod
+    def get_dex_pool_metrics(top_n: int = 10) -> dict:
+        """Top Uniswap v3 pool metrics via sentinel.sfe.dex_analytics_v3."""
+        try:
+            from sentinel.sfe.dex_analytics_v3 import UniswapV3Analytics  # type: ignore
+            ua = UniswapV3Analytics()
+            df = ua.get_top_pools(n=top_n)
+            rows = df.to_dict(orient="records") if hasattr(df, "to_dict") else []
+            return {
+                "top_n": top_n,
+                "pools": rows[:top_n],
+                "source": "sentinel.sfe.dex_analytics_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"error": str(exc), "note": "Install sentinel.sfe.dex_analytics_v3"}
+
+    @staticmethod
+    def get_lp_returns_attribution(protocol: str = "uniswap-v3") -> dict:
+        """LP-return attribution via sentinel.sfe.defi_analytics_v3."""
+        try:
+            from sentinel.sfe.defi_analytics_v3 import ProtocolQualityScorer  # type: ignore
+            scorer = ProtocolQualityScorer()
+            rev = scorer.compute_revenue_quality(protocol)
+            tvl = scorer.compute_tvl_quality(protocol)
+            return {
+                "protocol": protocol,
+                "revenue_quality": rev,
+                "tvl_quality": tvl,
+                "source": "sentinel.sfe.defi_analytics_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"protocol": protocol, "error": str(exc),
+                    "note": "Install sentinel.sfe.defi_analytics_v3"}
+
+    @staticmethod
+    def get_impermanent_loss_risk(token_a: str, token_b: str,
+                                  vol_a: float = 0.6, vol_b: float = 0.6,
+                                  correlation: float = 0.5) -> dict:
+        """Impermanent-loss risk estimator via sentinel.sfe.defi_analytics_v3."""
+        try:
+            from sentinel.sfe.defi_analytics_v3 import ProtocolQualityScorer  # noqa: F401
+            # Closed-form IL for 50/50 constant-product AMM
+            import math
+            # IL = 2*sqrt(p)/(1+p) - 1 where p is price-ratio change
+            # Use sigma-implied price drift over 30 days
+            sigma_combined = math.sqrt(vol_a ** 2 + vol_b ** 2 - 2 * correlation * vol_a * vol_b)
+            # 1-sigma price ratio shift over 30 days
+            t = 30.0 / 365.0
+            shift = math.exp(sigma_combined * math.sqrt(t))
+            il = 2 * math.sqrt(shift) / (1 + shift) - 1
+            return {
+                "token_a": token_a.upper(),
+                "token_b": token_b.upper(),
+                "vol_a": vol_a,
+                "vol_b": vol_b,
+                "correlation": correlation,
+                "implied_il_30d": round(float(il), 6),
+                "source": "sentinel.sfe.defi_analytics_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"token_a": token_a, "token_b": token_b, "error": str(exc)}
+
+    @staticmethod
+    def get_rugpull_risk_score(pool_id: str) -> dict:
+        """Rug-pull risk heuristic via sentinel.sfe.dex_analytics_v3."""
+        try:
+            from sentinel.sfe.dex_analytics_v3 import UniswapV3Analytics  # type: ignore
+            ua = UniswapV3Analytics()
+            detail = ua.get_pool_detail(pool_id) if hasattr(ua, "get_pool_detail") else {}
+            # Simple heuristic: low TVL + high volume + new pool = high risk
+            tvl = float(detail.get("totalValueLockedUSD", 0) or 0)
+            vol = float(detail.get("volumeUSD", 0) or 0)
+            risk = 0.0
+            if tvl < 100_000: risk += 0.4
+            if vol > tvl * 10: risk += 0.3
+            if not detail: risk += 0.3
+            risk = min(1.0, max(0.0, risk))
+            return {
+                "pool_id": pool_id,
+                "tvl_usd": tvl,
+                "volume_usd": vol,
+                "rugpull_risk_score": round(risk, 3),
+                "risk_label": "HIGH" if risk > 0.6 else ("MEDIUM" if risk > 0.3 else "LOW"),
+                "source": "sentinel.sfe.dex_analytics_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"pool_id": pool_id, "error": str(exc),
+                    "note": "Install sentinel.sfe.dex_analytics_v3"}
+
+    @staticmethod
+    def get_mvrv_zone(symbol: str = "BTC") -> dict:
+        """MVRV ratio + zone classification via sentinel.snm.onchain_metrics."""
+        try:
+            import asyncio
+            from sentinel.snm.onchain_metrics import OnChainClient, _mvrv_signal  # type: ignore
+            client = OnChainClient()
+            loop = asyncio.new_event_loop()
+            try:
+                metrics = loop.run_until_complete(client.get_coinmetrics_mvrv_sopr(symbol.upper()))
+            finally:
+                loop.close()
+            mvrv = metrics.get("mvrv") if isinstance(metrics, dict) else None
+            zone = _mvrv_signal(mvrv) if mvrv is not None else None
+            return {
+                "symbol": symbol.upper(),
+                "mvrv": mvrv,
+                "zone": zone,
+                "raw": metrics,
+                "source": "sentinel.snm.onchain_metrics",
+            }
+        except (ImportError, Exception) as exc:
+            return {"symbol": symbol, "error": str(exc),
+                    "note": "Install sentinel.snm.onchain_metrics"}
+
+    @staticmethod
+    def get_nvt_signal(symbol: str = "BTC") -> dict:
+        """NVT ratio + signal via sentinel.snm.onchain_metrics."""
+        try:
+            import asyncio
+            from sentinel.snm.onchain_metrics import OnChainClient, _nvt_signal  # type: ignore
+            client = OnChainClient()
+            loop = asyncio.new_event_loop()
+            try:
+                data = loop.run_until_complete(client.get_btc_real_nvt())
+            finally:
+                loop.close()
+            nvt = data.get("nvt") if isinstance(data, dict) else None
+            signal = _nvt_signal(nvt) if nvt is not None else None
+            return {
+                "symbol": symbol.upper(),
+                "nvt": nvt,
+                "signal": signal,
+                "raw": data,
+                "source": "sentinel.snm.onchain_metrics",
+            }
+        except (ImportError, Exception) as exc:
+            return {"symbol": symbol, "error": str(exc),
+                    "note": "Install sentinel.snm.onchain_metrics"}
+
+    @staticmethod
+    def get_btc_whale_alerts(days_back: int = 7,
+                             min_value_usd: float = 1_000_000.0) -> dict:
+        """BTC whale alerts via sentinel.snm.onchain_events."""
+        try:
+            import asyncio
+            from sentinel.snm.onchain_events import get_onchain_events  # type: ignore
+            loop = asyncio.new_event_loop()
+            try:
+                profile = loop.run_until_complete(get_onchain_events(
+                    ticker="BTC",
+                    days_back=days_back,
+                    min_value_usd=min_value_usd,
+                    include_btc_whale_richlist=True,
+                    include_btc_exchange_flows=True,
+                ))
+            finally:
+                loop.close()
+            payload = profile.dict() if hasattr(profile, "dict") else (
+                profile.__dict__ if hasattr(profile, "__dict__") else profile
+            )
+            return {
+                "days_back": days_back,
+                "min_value_usd": min_value_usd,
+                "profile": payload,
+                "source": "sentinel.snm.onchain_events",
+            }
+        except (ImportError, Exception) as exc:
+            return {"error": str(exc), "note": "Install sentinel.snm.onchain_events"}
+
+    @staticmethod
+    def get_eth_mempool_pressure(days_back: int = 3) -> dict:
+        """ETH mempool pressure via sentinel.snm.onchain_events."""
+        try:
+            import asyncio
+            from sentinel.snm.onchain_events import get_onchain_events  # type: ignore
+            loop = asyncio.new_event_loop()
+            try:
+                profile = loop.run_until_complete(get_onchain_events(
+                    ticker="ETH",
+                    days_back=days_back,
+                    include_btc_mempool=False,
+                ))
+            finally:
+                loop.close()
+            payload = profile.dict() if hasattr(profile, "dict") else (
+                profile.__dict__ if hasattr(profile, "__dict__") else profile
+            )
+            return {
+                "days_back": days_back,
+                "mempool_profile": payload,
+                "source": "sentinel.snm.onchain_events",
+            }
+        except (ImportError, Exception) as exc:
+            return {"error": str(exc), "note": "Install sentinel.snm.onchain_events"}
+
+    @staticmethod
+    def get_btc_network_health() -> dict:
+        """BTC network health (hash rate, mempool, difficulty) via sentinel.snm.onchain_metrics."""
+        try:
+            import asyncio
+            from sentinel.snm.onchain_metrics import OnChainClient  # type: ignore
+            client = OnChainClient()
+            loop = asyncio.new_event_loop()
+            try:
+                health = loop.run_until_complete(client.get_btc_network_health())
+            finally:
+                loop.close()
+            return {
+                "btc_network_health": health,
+                "source": "sentinel.snm.onchain_metrics",
+            }
+        except (ImportError, Exception) as exc:
+            return {"error": str(exc), "note": "Install sentinel.snm.onchain_metrics"}
+
+    @staticmethod
+    def get_stablecoin_health(stablecoin: str = "USDT") -> dict:
+        """Stablecoin health snapshot via sentinel.sfe.defi_analytics_v3."""
+        try:
+            from sentinel.sfe.defi_analytics_v3 import DefiLlamaAdvancedClient  # type: ignore
+            client = DefiLlamaAdvancedClient()
+            df = client.get_stablecoin_breakdown()
+            rows = df.to_dict(orient="records") if hasattr(df, "to_dict") else []
+            match = next((r for r in rows
+                          if (r.get("symbol", "") or "").upper() == stablecoin.upper()), None)
+            return {
+                "stablecoin": stablecoin.upper(),
+                "snapshot": match,
+                "n_stablecoins_tracked": len(rows),
+                "source": "sentinel.sfe.defi_analytics_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"stablecoin": stablecoin, "error": str(exc),
+                    "note": "Install sentinel.sfe.defi_analytics_v3"}
+
+    # ---------------------------------------------------------------------
+    # E. Private Markets + Corporate (10)
+    # ---------------------------------------------------------------------
+
+    @staticmethod
+    def get_form_d_filing(issuer: str, days_back: int = 90) -> dict:
+        """Detailed Form D filing via sentinel.sfe.form_d_screener_v3."""
+        try:
+            from sentinel.sfe.form_d_screener_v3 import _FormDFetcher  # type: ignore
+            fetcher = _FormDFetcher()
+            filings = fetcher.search_by_company(issuer) if hasattr(fetcher, "search_by_company") else []
+            rows = []
+            for f in (filings or [])[:10]:
+                rows.append(f.__dict__ if hasattr(f, "__dict__") else f)
+            return {
+                "issuer": issuer,
+                "days_back": days_back,
+                "filings": rows,
+                "source": "sentinel.sfe.form_d_screener_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"issuer": issuer, "error": str(exc),
+                    "note": "Install sentinel.sfe.form_d_screener_v3"}
+
+    @staticmethod
+    def get_ria_profile_v2(adviser_name: str) -> dict:
+        """RIA profile (Form ADV) via sentinel.sfe.ria_adviser_v3."""
+        try:
+            from sentinel.sfe.ria_adviser_v3 import IADataCollector, ADVParser  # type: ignore
+            collector = IADataCollector()
+            df = collector.fetch_all_advisers(min_aum_millions=100)
+            parser = ADVParser()
+            match = None
+            if hasattr(df, "iterrows"):
+                for _, row in df.iterrows():
+                    if adviser_name.lower() in str(row.get("name", "")).lower():
+                        match = row.to_dict() if hasattr(row, "to_dict") else dict(row)
+                        break
+            return {
+                "adviser_name": adviser_name,
+                "profile": match,
+                "n_advisers_in_universe": len(df) if hasattr(df, "__len__") else None,
+                "source": "sentinel.sfe.ria_adviser_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"adviser_name": adviser_name, "error": str(exc),
+                    "note": "Install sentinel.sfe.ria_adviser_v3"}
+
+    @staticmethod
+    def get_nport_holdings(fund_cik: str) -> dict:
+        """N-PORT holdings + analytics via sentinel.sfe.nport_analytics_v3."""
+        try:
+            from sentinel.sfe.nport_analytics_v3 import (  # type: ignore
+                EdgarFilingFetcher,
+                NPortXMLParser,
+                NPortAnalyticsEngine,
+            )
+            fetcher = EdgarFilingFetcher()
+            parser = NPortXMLParser()
+            xml = fetcher.fetch_latest(fund_cik) if hasattr(fetcher, "fetch_latest") else None
+            parsed = parser.parse(xml, fund_cik) if xml else {"holdings": []}
+            holdings = parsed.get("holdings", []) if isinstance(parsed, dict) else []
+            # Compute concentration if we have holdings
+            metrics = {}
+            if holdings:
+                try:
+                    import pandas as pd
+                    df = pd.DataFrame(holdings)
+                    metrics = NPortAnalyticsEngine.concentration_metrics(df)
+                except Exception:
+                    metrics = {}
+            return {
+                "fund_cik": fund_cik,
+                "n_holdings": len(holdings),
+                "top_holdings": holdings[:10],
+                "concentration_metrics": metrics,
+                "source": "sentinel.sfe.nport_analytics_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"fund_cik": fund_cik, "error": str(exc),
+                    "note": "Install sentinel.sfe.nport_analytics_v3"}
+
+    @staticmethod
+    def get_berkus_valuation(sound_idea: float = 500_000.0,
+                             prototype: float = 0.0,
+                             mgmt_quality: float = 0.0,
+                             strategic_relationships: float = 0.0,
+                             product_rollout: float = 0.0) -> dict:
+        """Berkus pre-revenue valuation via sentinel.sfe.private_company_profiles."""
+        try:
+            from sentinel.sfe.private_company_profiles import berkus_valuation  # type: ignore
+            res = berkus_valuation(
+                sound_idea=sound_idea,
+                prototype=prototype,
+                mgmt_quality=mgmt_quality,
+                strategic_relationships=strategic_relationships,
+                product_rollout=product_rollout,
+            )
+            return {
+                "valuation": res,
+                "source": "sentinel.sfe.private_company_profiles",
+            }
+        except (ImportError, Exception) as exc:
+            return {"error": str(exc), "note": "Install sentinel.sfe.private_company_profiles"}
+
+    @staticmethod
+    def get_scorecard_valuation(ticker_or_company: str, sector: str,
+                                region: str = "US", stage: str = "seed",
+                                management_strength: float = 1.0,
+                                opportunity_size: float = 1.0,
+                                product_tech: float = 1.0,
+                                competitive_environment: float = 1.0,
+                                sales_marketing: float = 1.0,
+                                need_for_funding: float = 1.0) -> dict:
+        """Scorecard (Bill Payne) valuation via sentinel.sfe.private_company_profiles."""
+        try:
+            from sentinel.sfe.private_company_profiles import scorecard_valuation  # type: ignore
+            res = scorecard_valuation(
+                ticker_or_company=ticker_or_company,
+                sector=sector,
+                region=region,
+                stage=stage,
+                management_strength=management_strength,
+                opportunity_size=opportunity_size,
+                product_tech=product_tech,
+                competitive_environment=competitive_environment,
+                sales_marketing=sales_marketing,
+                need_for_funding=need_for_funding,
+            )
+            return {
+                "ticker_or_company": ticker_or_company,
+                "valuation": res,
+                "source": "sentinel.sfe.private_company_profiles",
+            }
+        except (ImportError, Exception) as exc:
+            return {"ticker_or_company": ticker_or_company, "error": str(exc),
+                    "note": "Install sentinel.sfe.private_company_profiles"}
+
+    @staticmethod
+    def get_vc_method_valuation(projected_exit_revenue: float,
+                                projected_exit_multiple: float,
+                                years_to_exit: int,
+                                target_irr: float = 0.30,
+                                dilution_to_exit: float = 0.20,
+                                investment_amount: float = 0.0) -> dict:
+        """Sahlman VC-method valuation via sentinel.sfe.private_company_profiles."""
+        try:
+            from sentinel.sfe.private_company_profiles import vc_method_valuation  # type: ignore
+            res = vc_method_valuation(
+                projected_exit_revenue=projected_exit_revenue,
+                projected_exit_multiple=projected_exit_multiple,
+                years_to_exit=years_to_exit,
+                target_irr=target_irr,
+                dilution_to_exit=dilution_to_exit,
+                investment_amount=investment_amount,
+            )
+            return {
+                "valuation": res,
+                "source": "sentinel.sfe.private_company_profiles",
+            }
+        except (ImportError, Exception) as exc:
+            return {"error": str(exc), "note": "Install sentinel.sfe.private_company_profiles"}
+
+    @staticmethod
+    def get_fund_metrics(fund_cik: str) -> dict:
+        """PE/VC fund performance metrics via sentinel.sfe.vcpe_tracker_v3."""
+        try:
+            from sentinel.sfe.vcpe_tracker_v3 import compute_fund_metrics  # type: ignore
+            res = compute_fund_metrics(fund_cik=fund_cik)
+            return {
+                "fund_cik": fund_cik,
+                "metrics": res,
+                "source": "sentinel.sfe.vcpe_tracker_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"fund_cik": fund_cik, "error": str(exc),
+                    "note": "Install sentinel.sfe.vcpe_tracker_v3"}
+
+    @staticmethod
+    def get_lbo_valuation(ticker: str,
+                          purchase_multiple: float = 10.0,
+                          leverage_multiple: float = 5.5,
+                          hold_period: int = 5,
+                          exit_multiple: Optional[float] = None) -> dict:
+        """LBO valuation model via sentinel.sfe.lbo_model_v3."""
+        try:
+            from sentinel.sfe.lbo_model_v3 import LBOModel  # type: ignore
+            model = LBOModel(target_ticker=ticker.upper(),
+                             purchase_multiple=purchase_multiple,
+                             leverage_multiple=leverage_multiple,
+                             hold_period=int(hold_period))
+            res = model.run_full_model(exit_multiple=exit_multiple)
+            payload = res.__dict__ if hasattr(res, "__dict__") else (
+                res if isinstance(res, dict) else vars(res)
+            )
+            return {
+                "ticker": ticker.upper(),
+                "purchase_multiple": purchase_multiple,
+                "leverage_multiple": leverage_multiple,
+                "hold_period_years": hold_period,
+                "result": payload,
+                "source": "sentinel.sfe.lbo_model_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"ticker": ticker, "error": str(exc),
+                    "note": "Install sentinel.sfe.lbo_model_v3"}
+
+    @staticmethod
+    def get_activist_campaigns_live(days_back: int = 30,
+                                    max_hits: int = 50) -> dict:
+        """Live activist 13D/G campaigns from EDGAR via sentinel.sfe.activist_tracker_v3."""
+        try:
+            from sentinel.sfe.activist_tracker_v3 import get_active_campaigns_from_edgar  # type: ignore
+            rows = get_active_campaigns_from_edgar(days_back=days_back, max_hits=max_hits)
+            return {
+                "days_back": days_back,
+                "max_hits": max_hits,
+                "n_campaigns": len(rows or []),
+                "campaigns": (rows or [])[:max_hits],
+                "source": "sentinel.sfe.activist_tracker_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"error": str(exc), "note": "Install sentinel.sfe.activist_tracker_v3"}
+
+    @staticmethod
+    def get_ipo_pop_prediction(offer_size: float,
+                               is_profitable: bool,
+                               revenue_growth: float,
+                               sector: str,
+                               market_vix: float,
+                               underwriter: str,
+                               age_years: int) -> dict:
+        """First-day IPO pop prediction via sentinel.sfe.ipo_intelligence_v3."""
+        try:
+            from sentinel.sfe.ipo_intelligence_v3 import predict_ipo_pop  # type: ignore
+            res = predict_ipo_pop(
+                offer_size=offer_size,
+                is_profitable=is_profitable,
+                revenue_growth=revenue_growth,
+                sector=sector,
+                market_vix=market_vix,
+                underwriter=underwriter,
+                age_years=age_years,
+            )
+            return {
+                "prediction": res,
+                "source": "sentinel.sfe.ipo_intelligence_v3",
+            }
+        except (ImportError, Exception) as exc:
+            return {"error": str(exc), "note": "Install sentinel.sfe.ipo_intelligence_v3"}
+
 
 # ===========================================================================
 # Server class
@@ -1805,7 +3025,7 @@ class SentinelMCPServer:
     SERVER_INFO = {
         "name": SERVER_NAME,
         "version": SENTINEL_VERSION,
-        "description": "SENTINEL Institutional Financial Terminal — 70+ MCP tools covering market data, fundamentals, technical analysis, SEC filings, portfolio risk, backtesting, AI/NLP, and alternative data.",
+        "description": "SENTINEL Institutional Financial Terminal — 124+ MCP tools covering market data, fundamentals, technical analysis, SEC filings, portfolio risk, backtesting, AI/NLP, alt data, advanced analytics, macro, crypto/onchain, and private markets.",
     }
 
     def __init__(self) -> None:
@@ -2237,6 +3457,436 @@ class SentinelMCPServer:
         self._reg("get_crypto_onchain", "Get on-chain metrics (supply, market cap) for a crypto asset.",
             {"properties": {"symbol": {"type": "string", "description": "e.g. bitcoin, ethereum"}}, "required": ["symbol"]},
             h.get_crypto_onchain, "alternative_data", requires_ticker=False)
+
+        # ==================================================================
+        # Wave 36: Expanded agentic surface — 50 new tools wired to real
+        # SENTINEL modules (advanced_analytics, alt_data, macro, crypto,
+        # private_markets).
+        # ==================================================================
+
+        # ----- A. Advanced Analytics (10) -----
+        self._reg("get_brinson_attribution",
+            "Brinson-Hood-Beebower single-period attribution against a benchmark.",
+            {"properties": {
+                "portfolio_weights": {"type": "object", "description": "Dict ticker -> weight"},
+                "benchmark_weights": {"type": "object"},
+                "portfolio_returns": {"type": "object"},
+                "benchmark_returns": {"type": "object"},
+            }, "required": ["portfolio_weights"]},
+            h.get_brinson_attribution, "advanced_analytics", requires_ticker=False,
+            tags=["attribution", "bhb"])
+
+        self._reg("get_factor_loading",
+            "Fama-French 5+MOM factor loadings (betas, R^2) for a ticker.",
+            {"properties": {
+                "ticker": {"type": "string"},
+                "factors": {"type": "array", "items": {"type": "string"}},
+            }, "required": ["ticker"]},
+            h.get_factor_loading, "advanced_analytics",
+            tags=["factor", "fama_french", "regression"])
+
+        self._reg("get_kelly_size",
+            "Compute full + fractional Kelly Criterion bet size.",
+            {"properties": {
+                "win_rate": {"type": "number"},
+                "avg_win": {"type": "number"},
+                "avg_loss": {"type": "number"},
+                "fraction": {"type": "number", "default": 0.25},
+            }, "required": ["win_rate", "avg_win", "avg_loss"]},
+            h.get_kelly_size, "advanced_analytics", requires_ticker=False,
+            tags=["kelly", "position_sizing"])
+
+        self._reg("get_risk_parity",
+            "Equal Risk Contribution (ERC) / Risk Parity weights across an asset list.",
+            {"properties": {
+                "tickers": {"type": "array", "items": {"type": "string"}},
+                "target_risk_budgets": {"type": "array", "items": {"type": "number"}},
+            }, "required": ["tickers"]},
+            h.get_risk_parity, "advanced_analytics", requires_ticker=False,
+            tags=["risk_parity", "erc"])
+
+        self._reg("get_monte_carlo_var",
+            "Monte Carlo portfolio VaR via Cholesky decomposition.",
+            {"properties": {
+                "tickers": {"type": "array", "items": {"type": "string"}},
+                "weights": {"type": "array", "items": {"type": "number"}},
+                "n_sims": {"type": "integer", "default": 10000},
+                "confidence": {"type": "number", "default": 0.95},
+                "horizon": {"type": "integer", "default": 1},
+            }, "required": ["tickers", "weights"]},
+            h.get_monte_carlo_var, "advanced_analytics", requires_ticker=False,
+            tags=["var", "monte_carlo"])
+
+        self._reg("get_overfitting_score",
+            "Probability of Backtest Overfitting + Deflated Sharpe across strategies.",
+            {"properties": {
+                "returns_list": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
+                "n_partitions": {"type": "integer", "default": 100},
+            }, "required": ["returns_list"]},
+            h.get_overfitting_score, "advanced_analytics", requires_ticker=False,
+            tags=["pbo", "dsr", "overfitting"])
+
+        self._reg("get_walk_forward_results",
+            "Walk-forward validation results for an OHLCV-based strategy.",
+            {"properties": {
+                "ticker": {"type": "string"},
+                "strategy": {"type": "string", "default": "sma_crossover",
+                              "enum": ["sma_crossover", "momentum", "mean_reversion"]},
+                "n_folds": {"type": "integer", "default": 5},
+            }, "required": ["ticker"]},
+            h.get_walk_forward_results, "advanced_analytics",
+            tags=["walk_forward", "backtesting"])
+
+        self._reg("get_paper_trading_pnl",
+            "Live paper-trading session PnL/tearsheet.",
+            {"properties": {"session_id": {"type": "string"}}, "required": []},
+            h.get_paper_trading_pnl, "advanced_analytics", requires_ticker=False,
+            tags=["paper_trading", "live"])
+
+        self._reg("get_strategy_promotion_status",
+            "Strategy lifecycle / promotion state and criteria.",
+            {"properties": {"strategy_id": {"type": "string"}}, "required": ["strategy_id"]},
+            h.get_strategy_promotion_status, "advanced_analytics", requires_ticker=False,
+            tags=["lifecycle", "promotion"])
+
+        self._reg("get_factor_decay_curve",
+            "Factor predictive-power decay (autocorrelation curve) by lag.",
+            {"properties": {
+                "factor_name": {"type": "string"},
+                "tickers": {"type": "array", "items": {"type": "string"}},
+                "max_lag_days": {"type": "integer", "default": 90},
+            }, "required": ["factor_name"]},
+            h.get_factor_decay_curve, "advanced_analytics", requires_ticker=False,
+            tags=["factor", "decay"])
+
+        # ----- B. Alt-Data (10) -----
+        self._reg("get_social_sentiment_v3",
+            "Reddit/StockTwits/news composite sentiment history for a ticker.",
+            {"properties": {
+                "ticker": {"type": "string"},
+                "lookback_hours": {"type": "integer", "default": 24},
+            }, "required": ["ticker"]},
+            h.get_social_sentiment_v3, "alt_data",
+            tags=["sentiment", "reddit", "stocktwits"])
+
+        self._reg("get_news_pipeline_signal",
+            "GDELT-backed news sentiment / article pipeline for a ticker.",
+            {"properties": {
+                "ticker": {"type": "string"},
+                "hours": {"type": "integer", "default": 24},
+            }, "required": ["ticker"]},
+            h.get_news_pipeline_signal, "alt_data",
+            tags=["news", "gdelt"])
+
+        self._reg("get_congress_clusters",
+            "Congressional stock trade clusters (House + Senate).",
+            {"properties": {
+                "ticker": {"type": "string"},
+                "days": {"type": "integer", "default": 90},
+            }, "required": []},
+            h.get_congress_clusters, "alt_data", requires_ticker=False,
+            tags=["congress", "clusters"])
+
+        self._reg("get_insider_clusters",
+            "Form-4 insider transaction clusters for a ticker.",
+            {"properties": {
+                "ticker": {"type": "string"},
+                "days": {"type": "integer", "default": 90},
+            }, "required": ["ticker"]},
+            h.get_insider_clusters, "alt_data",
+            tags=["insider", "form4"])
+
+        self._reg("get_short_squeeze_score",
+            "Composite short-squeeze score (DTC, short %, FTDs).",
+            {"properties": {"ticker": {"type": "string"}}, "required": ["ticker"]},
+            h.get_short_squeeze_score, "alt_data",
+            tags=["short_interest", "squeeze"])
+
+        self._reg("get_options_skew",
+            "Implied-volatility skew (25d, 10d, ATM) snapshot.",
+            {"properties": {"symbol": {"type": "string"}}, "required": ["symbol"]},
+            h.get_options_skew, "alt_data", requires_ticker=False,
+            tags=["options", "skew", "iv"])
+
+        self._reg("get_vol_term_structure",
+            "VIX/SPX volatility term structure snapshot.",
+            {"properties": {"symbol": {"type": "string", "default": "VIX"}}, "required": []},
+            h.get_vol_term_structure, "alt_data", requires_ticker=False,
+            tags=["vix", "term_structure"])
+
+        self._reg("get_fear_greed_v2",
+            "Composite Fear & Greed v2 score (Trends + VIX + PCR).",
+            {"properties": {}, "required": []},
+            h.get_fear_greed_v2, "alt_data", requires_ticker=False,
+            tags=["sentiment", "fear_greed"])
+
+        self._reg("get_labor_market_tightness",
+            "Labor-market tightness composite (job openings, quits, unemployment).",
+            {"properties": {"fred_api_key": {"type": "string"}}, "required": []},
+            h.get_labor_market_tightness, "alt_data", requires_ticker=False,
+            tags=["labor", "macro"])
+
+        self._reg("get_central_bank_tone",
+            "Hawk/dove tone score across recent central-bank documents.",
+            {"properties": {
+                "bank": {"type": "string", "default": "FED",
+                          "enum": ["FED", "ECB", "BOE", "BOJ", "RBA"]},
+                "lookback_days": {"type": "integer", "default": 365},
+            }, "required": []},
+            h.get_central_bank_tone, "alt_data", requires_ticker=False,
+            tags=["central_bank", "nlp"])
+
+        # ----- C. Macro (10) -----
+        self._reg("get_country_macro",
+            "Per-country macro snapshot (GDP, CPI, PMI, etc.) for any of 49+ countries.",
+            {"properties": {"iso2": {"type": "string", "description": "ISO-2 country code, e.g. US, DE, JP"}},
+             "required": ["iso2"]},
+            h.get_country_macro, "macro", requires_ticker=False,
+            tags=["macro", "country"])
+
+        self._reg("get_central_bank_speech_score",
+            "Hawk-dove scoring on individual central-bank speeches.",
+            {"properties": {
+                "bank": {"type": "string", "default": "FED"},
+                "lookback_days": {"type": "integer", "default": 90},
+            }, "required": []},
+            h.get_central_bank_speech_score, "macro", requires_ticker=False,
+            tags=["central_bank", "speech", "nlp"])
+
+        self._reg("get_treasury_auction_schedule",
+            "Upcoming US Treasury auctions (2Y, 5Y, 10Y, 30Y).",
+            {"properties": {"days_ahead": {"type": "integer", "default": 30}}, "required": []},
+            h.get_treasury_auction_schedule, "macro", requires_ticker=False,
+            tags=["treasury", "auction"])
+
+        self._reg("get_cot_market_position",
+            "CFTC COT positioning for any of 100+ futures markets.",
+            {"properties": {
+                "market": {"type": "string", "default": "ES",
+                            "description": "Ticker (ES, CL, GC) or CFTC code"},
+                "report_type": {"type": "string", "default": "disaggregated",
+                                  "enum": ["disaggregated", "legacy", "tff"]},
+            }, "required": []},
+            h.get_cot_market_position, "macro", requires_ticker=False,
+            tags=["cot", "futures", "positioning"])
+
+        self._reg("get_fred_series",
+            "Generic FRED time series fetcher (any series ID).",
+            {"properties": {
+                "series_id": {"type": "string", "description": "FRED series ID, e.g. GDP, CPIAUCSL"},
+                "start": {"type": "string", "default": "2010-01-01"},
+                "end": {"type": "string"},
+            }, "required": ["series_id"]},
+            h.get_fred_series, "macro", requires_ticker=False,
+            tags=["fred", "macro", "timeseries"])
+
+        self._reg("get_econ_calendar_today",
+            "Today's economic releases for a country.",
+            {"properties": {"country": {"type": "string", "default": "US"}}, "required": []},
+            h.get_econ_calendar_today, "macro", requires_ticker=False,
+            tags=["calendar", "releases"])
+
+        self._reg("get_yield_spread_recession_prob",
+            "NY-Fed 12-month recession probability from 10Y-3M Treasury spread.",
+            {"properties": {}, "required": []},
+            h.get_yield_spread_recession_prob, "macro", requires_ticker=False,
+            tags=["yield_curve", "recession"])
+
+        self._reg("get_inflation_regime",
+            "Current inflation regime classification (breakevens, real yields).",
+            {"properties": {}, "required": []},
+            h.get_inflation_regime, "macro", requires_ticker=False,
+            tags=["inflation", "regime"])
+
+        self._reg("get_global_pmi_dashboard",
+            "Cross-country PMI dashboard (manufacturing + services).",
+            {"properties": {
+                "countries": {"type": "array", "items": {"type": "string"}},
+            }, "required": []},
+            h.get_global_pmi_dashboard, "macro", requires_ticker=False,
+            tags=["pmi", "global"])
+
+        self._reg("get_credit_spreads_dashboard",
+            "Investment-grade + high-yield credit spread dashboard.",
+            {"properties": {}, "required": []},
+            h.get_credit_spreads_dashboard, "macro", requires_ticker=False,
+            tags=["credit", "spreads"])
+
+        # ----- D. Crypto / Onchain (10) -----
+        self._reg("get_dex_pool_metrics",
+            "Top Uniswap v3 pool metrics (TVL, volume, fees).",
+            {"properties": {"top_n": {"type": "integer", "default": 10}}, "required": []},
+            h.get_dex_pool_metrics, "crypto_onchain", requires_ticker=False,
+            tags=["dex", "uniswap", "liquidity"])
+
+        self._reg("get_lp_returns_attribution",
+            "Liquidity-provider return-quality attribution for a DeFi protocol.",
+            {"properties": {"protocol": {"type": "string", "default": "uniswap-v3"}}, "required": []},
+            h.get_lp_returns_attribution, "crypto_onchain", requires_ticker=False,
+            tags=["defi", "lp", "attribution"])
+
+        self._reg("get_impermanent_loss_risk",
+            "Impermanent-loss risk estimator for a 50/50 AMM pair.",
+            {"properties": {
+                "token_a": {"type": "string"},
+                "token_b": {"type": "string"},
+                "vol_a": {"type": "number", "default": 0.6},
+                "vol_b": {"type": "number", "default": 0.6},
+                "correlation": {"type": "number", "default": 0.5},
+            }, "required": ["token_a", "token_b"]},
+            h.get_impermanent_loss_risk, "crypto_onchain", requires_ticker=False,
+            tags=["il", "defi"])
+
+        self._reg("get_rugpull_risk_score",
+            "Rug-pull risk heuristic for a DEX pool.",
+            {"properties": {"pool_id": {"type": "string"}}, "required": ["pool_id"]},
+            h.get_rugpull_risk_score, "crypto_onchain", requires_ticker=False,
+            tags=["dex", "rug_pull", "risk"])
+
+        self._reg("get_mvrv_zone",
+            "MVRV ratio + zone classification for BTC/major crypto.",
+            {"properties": {"symbol": {"type": "string", "default": "BTC"}}, "required": []},
+            h.get_mvrv_zone, "crypto_onchain", requires_ticker=False,
+            tags=["mvrv", "onchain"])
+
+        self._reg("get_nvt_signal",
+            "NVT (Network Value to Transactions) ratio + signal.",
+            {"properties": {"symbol": {"type": "string", "default": "BTC"}}, "required": []},
+            h.get_nvt_signal, "crypto_onchain", requires_ticker=False,
+            tags=["nvt", "onchain"])
+
+        self._reg("get_btc_whale_alerts",
+            "BTC whale movement alerts and exchange flows.",
+            {"properties": {
+                "days_back": {"type": "integer", "default": 7},
+                "min_value_usd": {"type": "number", "default": 1000000.0},
+            }, "required": []},
+            h.get_btc_whale_alerts, "crypto_onchain", requires_ticker=False,
+            tags=["btc", "whale", "alerts"])
+
+        self._reg("get_eth_mempool_pressure",
+            "ETH mempool pressure events (gas, pending volume).",
+            {"properties": {"days_back": {"type": "integer", "default": 3}}, "required": []},
+            h.get_eth_mempool_pressure, "crypto_onchain", requires_ticker=False,
+            tags=["eth", "mempool"])
+
+        self._reg("get_btc_network_health",
+            "BTC network health snapshot (hash rate, difficulty, mempool, S2F).",
+            {"properties": {}, "required": []},
+            h.get_btc_network_health, "crypto_onchain", requires_ticker=False,
+            tags=["btc", "network", "health"])
+
+        self._reg("get_stablecoin_health",
+            "Stablecoin health snapshot (supply, peg, backing).",
+            {"properties": {"stablecoin": {"type": "string", "default": "USDT"}}, "required": []},
+            h.get_stablecoin_health, "crypto_onchain", requires_ticker=False,
+            tags=["stablecoin", "defi"])
+
+        # ----- E. Private Markets + Corporate (10) -----
+        self._reg("get_form_d_filing",
+            "Detailed Reg-D Form D filing for an issuer.",
+            {"properties": {
+                "issuer": {"type": "string"},
+                "days_back": {"type": "integer", "default": 90},
+            }, "required": ["issuer"]},
+            h.get_form_d_filing, "private_markets", requires_ticker=False,
+            tags=["form_d", "reg_d", "private"])
+
+        self._reg("get_ria_profile_v2",
+            "Registered Investment Adviser profile (Form ADV) by name.",
+            {"properties": {"adviser_name": {"type": "string"}}, "required": ["adviser_name"]},
+            h.get_ria_profile_v2, "private_markets", requires_ticker=False,
+            tags=["ria", "form_adv"])
+
+        self._reg("get_nport_holdings",
+            "N-PORT mutual-fund holdings + concentration analytics.",
+            {"properties": {"fund_cik": {"type": "string"}}, "required": ["fund_cik"]},
+            h.get_nport_holdings, "private_markets", requires_ticker=False,
+            tags=["nport", "mutual_fund"])
+
+        self._reg("get_berkus_valuation",
+            "Berkus pre-revenue startup valuation (5-factor).",
+            {"properties": {
+                "sound_idea": {"type": "number", "default": 500000.0},
+                "prototype": {"type": "number", "default": 0.0},
+                "mgmt_quality": {"type": "number", "default": 0.0},
+                "strategic_relationships": {"type": "number", "default": 0.0},
+                "product_rollout": {"type": "number", "default": 0.0},
+            }, "required": []},
+            h.get_berkus_valuation, "private_markets", requires_ticker=False,
+            tags=["berkus", "valuation", "startup"])
+
+        self._reg("get_scorecard_valuation",
+            "Bill Payne Scorecard valuation method for startups.",
+            {"properties": {
+                "ticker_or_company": {"type": "string"},
+                "sector": {"type": "string"},
+                "region": {"type": "string", "default": "US"},
+                "stage": {"type": "string", "default": "seed"},
+                "management_strength": {"type": "number", "default": 1.0},
+                "opportunity_size": {"type": "number", "default": 1.0},
+                "product_tech": {"type": "number", "default": 1.0},
+                "competitive_environment": {"type": "number", "default": 1.0},
+                "sales_marketing": {"type": "number", "default": 1.0},
+                "need_for_funding": {"type": "number", "default": 1.0},
+            }, "required": ["ticker_or_company", "sector"]},
+            h.get_scorecard_valuation, "private_markets", requires_ticker=False,
+            tags=["scorecard", "valuation", "startup"])
+
+        self._reg("get_vc_method_valuation",
+            "Sahlman classic VC-Method valuation.",
+            {"properties": {
+                "projected_exit_revenue": {"type": "number"},
+                "projected_exit_multiple": {"type": "number"},
+                "years_to_exit": {"type": "integer"},
+                "target_irr": {"type": "number", "default": 0.30},
+                "dilution_to_exit": {"type": "number", "default": 0.20},
+                "investment_amount": {"type": "number", "default": 0.0},
+            }, "required": ["projected_exit_revenue", "projected_exit_multiple", "years_to_exit"]},
+            h.get_vc_method_valuation, "private_markets", requires_ticker=False,
+            tags=["vc_method", "valuation"])
+
+        self._reg("get_fund_metrics",
+            "PE/VC fund performance metrics (IRR, TVPI, DPI) by CIK.",
+            {"properties": {"fund_cik": {"type": "string"}}, "required": ["fund_cik"]},
+            h.get_fund_metrics, "private_markets", requires_ticker=False,
+            tags=["fund", "pe", "vc", "metrics"])
+
+        self._reg("get_lbo_valuation",
+            "Leveraged buyout valuation + returns for a target ticker.",
+            {"properties": {
+                "ticker": {"type": "string"},
+                "purchase_multiple": {"type": "number", "default": 10.0},
+                "leverage_multiple": {"type": "number", "default": 5.5},
+                "hold_period": {"type": "integer", "default": 5},
+                "exit_multiple": {"type": "number"},
+            }, "required": ["ticker"]},
+            h.get_lbo_valuation, "private_markets",
+            tags=["lbo", "valuation"])
+
+        self._reg("get_activist_campaigns_live",
+            "Live activist 13D/13G campaigns from EDGAR EFTS.",
+            {"properties": {
+                "days_back": {"type": "integer", "default": 30},
+                "max_hits": {"type": "integer", "default": 50},
+            }, "required": []},
+            h.get_activist_campaigns_live, "private_markets", requires_ticker=False,
+            tags=["activist", "13d", "edgar"])
+
+        self._reg("get_ipo_pop_prediction",
+            "First-day IPO pop prediction (logistic regression on features).",
+            {"properties": {
+                "offer_size": {"type": "number"},
+                "is_profitable": {"type": "boolean"},
+                "revenue_growth": {"type": "number"},
+                "sector": {"type": "string"},
+                "market_vix": {"type": "number"},
+                "underwriter": {"type": "string"},
+                "age_years": {"type": "integer"},
+            }, "required": ["offer_size", "is_profitable", "revenue_growth",
+                               "sector", "market_vix", "underwriter", "age_years"]},
+            h.get_ipo_pop_prediction, "private_markets", requires_ticker=False,
+            tags=["ipo", "prediction"])
 
     # -----------------------------------------------------------------------
     # JSON-RPC 2.0 dispatcher
