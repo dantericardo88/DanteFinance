@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   postgres:
     image: timescale/timescaledb:latest-pg16
@@ -34,6 +32,23 @@ services:
       timeout: 3s
       retries: 5
 
+  # One-shot migration job: applies Alembic migrations on top of init.sql,
+  # then exits. App services wait for it to finish successfully.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sentinel_migrate
+    command: alembic upgrade head
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://sentinel:${POSTGRES_PASSWORD:-sentinel_dev_password}@postgres:5432/sentinel
+      DATABASE_URL_SYNC: postgresql://sentinel:${POSTGRES_PASSWORD:-sentinel_dev_password}@postgres:5432/sentinel
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   api:
     build:
       context: .
@@ -45,12 +60,15 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://sentinel:${POSTGRES_PASSWORD:-sentinel_dev_password}@postgres:5432/sentinel
+      DATABASE_URL_SYNC: postgresql://sentinel:${POSTGRES_PASSWORD:-sentinel_dev_password}@postgres:5432/sentinel
       REDIS_URL: redis://redis:6379
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     volumes:
       - .:/app
     restart: unless-stopped
@@ -66,10 +84,13 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://sentinel:${POSTGRES_PASSWORD:-sentinel_dev_password}@postgres:5432/sentinel
+      DATABASE_URL_SYNC: postgresql://sentinel:${POSTGRES_PASSWORD:-sentinel_dev_password}@postgres:5432/sentinel
       REDIS_URL: redis://redis:6379
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   terminal:

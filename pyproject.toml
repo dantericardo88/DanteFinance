@@ -7,7 +7,7 @@ readme = "README.md"
 packages = [{ include = "sentinel" }]
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = "^3.12"
 
 # ─── Data Sources ──────────────────────────────────────────────────────────────
 yfinance = ">=0.2.40"
@@ -86,14 +86,14 @@ python_files = ["test_*.py"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
 ignore = ["E501"]  # Line too long — handled by black
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 ignore_missing_imports = true
 
 [build-system]
